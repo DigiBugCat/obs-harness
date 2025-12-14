@@ -138,7 +138,10 @@ uv run obs-harness --db sqlite+aiosqlite:///data/myapp.db
 | Channel | `/channel/{name}` | Browser source endpoint for OBS |
 | Editor | `/editor` | Visual text animation preset editor |
 | Twitch | `/twitch` | Twitch OAuth setup and configuration |
-| API Docs | `/docs` | Interactive API documentation |
+| API Docs | `/docs` | Interactive Swagger UI |
+| ReDoc | `/redoc` | Alternative API documentation |
+
+**Full API Reference:** See [docs/API.md](docs/API.md) for detailed endpoint documentation.
 
 ## Character System
 
