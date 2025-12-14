@@ -86,6 +86,8 @@ class TTSStreamer:
 
         self._cancelled = False
         self._spoken_text = ""  # Text that was actually converted to audio
+        self._tts_client: ElevenLabsWSClient | None = None  # For cancellation
+        self._receive_task: asyncio.Task | None = None
 
     async def stream(self, text_source: Union[str, AsyncIterator[str]]) -> str:
         """Stream TTS audio with word timing to browser.
@@ -110,14 +112,14 @@ class TTSStreamer:
                 text_started = True
 
             # 2. Create and connect TTS client
-            tts_client = ElevenLabsWSClient(
+            self._tts_client = ElevenLabsWSClient(
                 voice_id=self._tts_config.voice_id,
                 model_id=self._tts_config.model_id,
                 sync_alignment=True,
             )
 
             try:
-                await tts_client.connect(
+                await self._tts_client.connect(
                     stability=self._tts_config.stability,
                     similarity_boost=self._tts_config.similarity_boost,
                     style=self._tts_config.style,
@@ -129,13 +131,13 @@ class TTSStreamer:
                 audio_started = True
 
                 # 4. Start receive task for audio + word timing
-                receive_task = asyncio.create_task(
-                    self._receive_audio(tts_client)
+                self._receive_task = asyncio.create_task(
+                    self._receive_audio(self._tts_client)
                 )
 
                 # 5. Send text to TTS (string or iterator)
                 if isinstance(text_source, str):
-                    await tts_client.send_text(text_source)
+                    await self._tts_client.send_text(text_source)
                     full_text = text_source
                 else:
                     full_text = ""
@@ -143,14 +145,17 @@ class TTSStreamer:
                         if self._cancelled:
                             break
                         full_text += token
-                        await tts_client.send_text(token)
+                        await self._tts_client.send_text(token)
 
                 # 6. Close TTS input and wait for audio to finish
-                await tts_client.close_input()
-                await receive_task
+                if not self._cancelled:
+                    await self._tts_client.close_input()
+                    await self._receive_task
 
             finally:
-                await tts_client.close()
+                await self._tts_client.close()
+                self._tts_client = None
+                self._receive_task = None
 
             # 7. End streams (audio first, then text)
             await self._send_audio_end()
@@ -207,9 +212,19 @@ class TTSStreamer:
         except Exception as e:
             print(f"TTS receive error: {e}")
 
-    def cancel(self) -> None:
-        """Cancel the streaming gracefully."""
+    async def cancel(self) -> None:
+        """Cancel the streaming - closes WebSocket immediately."""
         self._cancelled = True
+        # Close the TTS WebSocket to stop receiving audio
+        if self._tts_client:
+            await self._tts_client.close()
+        # Cancel the receive task
+        if self._receive_task and not self._receive_task.done():
+            self._receive_task.cancel()
+            try:
+                await self._receive_task
+            except asyncio.CancelledError:
+                pass
 
     def get_spoken_text(self) -> str:
         """Get the text that was actually spoken (converted to audio)."""

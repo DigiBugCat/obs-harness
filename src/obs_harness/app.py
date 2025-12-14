@@ -343,7 +343,7 @@ def create_app(
         if name not in active_generations:
             return None
         gen = active_generations[name]
-        gen.cancel()
+        await gen.cancel()  # Now async - closes WebSocket immediately
         spoken_text = gen.get_spoken_text()
         del active_generations[name]
         return spoken_text

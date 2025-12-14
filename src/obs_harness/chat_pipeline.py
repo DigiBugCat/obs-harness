@@ -85,10 +85,10 @@ Recent Twitch chat (you can see what viewers are saying):
         # Delegate to TTSStreamer with token iterator
         return await self._tts_streamer.stream(llm_tokens())
 
-    def cancel(self) -> None:
-        """Cancel the pipeline gracefully."""
+    async def cancel(self) -> None:
+        """Cancel the pipeline - stops LLM and TTS immediately."""
         self._cancelled = True
-        self._tts_streamer.cancel()
+        await self._tts_streamer.cancel()
 
     def get_spoken_text(self) -> str:
         """Get the text that was actually spoken (converted to audio)."""
