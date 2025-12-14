@@ -29,6 +29,7 @@ class ChatPipelineConfig:
     voice_speed: float = 1.0
     show_text: bool = True
     twitch_chat_context: str | None = None  # Recent Twitch chat to inject
+    conversation_history: list[dict] | None = None  # Past messages for memory
 
 
 class ChatPipeline:
@@ -93,10 +94,11 @@ class ChatPipeline:
 Recent Twitch chat (you can see what viewers are saying):
 {self.config.twitch_chat_context}"""
 
-        messages = [
-            {"role": "system", "content": system_content},
-            {"role": "user", "content": user_message},
-        ]
+        # Build messages with optional conversation history
+        messages = [{"role": "system", "content": system_content}]
+        if self.config.conversation_history:
+            messages.extend(self.config.conversation_history)
+        messages.append({"role": "user", "content": user_message})
 
         # Start text stream to browser
         if self.config.show_text:

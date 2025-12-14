@@ -58,6 +58,7 @@ class ElevenLabsWSClient:
         similarity_boost: float = 0.75,
         style: float = 0.0,
         speed: float = 1.0,
+        max_retries: int = 3,
     ) -> None:
         """Connect to ElevenLabs WebSocket and initialize stream.
 
@@ -66,30 +67,60 @@ class ElevenLabsWSClient:
             similarity_boost: Voice similarity boost (0-1)
             style: Voice style (0-1)
             speed: Speech speed (0.5-2.0)
+            max_retries: Number of connection attempts before failing
+
+        Raises:
+            ElevenLabsWSError: If connection fails after retries.
         """
-        self._ws = await websockets.connect(self.ws_url)
+        last_error = None
 
-        # Send initialization message (BOS - Beginning of Stream)
-        init_message = {
-            "text": " ",  # Required initial text (space is minimal)
-            "voice_settings": {
-                "stability": stability,
-                "similarity_boost": similarity_boost,
-                "style": style,
-                "speed": speed,
-            },
-            "generation_config": {
-                # Chunk length schedule determines buffering before generation
-                # Lower values = lower latency but potentially lower quality
-                "chunk_length_schedule": [120, 160, 250, 290],
-            },
-            "xi-api-key": self.api_key,
-        }
-        await self._ws.send(json.dumps(init_message))
-        self._initialized = True
+        for attempt in range(max_retries):
+            try:
+                self._ws = await websockets.connect(
+                    self.ws_url,
+                    ping_interval=20,
+                    ping_timeout=10,
+                    close_timeout=5,
+                )
 
-        # Start background receiver task
-        self._receive_task = asyncio.create_task(self._receive_loop())
+                # Send initialization message (BOS - Beginning of Stream)
+                init_message = {
+                    "text": " ",  # Required initial text (space is minimal)
+                    "voice_settings": {
+                        "stability": stability,
+                        "similarity_boost": similarity_boost,
+                        "style": style,
+                        "speed": speed,
+                    },
+                    "generation_config": {
+                        # Chunk length schedule determines buffering before generation
+                        # Lower values = lower latency but potentially lower quality
+                        "chunk_length_schedule": [120, 160, 250, 290],
+                    },
+                    "xi-api-key": self.api_key,
+                }
+                await self._ws.send(json.dumps(init_message))
+                self._initialized = True
+
+                # Start background receiver task
+                self._receive_task = asyncio.create_task(self._receive_loop())
+                return  # Success
+
+            except Exception as e:
+                last_error = e
+                if self._ws:
+                    try:
+                        await self._ws.close()
+                    except Exception:
+                        pass
+                    self._ws = None
+
+                if attempt < max_retries - 1:
+                    delay = 1.0 * (2 ** attempt)  # Exponential backoff
+                    print(f"ElevenLabs WS connection failed (attempt {attempt + 1}): {e}, retrying in {delay}s...")
+                    await asyncio.sleep(delay)
+
+        raise ElevenLabsWSError(f"Failed to connect after {max_retries} attempts: {last_error}")
 
     async def _receive_loop(self) -> None:
         """Background task to receive audio chunks from WebSocket."""

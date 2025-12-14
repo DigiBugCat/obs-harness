@@ -1,16 +1,17 @@
-"""Twitch chat integration for reading chat messages."""
+"""Twitch chat integration using raw IRC over WebSocket."""
 
 import asyncio
+import re
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from twitchio import Client, Message
+import websockets
 
 
 @dataclass
-class ChatMessage:
-    """A single chat message."""
+class StoredMessage:
+    """A single stored chat message."""
 
     username: str
     content: str
@@ -21,15 +22,15 @@ class ChatBuffer:
     """Thread-safe ring buffer for recent chat messages."""
 
     def __init__(self, max_messages: int = 100):
-        self._messages: deque[ChatMessage] = deque(maxlen=max_messages)
+        self._messages: deque[StoredMessage] = deque(maxlen=max_messages)
         self._lock = asyncio.Lock()
 
     async def add(self, username: str, content: str) -> None:
         """Add a message to the buffer."""
         async with self._lock:
-            self._messages.append(ChatMessage(username=username, content=content))
+            self._messages.append(StoredMessage(username=username, content=content))
 
-    async def get_recent(self, seconds: int = 60) -> list[ChatMessage]:
+    async def get_recent(self, seconds: int = 60) -> list[StoredMessage]:
         """Get messages from the last N seconds."""
         cutoff = datetime.utcnow() - timedelta(seconds=seconds)
         async with self._lock:
@@ -41,73 +42,152 @@ class ChatBuffer:
             self._messages.clear()
 
 
-class TwitchChatClient(Client):
-    """Twitch chat client for reading messages."""
+# IRC message parser regex
+IRC_MESSAGE_RE = re.compile(
+    r"^(?:@(?P<tags>\S+) )?(?::(?P<prefix>\S+) )?(?P<command>\S+)(?: (?P<params>.+))?$"
+)
 
-    def __init__(
-        self,
-        access_token: str,
-        initial_channel: str | None = None,
-    ):
-        """Initialize the Twitch chat client.
 
-        Args:
-            access_token: OAuth token for chat access
-            initial_channel: Channel to join on startup (without #)
-        """
-        channels = [initial_channel] if initial_channel else []
-        super().__init__(token=access_token, initial_channels=channels)
+class TwitchIRCClient:
+    """Simple Twitch IRC client using raw WebSocket."""
+
+    TWITCH_IRC_URL = "wss://irc-ws.chat.twitch.tv:443"
+
+    def __init__(self, access_token: str, channel: str | None = None):
+        self.access_token = access_token
+        self._channel = channel
         self._buffer = ChatBuffer()
-        self._current_channel: str | None = initial_channel
+        self._ws: websockets.WebSocketClientProtocol | None = None
+        self._running = False
 
     @property
     def buffer(self) -> ChatBuffer:
-        """Get the chat buffer."""
         return self._buffer
 
     @property
-    def current_channel(self) -> str | None:
-        """Get the currently joined channel."""
-        return self._current_channel
+    def channel(self) -> str | None:
+        return self._channel
 
-    async def event_ready(self) -> None:
-        """Called when bot is ready."""
-        print(f"Twitch chat connected as {self.nick}")
+    async def connect(self) -> None:
+        """Connect to Twitch IRC."""
+        try:
+            self._ws = await websockets.connect(
+                self.TWITCH_IRC_URL,
+                ping_interval=20,
+                ping_timeout=10,
+                close_timeout=5,
+            )
 
-    async def event_message(self, message: Message) -> None:
-        """Handle incoming chat messages."""
-        # Ignore messages without an author (e.g., system messages)
-        if message.author is None:
-            return
+            # Authenticate
+            await self._ws.send(f"PASS oauth:{self.access_token}")
+            await self._ws.send("NICK justinfan12345")  # Anonymous read-only nick
 
-        # Store in buffer
-        await self._buffer.add(message.author.name, message.content)
+            # Request tags for username info
+            await self._ws.send("CAP REQ :twitch.tv/tags twitch.tv/commands")
+
+            # Join channel if specified
+            if self._channel:
+                await self._ws.send(f"JOIN #{self._channel}")
+
+            self._running = True
+            print(f"Twitch IRC connected to #{self._channel}")
+
+        except Exception as e:
+            self._running = False
+            self._ws = None
+            print(f"Twitch IRC connection failed: {e}")
+            raise
+
+    async def disconnect(self) -> None:
+        """Disconnect from Twitch IRC."""
+        self._running = False
+        if self._ws:
+            await self._ws.close()
+            self._ws = None
 
     async def join_channel(self, channel: str) -> None:
-        """Join a new channel."""
-        await self.join_channels([channel])
-        self._current_channel = channel
+        """Join a channel."""
+        if self._channel and self._ws:
+            await self._ws.send(f"PART #{self._channel}")
+        self._channel = channel
+        if self._ws:
+            await self._ws.send(f"JOIN #{channel}")
+        await self._buffer.clear()
 
-    async def leave_channel(self, channel: str) -> None:
-        """Leave a channel."""
-        await self.part_channels([channel])
-        if self._current_channel == channel:
-            self._current_channel = None
+    async def run(self) -> None:
+        """Run the message receive loop."""
+        if not self._ws:
+            return
 
-    async def get_recent_messages(self, seconds: int = 60) -> list[ChatMessage]:
-        """Get recent messages from the buffer."""
-        return await self._buffer.get_recent(seconds)
+        try:
+            async for message in self._ws:
+                if not self._running:
+                    break
+                await self._handle_message(message)
+        except websockets.ConnectionClosed:
+            pass
+
+    async def _handle_message(self, raw: str) -> None:
+        """Handle incoming IRC message."""
+        for line in raw.strip().split("\r\n"):
+            if not line:
+                continue
+
+            # Respond to PING
+            if line.startswith("PING"):
+                if self._ws:
+                    await self._ws.send("PONG :tmi.twitch.tv")
+                continue
+
+            # Parse IRC message
+            match = IRC_MESSAGE_RE.match(line)
+            if not match:
+                continue
+
+            command = match.group("command")
+
+            if command == "PRIVMSG":
+                await self._handle_privmsg(match)
+
+    async def _handle_privmsg(self, match: re.Match) -> None:
+        """Handle PRIVMSG (chat message)."""
+        tags_str = match.group("tags") or ""
+        params = match.group("params") or ""
+
+        # Parse tags for display-name
+        tags = {}
+        if tags_str:
+            for tag in tags_str.split(";"):
+                if "=" in tag:
+                    key, value = tag.split("=", 1)
+                    tags[key] = value
+
+        # Get username from tags or prefix
+        username = tags.get("display-name", "")
+        if not username:
+            prefix = match.group("prefix") or ""
+            if "!" in prefix:
+                username = prefix.split("!")[0]
+            else:
+                username = prefix
+
+        # Extract message content (after the channel and :)
+        if " :" in params:
+            content = params.split(" :", 1)[1]
+        else:
+            content = params
+
+        if username and content:
+            await self._buffer.add(username, content)
 
     def format_for_prompt(
         self,
-        messages: list[ChatMessage],
+        messages: list[StoredMessage],
         max_messages: int = 20,
     ) -> str:
         """Format messages for inclusion in AI prompt."""
         if not messages:
             return ""
-
-        # Take most recent N messages
         recent = messages[-max_messages:]
         lines = [f"[{m.username}]: {m.content}" for m in recent]
         return "\n".join(lines)
@@ -117,56 +197,76 @@ class TwitchChatManager:
     """Manager for Twitch chat integration."""
 
     def __init__(self):
-        self._client: TwitchChatClient | None = None
+        self._client: TwitchIRCClient | None = None
         self._task: asyncio.Task | None = None
-        self._running = False
+        self._access_token: str | None = None
 
     @property
     def is_connected(self) -> bool:
         """Check if connected to Twitch chat."""
-        return self._running and self._client is not None
+        return self._client is not None and self._client._running
 
     @property
     def current_channel(self) -> str | None:
         """Get the currently joined channel."""
-        return self._client.current_channel if self._client else None
+        return self._client.channel if self._client else None
 
-    async def start(
-        self,
-        access_token: str,
-        channel: str | None = None,
-    ) -> None:
+    async def start(self, access_token: str, channel: str | None = None) -> None:
         """Start the Twitch chat client.
 
-        Args:
-            access_token: OAuth token for chat access
-            channel: Channel to join on startup (without #)
+        Raises:
+            Exception: If initial connection fails after retries.
         """
-        if self._running:
+        if self._client:
             await self.stop()
 
-        self._client = TwitchChatClient(
-            access_token=access_token,
-            initial_channel=channel,
-        )
-        self._running = True
-        self._task = asyncio.create_task(self._run())
+        self._access_token = access_token
+        self._client = TwitchIRCClient(access_token, channel)
 
-    async def _run(self) -> None:
-        """Run the client with reconnection logic."""
-        while self._running:
+        # Try initial connection with retries
+        max_retries = 3
+        for attempt in range(max_retries):
             try:
-                await self._client.start()
+                await self._client.connect()
+                break
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    self._client = None
+                    raise Exception(f"Failed to connect to Twitch after {max_retries} attempts: {e}")
+                print(f"Twitch connection attempt {attempt + 1} failed: {e}, retrying...")
+                await asyncio.sleep(2)
+
+        self._task = asyncio.create_task(self._run_with_reconnect())
+
+    async def _run_with_reconnect(self) -> None:
+        """Run with automatic reconnection."""
+        reconnect_delay = 5
+        max_reconnect_delay = 60
+
+        while self._client and self._client._running:
+            try:
+                await self._client.run()
             except Exception as e:
                 print(f"Twitch chat error: {e}")
-                if self._running:
-                    await asyncio.sleep(5)  # Reconnect delay
+
+            # If still supposed to be running, attempt reconnection
+            if self._client and self._client._running:
+                print(f"Twitch disconnected, reconnecting in {reconnect_delay}s...")
+                await asyncio.sleep(reconnect_delay)
+
+                try:
+                    await self._client.connect()
+                    reconnect_delay = 5  # Reset delay on successful reconnect
+                    print("Twitch reconnected successfully")
+                except Exception as e:
+                    print(f"Twitch reconnection failed: {e}")
+                    # Exponential backoff
+                    reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
 
     async def stop(self) -> None:
         """Stop the Twitch chat client."""
-        self._running = False
         if self._client:
-            await self._client.close()
+            await self._client.disconnect()
             self._client = None
         if self._task:
             self._task.cancel()
@@ -181,27 +281,14 @@ class TwitchChatManager:
         if self._client:
             await self._client.join_channel(channel)
 
-    async def leave_channel(self, channel: str) -> None:
-        """Leave a Twitch channel."""
-        if self._client:
-            await self._client.leave_channel(channel)
-
     async def get_chat_context(
         self,
         seconds: int = 60,
         max_messages: int = 20,
     ) -> str:
-        """Get formatted chat context for AI prompt.
-
-        Args:
-            seconds: How far back to look for messages
-            max_messages: Maximum number of messages to include
-
-        Returns:
-            Formatted string of recent chat messages, or empty string if none
-        """
+        """Get formatted chat context for AI prompt."""
         if not self._client:
             return ""
 
-        messages = await self._client.get_recent_messages(seconds)
+        messages = await self._client.buffer.get_recent(seconds)
         return self._client.format_for_prompt(messages, max_messages)

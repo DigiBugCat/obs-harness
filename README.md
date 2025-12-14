@@ -23,7 +23,7 @@ Push audio and animated text to OBS via browser sources. Features AI-powered cha
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/obs-harness.git
+   git clone https://github.com/DigiBugCat/obs-harness.git
    cd obs-harness
    ```
 

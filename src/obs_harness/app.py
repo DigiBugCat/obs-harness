@@ -292,6 +292,9 @@ def create_app(
     harness = OBSHarness(manager)
     twitch_manager = TwitchChatManager()
 
+    # In-memory conversation history per character (for memory_enabled characters)
+    conversation_memory: dict[str, list[dict]] = {}
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await init_db(db_url)
@@ -366,6 +369,14 @@ def create_app(
         if twitch_path.exists():
             return FileResponse(twitch_path)
         return HTMLResponse("<html><body><h1>Twitch</h1><p>Twitch page not found.</p></body></html>")
+
+    @app.get("/auth/callback", response_class=HTMLResponse)
+    async def auth_callback():
+        """Handle OAuth callback - serves twitch.html which processes the token."""
+        twitch_path = static_dir / "twitch.html"
+        if twitch_path.exists():
+            return FileResponse(twitch_path)
+        return HTMLResponse("<html><body><h1>Auth Error</h1><p>Callback page not found.</p></body></html>")
 
     # =========================================================================
     # WebSocket Routes
@@ -589,6 +600,7 @@ def create_app(
             twitch_chat_enabled=c.twitch_chat_enabled,
             twitch_chat_window_seconds=c.twitch_chat_window_seconds,
             twitch_chat_max_messages=c.twitch_chat_max_messages,
+            memory_enabled=c.memory_enabled,
             connected=manager.is_connected(c.name),
             playing=manager._channel_state.get(c.name, {}).get("playing", False),
             streaming=manager._channel_state.get(c.name, {}).get("streaming", False),
@@ -794,13 +806,27 @@ def create_app(
                 status_code=400, detail=f"Character '{name}' is not connected"
             )
 
-        # Get Twitch chat context if enabled for this character
+        # Determine twitch chat seconds (request override or character default)
+        # request.twitch_chat_seconds == 0 means disabled for this request
+        # request.twitch_chat_seconds == None means use character default
+        twitch_seconds = request.twitch_chat_seconds
+        if twitch_seconds is None:
+            twitch_seconds = character.twitch_chat_window_seconds if character.twitch_chat_enabled else 0
+
+        # Get Twitch chat context if enabled
         twitch_chat_context = None
-        if character.twitch_chat_enabled and twitch_manager.is_connected:
+        if twitch_seconds > 0 and twitch_manager.is_connected:
             twitch_chat_context = await twitch_manager.get_chat_context(
-                seconds=character.twitch_chat_window_seconds,
+                seconds=twitch_seconds,
                 max_messages=character.twitch_chat_max_messages,
             )
+
+        # Get conversation history if memory is enabled (filter out context messages for LLM)
+        history = None
+        if character.memory_enabled:
+            all_history = conversation_memory.get(name, [])
+            # Only include user/assistant messages for LLM context
+            history = [m for m in all_history if m.get("role") in ("user", "assistant")]
 
         # Create pipeline configuration
         config = ChatPipelineConfig(
@@ -817,6 +843,7 @@ def create_app(
             voice_speed=character.voice_speed,
             show_text=request.show_text,
             twitch_chat_context=twitch_chat_context,
+            conversation_history=history,
         )
 
         # Create callbacks that use the harness methods
@@ -861,6 +888,15 @@ def create_app(
         try:
             response_text = await pipeline.run(request.message)
 
+            # Store conversation in memory (always store for UI, memory_enabled controls LLM context)
+            if name not in conversation_memory:
+                conversation_memory[name] = []
+            # Store twitch context if present
+            if twitch_chat_context:
+                conversation_memory[name].append({"role": "context", "content": twitch_chat_context})
+            conversation_memory[name].append({"role": "user", "content": request.message})
+            conversation_memory[name].append({"role": "assistant", "content": response_text})
+
             # Log the chat
             await harness._log_playback(name, f"chat:{name}", "stream")
 
@@ -868,6 +904,7 @@ def create_app(
                 success=True,
                 character=name,
                 response_text=response_text,
+                twitch_chat_context=twitch_chat_context,
             )
 
         except Exception as e:
@@ -875,5 +912,18 @@ def create_app(
             await harness.stream_end(name)
             await harness.text_stream_end(name)
             raise HTTPException(status_code=500, detail=f"Chat error: {e}")
+
+    @app.delete("/api/characters/{name}/memory")
+    async def clear_character_memory(name: str) -> dict:
+        """Clear conversation memory for a character."""
+        if name in conversation_memory:
+            del conversation_memory[name]
+        return {"success": True, "character": name, "message": "Memory cleared"}
+
+    @app.get("/api/characters/{name}/memory")
+    async def get_character_memory(name: str) -> dict:
+        """Get conversation memory for a character."""
+        history = conversation_memory.get(name, [])
+        return {"character": name, "message_count": len(history), "messages": history}
 
     return app

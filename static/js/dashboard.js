@@ -86,10 +86,69 @@
     }
 
     // =========================================================================
+    // Toast Notifications
+    // =========================================================================
+
+    function showToast(message, type = 'info', duration = 4000) {
+        // Remove existing toast if any
+        const existingToast = document.querySelector('.toast-notification');
+        if (existingToast) {
+            existingToast.remove();
+        }
+
+        const toast = document.createElement('div');
+        toast.className = `toast-notification toast-${type}`;
+        toast.textContent = message;
+        toast.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            border-radius: 6px;
+            color: white;
+            font-size: 0.875rem;
+            z-index: 10000;
+            animation: slideIn 0.3s ease;
+            max-width: 400px;
+            word-wrap: break-word;
+        `;
+
+        // Set background color based on type
+        const colors = {
+            success: '#4ecca3',
+            error: '#e94560',
+            warning: '#ffc107',
+            info: '#3498db'
+        };
+        toast.style.background = colors[type] || colors.info;
+
+        document.body.appendChild(toast);
+
+        setTimeout(() => {
+            toast.style.animation = 'slideOut 0.3s ease';
+            setTimeout(() => toast.remove(), 300);
+        }, duration);
+    }
+
+    // Add toast animation styles
+    const toastStyles = document.createElement('style');
+    toastStyles.textContent = `
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        @keyframes slideOut {
+            from { transform: translateX(0); opacity: 1; }
+            to { transform: translateX(100%); opacity: 0; }
+        }
+    `;
+    document.head.appendChild(toastStyles);
+
+    // =========================================================================
     // API Calls
     // =========================================================================
 
-    async function apiCall(endpoint, method = 'GET', body = null) {
+    async function apiCall(endpoint, method = 'GET', body = null, showErrors = true) {
         const options = {
             method,
             headers: { 'Content-Type': 'application/json' },
@@ -97,8 +156,29 @@
         if (body) {
             options.body = JSON.stringify(body);
         }
-        const response = await fetch(endpoint, options);
-        return response.json();
+
+        try {
+            const response = await fetch(endpoint, options);
+            const data = await response.json();
+
+            if (!response.ok) {
+                const errorMsg = data.detail || data.error || `HTTP ${response.status}`;
+                if (showErrors) {
+                    showToast(`API Error: ${errorMsg}`, 'error');
+                }
+                console.error(`API Error [${method} ${endpoint}]:`, errorMsg);
+                return { error: errorMsg, status: response.status };
+            }
+
+            return data;
+        } catch (error) {
+            const errorMsg = error.message || 'Network error';
+            if (showErrors) {
+                showToast(`Connection Error: ${errorMsg}`, 'error');
+            }
+            console.error(`Fetch Error [${method} ${endpoint}]:`, error);
+            return { error: errorMsg, networkError: true };
+        }
     }
 
     async function loadPresets() {
@@ -155,11 +235,115 @@
         });
     }
 
-    async function sendCharacterChat(characterName, message, showText) {
-        return apiCall(`/api/characters/${characterName}/chat`, 'POST', {
+    async function sendCharacterChat(characterName, message, showText, twitchChatSeconds = null) {
+        const body = {
             message,
             show_text: showText,
+        };
+        if (twitchChatSeconds !== null && twitchChatSeconds !== '') {
+            body.twitch_chat_seconds = parseInt(twitchChatSeconds);
+        }
+        return apiCall(`/api/characters/${characterName}/chat`, 'POST', body);
+    }
+
+    async function getCharacterMemory(characterName) {
+        return apiCall(`/api/characters/${characterName}/memory`);
+    }
+
+    async function clearCharacterMemory(characterName) {
+        return apiCall(`/api/characters/${characterName}/memory`, 'DELETE');
+    }
+
+    function renderChatHistory(messages, characterName) {
+        const historyDiv = document.getElementById('chat-history');
+        const emptyDiv = document.getElementById('chat-history-empty');
+
+        if (!messages || messages.length === 0) {
+            emptyDiv.style.display = 'block';
+            // Clear any existing bubbles
+            historyDiv.querySelectorAll('.chat-bubble').forEach(el => el.remove());
+            return;
+        }
+
+        emptyDiv.style.display = 'none';
+        // Clear existing bubbles
+        historyDiv.querySelectorAll('.chat-bubble').forEach(el => el.remove());
+
+        messages.forEach(msg => {
+            if (msg.role === 'context') {
+                // Render context as a trimmed snippet
+                const lines = msg.content.split('\n');
+                const trimmed = lines.slice(-4).map(l => l.length > 60 ? l.substring(0, 57) + '...' : l).join(' | ');
+                const bubble = document.createElement('div');
+                bubble.className = 'chat-bubble context';
+                const contentDiv = document.createElement('div');
+                contentDiv.className = 'chat-bubble-content';
+                contentDiv.textContent = `📺 Twitch (${lines.length}): ${trimmed}`;
+                bubble.appendChild(contentDiv);
+                historyDiv.appendChild(bubble);
+            } else {
+                const bubble = document.createElement('div');
+                bubble.className = `chat-bubble ${msg.role}`;
+
+                const label = document.createElement('div');
+                label.className = 'chat-bubble-label';
+                label.textContent = msg.role === 'user' ? 'You' : characterName;
+
+                const content = document.createElement('div');
+                content.className = 'chat-bubble-content';
+                content.textContent = msg.content;
+
+                bubble.appendChild(label);
+                bubble.appendChild(content);
+                historyDiv.appendChild(bubble);
+            }
         });
+
+        // Scroll to bottom
+        historyDiv.scrollTop = historyDiv.scrollHeight;
+    }
+
+    function addChatBubble(role, content, characterName) {
+        const historyDiv = document.getElementById('chat-history');
+        const emptyDiv = document.getElementById('chat-history-empty');
+        emptyDiv.style.display = 'none';
+
+        const bubble = document.createElement('div');
+        bubble.className = `chat-bubble ${role}`;
+
+        const label = document.createElement('div');
+        label.className = 'chat-bubble-label';
+        label.textContent = role === 'user' ? 'You' : characterName;
+
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'chat-bubble-content';
+        contentDiv.textContent = content;
+
+        bubble.appendChild(label);
+        bubble.appendChild(contentDiv);
+        historyDiv.appendChild(bubble);
+
+        // Scroll to bottom
+        historyDiv.scrollTop = historyDiv.scrollHeight;
+    }
+
+    function addContextBubble(text) {
+        const historyDiv = document.getElementById('chat-history');
+        const emptyDiv = document.getElementById('chat-history-empty');
+        emptyDiv.style.display = 'none';
+
+        const bubble = document.createElement('div');
+        bubble.className = 'chat-bubble context';
+
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'chat-bubble-content';
+        contentDiv.textContent = text;
+
+        bubble.appendChild(contentDiv);
+        historyDiv.appendChild(bubble);
+
+        // Scroll to bottom
+        historyDiv.scrollTop = historyDiv.scrollHeight;
     }
 
     // =========================================================================
@@ -277,6 +461,12 @@
         document.getElementById('character-temp-value').textContent = '0.7';
         document.getElementById('character-max-tokens').value = 1024;
 
+        // Memory & Twitch settings
+        document.getElementById('character-memory-enabled').checked = false;
+        document.getElementById('character-twitch-chat-enabled').checked = false;
+        document.getElementById('character-twitch-chat-seconds').value = 60;
+        document.getElementById('character-twitch-chat-max').value = 20;
+
         characterModal.classList.add('active');
     }
 
@@ -328,6 +518,12 @@
         document.getElementById('character-temp-value').textContent = character.temperature.toFixed(1);
         document.getElementById('character-max-tokens').value = character.max_tokens;
 
+        // Memory & Twitch settings
+        document.getElementById('character-memory-enabled').checked = character.memory_enabled || false;
+        document.getElementById('character-twitch-chat-enabled').checked = character.twitch_chat_enabled || false;
+        document.getElementById('character-twitch-chat-seconds').value = character.twitch_chat_window_seconds || 60;
+        document.getElementById('character-twitch-chat-max').value = character.twitch_chat_max_messages || 20;
+
         characterModal.classList.add('active');
     }
 
@@ -366,6 +562,10 @@
             model: document.getElementById('character-model').value,
             temperature: parseInt(document.getElementById('character-temperature').value) / 100,
             max_tokens: parseInt(document.getElementById('character-max-tokens').value),
+            memory_enabled: document.getElementById('character-memory-enabled').checked,
+            twitch_chat_enabled: document.getElementById('character-twitch-chat-enabled').checked,
+            twitch_chat_window_seconds: parseInt(document.getElementById('character-twitch-chat-seconds').value),
+            twitch_chat_max_messages: parseInt(document.getElementById('character-twitch-chat-max').value),
         };
 
         try {
@@ -448,7 +648,7 @@
 
     const chatModal = document.getElementById('chat-modal');
 
-    function openChatModal(characterName) {
+    async function openChatModal(characterName) {
         const character = characters.find(c => c.name === characterName);
         if (!character) return;
 
@@ -462,8 +662,22 @@
         document.getElementById('chat-modal-title').textContent = `Chat with ${character.name}`;
         document.getElementById('chat-message').value = '';
         document.getElementById('chat-show-text').checked = true;
+        document.getElementById('chat-include-twitch').checked = true;
+        document.getElementById('chat-twitch-seconds').value = '';
         document.getElementById('chat-status').style.display = 'none';
+        document.getElementById('chat-twitch-details').style.display = 'none';
         document.getElementById('chat-send-btn').disabled = false;
+
+        // Load and display memory/history
+        try {
+            const memoryInfo = await getCharacterMemory(characterName);
+            document.getElementById('chat-memory-count').textContent =
+                `Memory: ${memoryInfo.message_count} messages${character.memory_enabled ? '' : ' (disabled)'}`;
+            renderChatHistory(memoryInfo.messages, characterName);
+        } catch (e) {
+            document.getElementById('chat-memory-count').textContent = 'Memory: 0 messages';
+            renderChatHistory([], characterName);
+        }
 
         chatModal.classList.add('active');
     }
@@ -478,6 +692,13 @@
 
         const message = document.getElementById('chat-message').value.trim();
         const showText = document.getElementById('chat-show-text').checked;
+        const includeTwitch = document.getElementById('chat-include-twitch').checked;
+        let twitchSeconds = document.getElementById('chat-twitch-seconds').value;
+
+        // If Include Twitch is unchecked, force twitch_chat_seconds to 0
+        if (!includeTwitch) {
+            twitchSeconds = '0';
+        }
 
         if (!message) {
             alert('Please enter a message');
@@ -493,19 +714,72 @@
         sendBtn.disabled = true;
 
         try {
-            const result = await sendCharacterChat(chatCharacter.name, message, showText);
+            // Add user message bubble immediately
+            addChatBubble('user', message, chatCharacter.name);
+            document.getElementById('chat-message').value = '';
+
+            const result = await sendCharacterChat(chatCharacter.name, message, showText, twitchSeconds);
             if (result.error || result.detail) {
                 statusText.textContent = `Error: ${result.error || result.detail}`;
             } else {
-                statusText.textContent = 'Response complete!';
-                document.getElementById('chat-message').value = '';
+                // Add Twitch context bubble if present
+                if (result.twitch_chat_context) {
+                    const lines = result.twitch_chat_context.split('\n');
+                    // Show trimmed version (last 3-5 messages)
+                    const trimmed = lines.slice(-4).map(l => l.length > 60 ? l.substring(0, 57) + '...' : l).join(' | ');
+                    addContextBubble(`📺 Twitch chat (${lines.length}): ${trimmed}`);
+                }
+
+                // Add assistant response bubble
+                addChatBubble('assistant', result.response_text, chatCharacter.name);
+
+                let statusMsg = 'Response complete!';
+                const twitchDetails = document.getElementById('chat-twitch-details');
+                const twitchSummary = document.getElementById('chat-twitch-summary');
+                const twitchContextText = document.getElementById('chat-twitch-context-text');
+
+                if (result.twitch_chat_context) {
+                    const lines = result.twitch_chat_context.split('\n').length;
+                    statusMsg += ` (${lines} chat msgs)`;
+                    twitchSummary.textContent = `Twitch Chat Context (${lines} messages)`;
+                    twitchContextText.textContent = result.twitch_chat_context;
+                    twitchDetails.style.display = 'block';
+                } else {
+                    twitchDetails.style.display = 'none';
+                }
+                statusText.textContent = statusMsg;
                 loadHistory();
+                // Update memory count
+                const memoryInfo = await getCharacterMemory(chatCharacter.name);
+                document.getElementById('chat-memory-count').textContent =
+                    `Memory: ${memoryInfo.message_count} messages${chatCharacter.memory_enabled ? '' : ' (not saving)'}`;
             }
         } catch (error) {
             console.error('Chat error:', error);
             statusText.textContent = `Error: ${error.message || 'Unknown error'}`;
         } finally {
             sendBtn.disabled = false;
+        }
+    }
+
+    async function clearChatMemory() {
+        if (!chatCharacter) return;
+
+        if (!confirm(`Clear conversation memory for ${chatCharacter.name}?`)) {
+            return;
+        }
+
+        try {
+            await clearCharacterMemory(chatCharacter.name);
+            document.getElementById('chat-memory-count').textContent = 'Memory: 0 messages';
+            document.getElementById('chat-status').style.display = 'block';
+            document.getElementById('chat-status-text').textContent = 'Memory cleared!';
+            // Clear the chat history UI
+            renderChatHistory([], chatCharacter.name);
+            document.getElementById('chat-twitch-details').style.display = 'none';
+        } catch (error) {
+            console.error('Error clearing memory:', error);
+            alert('Error clearing memory');
         }
     }
 
@@ -625,6 +899,7 @@
     window.openChatModal = openChatModal;
     window.closeChatModal = closeChatModal;
     window.sendChat = sendChat;
+    window.clearChatMemory = clearChatMemory;
 
     // Preview exports
     window.previewCharacterTextStyle = previewCharacterTextStyle;
@@ -651,6 +926,32 @@
             prompt('Copy this URL:', url);
         }
     };
+
+    // =========================================================================
+    // Twitch Status
+    // =========================================================================
+
+    const twitchBtn = document.getElementById('twitch-btn');
+    const twitchBtnText = document.getElementById('twitch-btn-text');
+
+    async function checkTwitchStatus() {
+        if (!twitchBtn || !twitchBtnText) return;
+
+        try {
+            const response = await fetch('/api/twitch/status');
+            const data = await response.json();
+
+            if (data.connected) {
+                twitchBtn.classList.add('connected');
+                twitchBtnText.textContent = `#${data.channel}`;
+            } else {
+                twitchBtn.classList.remove('connected');
+                twitchBtnText.textContent = 'Twitch';
+            }
+        } catch (e) {
+            console.error('Error checking Twitch status:', e);
+        }
+    }
 
     // =========================================================================
     // Initialize
@@ -692,7 +993,11 @@
     getAllCharacters();
     loadPresets();
     loadHistory();
+    checkTwitchStatus();
 
     // Refresh history periodically
     setInterval(loadHistory, 10000);
+
+    // Refresh Twitch status periodically
+    setInterval(checkTwitchStatus, 15000);
 })();

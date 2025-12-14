@@ -94,6 +94,9 @@ class Character(SQLModel, table=True):
     twitch_chat_window_seconds: int = SQLField(default=60)
     twitch_chat_max_messages: int = SQLField(default=20)
 
+    # Conversation memory settings
+    memory_enabled: bool = SQLField(default=False)
+
     created_at: datetime = SQLField(default_factory=datetime.utcnow)
     updated_at: datetime | None = SQLField(default=None)
 
@@ -216,6 +219,9 @@ class CharacterCreate(BaseModel):
     twitch_chat_window_seconds: int = Field(default=60, ge=10, le=300)
     twitch_chat_max_messages: int = Field(default=20, ge=5, le=50)
 
+    # Conversation memory settings
+    memory_enabled: bool = False
+
 
 class CharacterUpdate(BaseModel):
     """Request to update a character."""
@@ -257,7 +263,10 @@ class CharacterUpdate(BaseModel):
     # Twitch chat settings
     twitch_chat_enabled: bool | None = None
     twitch_chat_window_seconds: int | None = Field(default=None, ge=10, le=300)
-    twitch_chat_max_messages: int | None = Field(default=None, ge=5, le=50)
+    twitch_chat_max_messages: int | None = Field(default=None, ge=5, le=1000)
+
+    # Conversation memory settings
+    memory_enabled: bool | None = None
 
 
 class CharacterResponse(BaseModel):
@@ -304,6 +313,9 @@ class CharacterResponse(BaseModel):
     twitch_chat_window_seconds: int
     twitch_chat_max_messages: int
 
+    # Conversation memory settings
+    memory_enabled: bool
+
     # Status
     connected: bool = False
     playing: bool = False
@@ -317,6 +329,7 @@ class ChatRequest(BaseModel):
 
     message: str
     show_text: bool = True
+    twitch_chat_seconds: int | None = Field(default=None, ge=0, le=300)  # Override character default, 0 = disabled
 
 
 class ChatResponse(BaseModel):
@@ -325,6 +338,7 @@ class ChatResponse(BaseModel):
     success: bool
     character: str
     response_text: str  # Full response for logging
+    twitch_chat_context: str | None = None  # Truncated Twitch chat that was included
 
 
 # =============================================================================

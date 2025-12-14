@@ -425,15 +425,109 @@
         .tts-controls .control-row {
             margin-bottom: 0.5rem;
         }
+
+        /* Header actions */
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .twitch-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: #9146ff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            text-decoration: none;
+            transition: background 0.2s;
+        }
+
+        .twitch-btn:hover {
+            background: #a970ff;
+        }
+
+        .twitch-btn.connected {
+            background: var(--success);
+        }
+
+        .twitch-btn svg {
+            width: 16px;
+            height: 16px;
+        }
+
+        /* Chat message bubbles */
+        .chat-bubble {
+            margin-bottom: 0.75rem;
+            max-width: 85%;
+        }
+        .chat-bubble.user {
+            margin-left: auto;
+            text-align: right;
+        }
+        .chat-bubble.assistant {
+            margin-right: auto;
+        }
+        .chat-bubble-label {
+            font-size: 0.625rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.25rem;
+            text-transform: uppercase;
+        }
+        .chat-bubble-content {
+            padding: 0.5rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.875rem;
+            line-height: 1.4;
+            display: inline-block;
+            text-align: left;
+        }
+        .chat-bubble.user .chat-bubble-content {
+            background: var(--accent);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+        .chat-bubble.assistant .chat-bubble-content {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border-bottom-left-radius: 4px;
+        }
+        .chat-bubble.context {
+            margin: 0 auto 0.5rem auto;
+            max-width: 95%;
+            text-align: center;
+        }
+        .chat-bubble.context .chat-bubble-content {
+            background: transparent;
+            border: 1px dashed var(--text-secondary);
+            color: var(--text-secondary);
+            font-size: 0.7rem;
+            padding: 0.375rem 0.5rem;
+            opacity: 0.8;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
             <h1>OBS Audio Harness</h1>
-            <div class="status-indicator">
-                <div class="status-dot" id="ws-status"></div>
-                <span id="ws-status-text">Connecting...</span>
+            <div class="header-actions">
+                <a href="/twitch" class="twitch-btn" id="twitch-btn">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714Z"/>
+                    </svg>
+                    <span id="twitch-btn-text">Twitch</span>
+                </a>
+                <div class="status-indicator">
+                    <div class="status-dot" id="ws-status"></div>
+                    <span id="ws-status-text">Connecting...</span>
+                </div>
             </div>
         </header>
 
@@ -640,6 +734,29 @@
                     <input type="number" id="character-max-tokens" value="1024" min="1" max="8192">
                 </div>
 
+                <!-- Memory & Twitch Settings -->
+                <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--bg-secondary);">
+                    <div class="section-title" style="font-size: 0.75rem; margin-bottom: 0.75rem;">Memory & Twitch</div>
+                </div>
+                <div class="form-group checkbox">
+                    <input type="checkbox" id="character-memory-enabled">
+                    <label for="character-memory-enabled">Enable conversation memory</label>
+                </div>
+                <div class="form-group checkbox">
+                    <input type="checkbox" id="character-twitch-chat-enabled">
+                    <label for="character-twitch-chat-enabled">Enable Twitch chat context</label>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Chat Window (seconds)</label>
+                        <input type="number" id="character-twitch-chat-seconds" value="60" min="10" max="300">
+                    </div>
+                    <div class="form-group">
+                        <label>Max Messages</label>
+                        <input type="number" id="character-twitch-chat-max" value="20" min="5" max="50">
+                    </div>
+                </div>
+
                 <div class="button-row">
                     <button type="submit">Save</button>
                     <button type="button" class="secondary" onclick="window.closeCharacterModal()">Cancel</button>
@@ -672,21 +789,54 @@
 
     <!-- Chat Modal (AI) -->
     <div id="chat-modal" class="modal">
-        <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-content" style="max-width: 700px;">
             <h2 id="chat-modal-title">Chat with Character</h2>
-            <div class="form-group">
-                <label>Message</label>
-                <textarea id="chat-message" rows="3" placeholder="Type your message here..." style="width: 100%; padding: 0.5rem; border: none; border-radius: 4px; background: var(--bg-secondary); color: var(--text-primary); font-size: 0.875rem; resize: vertical;"></textarea>
+
+            <!-- Conversation History -->
+            <div id="chat-history-container" style="margin-bottom: 1rem;">
+                <div id="chat-history" style="background: var(--bg-primary); border-radius: 8px; padding: 1rem; max-height: 300px; overflow-y: auto; min-height: 100px;">
+                    <div id="chat-history-empty" style="color: var(--text-secondary); text-align: center; padding: 2rem;">
+                        No conversation yet. Send a message to start chatting.
+                    </div>
+                </div>
             </div>
-            <div class="form-group checkbox">
-                <input type="checkbox" id="chat-show-text" checked>
-                <label for="chat-show-text">Show text overlay</label>
+
+            <!-- Twitch Context (collapsible) -->
+            <details id="chat-twitch-details" style="margin-bottom: 1rem; display: none;">
+                <summary style="cursor: pointer; font-size: 0.75rem; color: var(--text-secondary);">
+                    <span id="chat-twitch-summary">Twitch Chat Context</span>
+                </summary>
+                <pre id="chat-twitch-context-text" style="background: var(--bg-secondary); padding: 0.5rem; border-radius: 4px; font-size: 0.7rem; max-height: 120px; overflow-y: auto; white-space: pre-wrap; margin: 0.5rem 0 0 0;"></pre>
+            </details>
+
+            <!-- Message Input -->
+            <div class="form-group" style="margin-bottom: 0.75rem;">
+                <textarea id="chat-message" rows="2" placeholder="Type your message here..." style="width: 100%; padding: 0.5rem; border: none; border-radius: 4px; background: var(--bg-secondary); color: var(--text-primary); font-size: 0.875rem; resize: vertical;"></textarea>
             </div>
-            <div id="chat-status" style="margin-bottom: 1rem; padding: 0.5rem; background: var(--bg-secondary); border-radius: 4px; display: none;">
+
+            <!-- Options Row -->
+            <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 0.75rem; flex-wrap: wrap;">
+                <div class="form-group checkbox" style="margin: 0;">
+                    <input type="checkbox" id="chat-show-text" checked>
+                    <label for="chat-show-text">Show text</label>
+                </div>
+                <div class="form-group checkbox" style="margin: 0;">
+                    <input type="checkbox" id="chat-include-twitch" checked>
+                    <label for="chat-include-twitch">Include Twitch</label>
+                </div>
+                <div id="chat-twitch-seconds-container" style="display: flex; align-items: center; gap: 0.5rem;">
+                    <label style="font-size: 0.75rem; color: var(--text-secondary);">sec:</label>
+                    <input type="number" id="chat-twitch-seconds" placeholder="def" min="0" max="300" style="width: 50px; padding: 0.25rem 0.5rem; border: none; border-radius: 4px; background: var(--bg-secondary); color: var(--text-primary); font-size: 0.75rem;">
+                </div>
+                <span id="chat-memory-count" style="font-size: 0.75rem; color: var(--text-secondary);">Memory: 0 messages</span>
+            </div>
+
+            <div id="chat-status" style="margin-bottom: 0.75rem; padding: 0.5rem; background: var(--bg-secondary); border-radius: 4px; display: none;">
                 <span id="chat-status-text">Ready</span>
             </div>
             <div class="button-row">
                 <button type="button" onclick="window.sendChat()" id="chat-send-btn">Send</button>
+                <button type="button" class="secondary" onclick="window.clearChatMemory()">Clear</button>
                 <button type="button" class="secondary" onclick="window.closeChatModal()">Close</button>
             </div>
         </div>
