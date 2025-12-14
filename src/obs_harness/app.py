@@ -150,10 +150,11 @@ class ConnectionManager:
         """Check if a channel has any connections."""
         return channel in self._connections and len(self._connections[channel]) > 0
 
-    def set_channel_state(self, channel: str, key: str, value: Any) -> None:
-        """Update channel state."""
+    async def set_channel_state(self, channel: str, key: str, value: Any) -> None:
+        """Update channel state and notify dashboard."""
         if channel in self._channel_state:
             self._channel_state[channel][key] = value
+            await self._notify_dashboard()
 
     async def _notify_dashboard(self) -> None:
         """Notify all dashboard connections of state changes."""
@@ -178,7 +179,7 @@ class OBSHarness:
         cmd = PlayCommand(file=f"/static/audio/{file}", volume=volume, loop=loop)
         success = await self._manager.send_to_channel(channel, cmd.model_dump())
         if success:
-            self._manager.set_channel_state(channel, "playing", True)
+            await self._manager.set_channel_state(channel, "playing", True)
             await self._log_playback(channel, file, "audio")
         return success
 
@@ -187,7 +188,7 @@ class OBSHarness:
         cmd = StopCommand()
         success = await self._manager.send_to_channel(channel, cmd.model_dump())
         if success:
-            self._manager.set_channel_state(channel, "playing", False)
+            await self._manager.set_channel_state(channel, "playing", False)
         return success
 
     async def set_volume(self, channel: str, level: float) -> bool:
@@ -202,7 +203,7 @@ class OBSHarness:
         cmd = StreamStartCommand(sample_rate=sample_rate, channels=channels)
         success = await self._manager.send_to_channel(channel, cmd.model_dump())
         if success:
-            self._manager.set_channel_state(channel, "streaming", True)
+            await self._manager.set_channel_state(channel, "streaming", True)
             await self._log_playback(channel, "stream", "stream")
         return success
 
@@ -224,7 +225,7 @@ class OBSHarness:
         cmd = StopStreamCommand()
         success = await self._manager.send_to_channel(channel, cmd.model_dump())
         if success:
-            self._manager.set_channel_state(channel, "streaming", False)
+            await self._manager.set_channel_state(channel, "streaming", False)
         return success
 
     async def show_text(
@@ -636,12 +637,12 @@ def create_app(
                     event_type = event.get("event")
 
                     if event_type == "ended":
-                        manager.set_channel_state(character, "playing", False)
+                        await manager.set_channel_state(character, "playing", False)
                     elif event_type == "stream_ended":
-                        manager.set_channel_state(character, "streaming", False)
+                        await manager.set_channel_state(character, "streaming", False)
                     elif event_type == "stream_stopped":
                         # Browser reports actual playback position when forcefully stopped
-                        manager.set_channel_state(character, "streaming", False)
+                        await manager.set_channel_state(character, "streaming", False)
                         actual_text = event.get("spoken_text", "")
                         playback_time = event.get("playback_time", 0)
                         word_count = event.get("word_count", 0)
@@ -1307,22 +1308,25 @@ def create_app(
         Note: The interrupted message is saved by the original chat endpoint
         when it detects it was cancelled, not here.
         """
+        was_active = False
+        spoken_text = None
+
         async with get_generation_lock(name):
-            if name not in active_generations:
-                return {"success": True, "character": name, "was_active": False}
+            if name in active_generations:
+                was_active = True
+                # Cancel the generation (sets _cancelled=True)
+                spoken_text = await cancel_active_generation(name)
 
-            # Cancel the generation (sets _cancelled=True)
-            spoken_text = await cancel_active_generation(name)
+        # Always send stop command to browser - audio may still be playing
+        # even if generation has already completed
+        await harness.stop_stream(name)
 
-            # Forcefully stop audio playback and clear text in browser
-            await harness.stop_stream(name)
-
-            return {
-                "success": True,
-                "character": name,
-                "was_active": True,
-                "spoken_text": spoken_text,
-            }
+        return {
+            "success": True,
+            "character": name,
+            "was_active": was_active,
+            "spoken_text": spoken_text,
+        }
 
     @app.delete("/api/characters/{name}/memory")
     async def clear_character_memory(name: str) -> dict:

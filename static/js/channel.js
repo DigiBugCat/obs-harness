@@ -395,6 +395,7 @@ console.log('[channel.js] VERSION 8 LOADED - nuclear AudioContext close on stop'
         wordTimingEnabled = false;
         wordTimingData = [];
         revealedWordCount = 0;
+        lastAppendWasNewline = false;
 
         // Clear pending text state
         pendingTextSettings = null;
@@ -472,6 +473,7 @@ console.log('[channel.js] VERSION 8 LOADED - nuclear AudioContext close on stop'
         wordTimingEnabled = false;
         wordTimingData = [];
         revealedWordCount = 0;
+        lastAppendWasNewline = false;
 
         // Always buffer text settings - flushPendingText will activate when audio starts
         // This ensures correct ordering even if text_stream_start arrives before stream_start resets flags
@@ -529,6 +531,7 @@ console.log('[channel.js] VERSION 8 LOADED - nuclear AudioContext close on stop'
             wordTimingEnabled = false;
             wordTimingData = [];
             revealedWordCount = 0;
+            lastAppendWasNewline = false;
         }, fadeDelay);
 
         textAnimator.endStream(fadeDelay);
@@ -577,6 +580,13 @@ console.log('[channel.js] VERSION 8 LOADED - nuclear AudioContext close on stop'
     // Animation Loop
     // =========================================================================
 
+    // Pause thresholds for natural line breaks (seconds)
+    const PAUSE_THRESHOLD = 0.3;      // 300ms pause = new line
+    const LONG_PAUSE_THRESHOLD = 1.0; // 1s pause = treat as new thought (could trigger clear)
+
+    // Track if last append was a newline (avoid consecutive newlines)
+    let lastAppendWasNewline = false;
+
     function updateWordTimingReveal() {
         // Check if we should reveal more words based on audio playback time
         if (!wordTimingEnabled || !audioContext || wordTimingData.length === 0) {
@@ -595,10 +605,36 @@ console.log('[channel.js] VERSION 8 LOADED - nuclear AudioContext close on stop'
         while (revealedWordCount < wordTimingData.length) {
             const word = wordTimingData[revealedWordCount];
             if (currentAudioTime >= word.start) {
-                // Reveal this word (append with space if not first word)
-                const prefix = revealedWordCount > 0 ? ' ' : '';
+                // Determine prefix based on pause duration from previous word
+                let prefix = '';
+                let pauseDuration = 0;
+
+                if (revealedWordCount > 0) {
+                    const prevWord = wordTimingData[revealedWordCount - 1];
+                    pauseDuration = word.start - prevWord.end;
+
+                    // Check if previous word ended with sentence punctuation (ignore formatting markers)
+                    const prevWordClean = prevWord.word.replace(/[*^]/g, '');
+                    const prevEndsWithPunctuation = /[.!?]["']?$/.test(prevWordClean);
+
+                    // Longer pause OR sentence ending = new line (mimics natural speech cadence)
+                    if ((pauseDuration >= PAUSE_THRESHOLD || prevEndsWithPunctuation) && !lastAppendWasNewline) {
+                        prefix = '\n';
+                        lastAppendWasNewline = true;
+                    } else {
+                        prefix = ' ';
+                        lastAppendWasNewline = false;
+                    }
+                } else {
+                    lastAppendWasNewline = false;
+                }
+
                 const fullText = prefix + word.word;
-                console.log(`[REVEAL] "${word.word}" at ${currentAudioTime.toFixed(2)}s (word ${revealedWordCount + 1}/${wordTimingData.length})`);
+                if (pauseDuration >= PAUSE_THRESHOLD) {
+                    console.log(`[REVEAL] "${word.word}" at ${currentAudioTime.toFixed(2)}s (pause: ${(pauseDuration * 1000).toFixed(0)}ms → newline)`);
+                } else {
+                    console.log(`[REVEAL] "${word.word}" at ${currentAudioTime.toFixed(2)}s`);
+                }
                 textAnimator.appendText(fullText);
                 revealedWordCount++;
             } else {

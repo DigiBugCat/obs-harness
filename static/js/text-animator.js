@@ -24,17 +24,16 @@ class TextAnimator {
         this.streamFadeDuration = 1000;
         this.streamOpacity = 1;
 
-        // Character cap for display
-        this.maxDisplayChars = 120;
+        // Max lines to display at once (cull old sentences when exceeded)
+        this.maxDisplayLines = 4;
 
-        // Fade-out state for clearing old lines
+        // Fade-out state for clearing old sentences
         this.clearFadeStart = null;
         this.clearFadeDuration = 400; // ms
-        this.pendingLinesToRemove = null;
+        this.pendingSentencesToRemove = null;
 
-        // Committed lines - locked and won't re-wrap
-        this.committedLines = [];
-        this.committedCharCount = 0;
+        // Committed sentences - each sentence is an array of lines
+        this.committedSentences = [];
         this.lastCommittedIndex = 0; // Index in streamText where we last committed
     }
 
@@ -420,9 +419,8 @@ class TextAnimator {
         this.streamText = '';
         this.revealIndex = 0;
         this.clearFadeStart = null;
-        this.pendingLinesToRemove = null;
-        this.committedLines = [];
-        this.committedCharCount = 0;
+        this.pendingSentencesToRemove = null;
+        this.committedSentences = [];
         this.lastCommittedIndex = 0;
         this.streamSettings = {
             fontFamily: settings.fontFamily || 'Arial',
@@ -473,9 +471,8 @@ class TextAnimator {
         this.streamText = '';
         this.revealIndex = 0;
         this.clearFadeStart = null;
-        this.pendingLinesToRemove = null;
-        this.committedLines = [];
-        this.committedCharCount = 0;
+        this.pendingSentencesToRemove = null;
+        this.committedSentences = [];
         this.lastCommittedIndex = 0;
         this.streamFadeStart = null;
         this.streamSettings = null;
@@ -523,20 +520,21 @@ class TextAnimator {
 
     /**
      * Parse text into formatted segments.
-     * Supports **bold**, *italic*, and newlines.
+     * Supports **bold**, *italic*, ^whisper^, and newlines.
      * @param {string} text - Raw text with formatting markers
-     * @returns {Array} Array of {text, bold, italic, newline} segments
+     * @returns {Array} Array of {text, bold, italic, whisper, newline} segments
      */
     parseFormattedText(text) {
         const segments = [];
         let remaining = text;
         let currentBold = false;
         let currentItalic = false;
+        let currentWhisper = false;
 
         while (remaining.length > 0) {
             // Check for newline
             if (remaining[0] === '\n') {
-                segments.push({ text: '', newline: true, bold: false, italic: false });
+                segments.push({ text: '', newline: true, bold: false, italic: false, whisper: false });
                 remaining = remaining.substring(1);
                 continue;
             }
@@ -555,11 +553,19 @@ class TextAnimator {
                 continue;
             }
 
+            // Check for whisper marker ^
+            if (remaining[0] === '^') {
+                currentWhisper = !currentWhisper;
+                remaining = remaining.substring(1);
+                continue;
+            }
+
             // Find next marker or newline
             let nextMarker = remaining.length;
             const markers = [
                 remaining.indexOf('**'),
                 remaining.indexOf('*'),
+                remaining.indexOf('^'),
                 remaining.indexOf('\n')
             ].filter(i => i > 0);
 
@@ -574,6 +580,7 @@ class TextAnimator {
                     text: chunk,
                     bold: currentBold,
                     italic: currentItalic,
+                    whisper: currentWhisper,
                     newline: false
                 });
             }
@@ -595,8 +602,11 @@ class TextAnimator {
 
         for (const seg of segments) {
             if (seg.newline) continue;
-            const fontStyle = (seg.bold ? 'bold ' : '') + (seg.italic ? 'italic ' : '');
-            ctx.font = `${fontStyle}${settings.fontSize}px ${settings.fontFamily}`;
+            // Whisper uses italic and smaller font
+            const isItalic = seg.italic || seg.whisper;
+            const fontSize = seg.whisper ? settings.fontSize * 0.85 : settings.fontSize;
+            const fontStyle = (seg.bold ? 'bold ' : '') + (isItalic ? 'italic ' : '');
+            ctx.font = `${fontStyle}${fontSize}px ${settings.fontFamily}`;
             width += ctx.measureText(seg.text).width;
         }
 
@@ -618,11 +628,21 @@ class TextAnimator {
         let currentLineWidth = 0;
 
         for (const seg of segments) {
-            if (seg.newline) continue;
+            // Handle explicit newlines - finish current line and start new one
+            if (seg.newline) {
+                if (currentLine.length > 0) {
+                    lines.push({ segments: currentLine, isQuote });
+                    currentLine = [];
+                    currentLineWidth = 0;
+                }
+                continue;
+            }
 
-            // Set font for accurate measurement
-            const fontStyle = (seg.bold ? 'bold ' : '') + (seg.italic ? 'italic ' : '');
-            this.ctx.font = `${fontStyle}${settings.fontSize}px ${settings.fontFamily}`;
+            // Set font for accurate measurement (whisper uses smaller font)
+            const isItalic = seg.italic || seg.whisper;
+            const fontSize = seg.whisper ? settings.fontSize * 0.85 : settings.fontSize;
+            const fontStyle = (seg.bold ? 'bold ' : '') + (isItalic ? 'italic ' : '');
+            this.ctx.font = `${fontStyle}${fontSize}px ${settings.fontFamily}`;
 
             // Split segment text by word boundaries (keeping whitespace)
             const parts = seg.text.split(/(\s+)/);
@@ -642,7 +662,7 @@ class TextAnimator {
 
                 // Add part to current line (preserving formatting from original segment)
                 if (part.trim() || currentLine.length > 0) {
-                    currentLine.push({ text: part, bold: seg.bold, italic: seg.italic, newline: false });
+                    currentLine.push({ text: part, bold: seg.bold, italic: seg.italic, whisper: seg.whisper, newline: false });
                     currentLineWidth += partWidth;
                 }
             }
@@ -689,24 +709,26 @@ class TextAnimator {
     findSentenceEnd(text, startFrom = 0) {
         const endings = ['. ', '! ', '? ', '.\n', '!\n', '?\n', '."', '!"', '?"', ".'", "!'", "?'"];
         let earliest = -1;
+        let matchedEnding = null;
 
         for (const ending of endings) {
             const idx = text.indexOf(ending, startFrom);
             if (idx !== -1 && (earliest === -1 || idx < earliest)) {
                 earliest = idx;
+                matchedEnding = ending;
             }
         }
 
-        if (earliest !== -1) {
-            // Return position after the sentence-ending punctuation
-            return earliest + 1;
+        if (earliest !== -1 && matchedEnding) {
+            // Return position after the full ending pattern (e.g., after ." not just .)
+            return earliest + matchedEnding.length;
         }
         return -1;
     }
 
     /**
      * Draw streaming text with word wrapping and formatting.
-     * Uses committed lines to prevent text from shifting.
+     * Uses committed sentences to prevent text from shifting.
      */
     drawStream() {
         if (!this.streamText || !this.streamSettings) return;
@@ -716,19 +738,17 @@ class TextAnimator {
         const maxWidth = this.width * 0.9;
         const lineHeight = settings.fontSize * 1.3;
 
-        // Handle fade-out animation for clearing old text
+        // Handle fade-out animation for clearing old sentences
         let clearFadeOpacity = 1;
         if (this.clearFadeStart !== null) {
             const fadeElapsed = performance.now() - this.clearFadeStart;
             clearFadeOpacity = 1 - (fadeElapsed / this.clearFadeDuration);
 
             if (clearFadeOpacity <= 0) {
-                // Fade complete - remove oldest committed lines
-                const linesToRemove = this.pendingLinesToRemove || 1;
-                this.committedLines.splice(0, linesToRemove);
-                // Recalculate committed char count
-                this.committedCharCount = this.committedLines.reduce((sum, l) => sum + l.charCount, 0);
-                this.pendingLinesToRemove = null;
+                // Fade complete - remove oldest committed sentences
+                const sentencesToRemove = this.pendingSentencesToRemove || 1;
+                this.committedSentences.splice(0, sentencesToRemove);
+                this.pendingSentencesToRemove = null;
                 this.clearFadeStart = null;
                 clearFadeOpacity = 1;
             }
@@ -744,7 +764,7 @@ class TextAnimator {
         let sentenceEnd = this.findSentenceEnd(unprocessedText, searchPos);
 
         while (sentenceEnd !== -1) {
-            // Found a sentence ending - commit text up to this point
+            // Found a sentence ending - commit this sentence
             const sentenceText = unprocessedText.substring(searchPos, sentenceEnd);
 
             if (sentenceText.trim()) {
@@ -754,19 +774,15 @@ class TextAnimator {
                 if (formatState.bold) textToWrap = '**' + textToWrap;
                 if (formatState.italic) textToWrap = '*' + textToWrap;
 
-                // Wrap and commit this sentence
+                // Wrap this sentence into lines
                 const isQuote = textToWrap.trimStart().startsWith('>');
                 const paraText = isQuote ? textToWrap.trimStart().substring(1).trimStart() : textToWrap;
                 const wrappedLines = this.wrapFormattedParagraph(paraText, maxWidth, settings, isQuote);
 
-                for (const line of wrappedLines) {
-                    const lineCharCount = line.segments.reduce((sum, s) => sum + s.text.length, 0);
-                    this.committedLines.push({
-                        ...line,
-                        charCount: lineCharCount
-                    });
-                    this.committedCharCount += lineCharCount;
-                }
+                // Store as a sentence (group of lines)
+                this.committedSentences.push({
+                    lines: wrappedLines
+                });
             }
 
             searchPos = sentenceEnd;
@@ -779,28 +795,6 @@ class TextAnimator {
 
         // Update last committed index
         this.lastCommittedIndex += searchPos;
-
-        // Apply character cap - start fade if we've exceeded max chars
-        if (this.committedCharCount > this.maxDisplayChars && this.clearFadeStart === null && this.committedLines.length > 1) {
-            // Find how many lines to remove to get under the cap
-            let charsToRemove = this.committedCharCount - this.maxDisplayChars;
-            let linesToRemove = 0;
-            let removedChars = 0;
-
-            for (const line of this.committedLines) {
-                if (removedChars >= charsToRemove) break;
-                removedChars += line.charCount;
-                linesToRemove++;
-            }
-
-            // Keep at least one line
-            linesToRemove = Math.min(linesToRemove, this.committedLines.length - 1);
-
-            if (linesToRemove > 0) {
-                this.pendingLinesToRemove = linesToRemove;
-                this.clearFadeStart = performance.now();
-            }
-        }
 
         // Get current (uncommitted) text
         const currentText = revealedText.substring(this.lastCommittedIndex);
@@ -818,16 +812,27 @@ class TextAnimator {
             currentLines = this.wrapFormattedParagraph(paraText, maxWidth, settings, isQuote);
         }
 
+        // Flatten committed sentences into lines array
+        const committedLines = this.committedSentences.flatMap(s => s.lines);
+
         // Combine committed + current lines
-        const allLines = [...this.committedLines, ...currentLines];
+        const allLines = [...committedLines, ...currentLines];
+
+        // Apply line cap - when total lines exceed max, fade out everything and start fresh
+        // (only if we have committed sentences to clear)
+        const totalLines = allLines.length;
+        if (totalLines > this.maxDisplayLines && this.clearFadeStart === null && this.committedSentences.length > 0) {
+            // Fade out all lines, then reset
+            this.pendingSentencesToRemove = this.committedSentences.length;
+            this.clearFadeStart = performance.now();
+        }
 
         if (allLines.length === 0) return;
 
-        // Calculate position (centered)
-        const totalHeight = allLines.length * lineHeight;
+        // Calculate position - anchor to top, horizontally centered
         const centerX = settings.positionX * this.width;
-        const centerY = settings.positionY * this.height;
-        const startY = centerY - totalHeight / 2 + lineHeight / 2;
+        const topY = settings.positionY * this.height;
+        const startY = topY + lineHeight / 2;
 
         // Draw each line
         ctx.save();
@@ -854,8 +859,11 @@ class TextAnimator {
             for (const seg of line.segments) {
                 if (seg.newline) continue;
 
-                const fontStyle = (seg.bold ? 'bold ' : '') + (seg.italic ? 'italic ' : '');
-                ctx.font = `${fontStyle}${settings.fontSize}px ${settings.fontFamily}`;
+                // Whisper uses italic and smaller font
+                const isItalic = seg.italic || seg.whisper;
+                const fontSize = seg.whisper ? settings.fontSize * 0.85 : settings.fontSize;
+                const fontStyle = (seg.bold ? 'bold ' : '') + (isItalic ? 'italic ' : '');
+                ctx.font = `${fontStyle}${fontSize}px ${settings.fontFamily}`;
 
                 const segWidth = ctx.measureText(seg.text).width;
 
@@ -866,8 +874,14 @@ class TextAnimator {
                     ctx.strokeText(seg.text, lineX, lineY);
                 }
 
-                // Draw fill - use quote color if it's a quote line
-                ctx.fillStyle = line.isQuote ? (settings.quoteColor || '#aaaaaa') : settings.color;
+                // Draw fill - whisper uses lighter color, quote uses quote color
+                if (seg.whisper) {
+                    ctx.fillStyle = settings.whisperColor || 'rgba(255, 255, 255, 0.6)';
+                } else if (line.isQuote) {
+                    ctx.fillStyle = settings.quoteColor || '#aaaaaa';
+                } else {
+                    ctx.fillStyle = settings.color;
+                }
                 ctx.fillText(seg.text, lineX, lineY);
 
                 lineX += segWidth;
