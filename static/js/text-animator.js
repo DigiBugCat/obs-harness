@@ -481,6 +481,43 @@ class TextAnimator {
     }
 
     /**
+     * Truncate streaming text to only show what was actually spoken.
+     * Used when audio is stopped mid-stream.
+     * @param {string} spokenText - The text that was actually spoken
+     * @param {number} fadeDelay - How long before starting fade out (ms)
+     */
+    truncateToSpoken(spokenText, fadeDelay = 1500) {
+        if (!this.isStreaming) return;
+
+        // Clear committed sentences - they may have text beyond what was spoken
+        this.committedSentences = [];
+        this.lastCommittedIndex = 0;
+        this.clearFadeStart = null;
+        this.pendingSentencesToRemove = null;
+
+        // Set the text to only what was spoken
+        this.streamText = spokenText;
+        // Reveal all of it immediately
+        this.revealIndex = spokenText.length;
+
+        console.log(`[TextAnimator] Truncated to spoken: "${spokenText.substring(0, 50)}..." (${spokenText.length} chars)`);
+
+        // Schedule fade out
+        setTimeout(() => {
+            if (this.isStreaming && this.streamText === spokenText) {
+                this.streamFadeStart = performance.now();
+            }
+        }, fadeDelay);
+
+        // Schedule cleanup
+        setTimeout(() => {
+            if (this.streamText === spokenText) {
+                this.clearStream();
+            }
+        }, fadeDelay + this.streamFadeDuration + 100);
+    }
+
+    /**
      * Update streaming text state (progressive reveal).
      */
     updateStream() {

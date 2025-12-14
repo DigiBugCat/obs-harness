@@ -222,7 +222,7 @@ class CharacterCreate(BaseModel):
     voice_stability: float = Field(default=0.5, ge=0.0, le=1.0)
     voice_similarity_boost: float = Field(default=0.75, ge=0.0, le=1.0)
     voice_style: float = Field(default=0.0, ge=0.0, le=1.0)
-    voice_speed: float = Field(default=1.0, ge=0.5, le=2.0)
+    voice_speed: float = Field(default=1.0, ge=0.7, le=1.2)  # ElevenLabs WS limit
 
     # AI settings (optional)
     system_prompt: str | None = None
@@ -271,7 +271,7 @@ class CharacterUpdate(BaseModel):
     voice_stability: float | None = Field(default=None, ge=0.0, le=1.0)
     voice_similarity_boost: float | None = Field(default=None, ge=0.0, le=1.0)
     voice_style: float | None = Field(default=None, ge=0.0, le=1.0)
-    voice_speed: float | None = Field(default=None, ge=0.5, le=2.0)
+    voice_speed: float | None = Field(default=None, ge=0.7, le=1.2)  # ElevenLabs WS limit
 
     # AI settings
     system_prompt: str | None = None

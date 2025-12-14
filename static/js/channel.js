@@ -2,7 +2,7 @@
  * OBS Browser Source Channel Handler
  * Handles audio playback, streaming, and text overlays via WebSocket
  */
-console.log('[channel.js] VERSION 8 LOADED - nuclear AudioContext close on stop');
+console.log('[channel.js] VERSION 10 LOADED - clear text immediately on stop');
 
 (function() {
     'use strict';

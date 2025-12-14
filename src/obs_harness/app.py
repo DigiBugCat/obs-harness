@@ -1166,12 +1166,19 @@ def create_app(
                 max_messages=character.twitch_chat_max_messages,
             )
 
-        # Get conversation history if memory is enabled (filter out context messages for LLM)
+        # Get conversation history if memory is enabled
         history = None
         if character.memory_enabled:
             all_history = conversation_memory.get(name, [])
-            # Only include user/assistant messages for LLM context
-            history = [m for m in all_history if m.get("role") in ("user", "assistant")]
+            # Include user/assistant/context messages, converting context to user role
+            history = []
+            for m in all_history:
+                role = m.get("role")
+                if role in ("user", "assistant"):
+                    history.append({"role": role, "content": m["content"]})
+                elif role == "context":
+                    # Include Twitch chat context as a user message so LLM remembers it
+                    history.append({"role": "user", "content": f"[Twitch chat at the time]:\n{m['content']}"})
 
         # Create TTS and text display configs
         tts_config = TTSStreamConfig(
@@ -1254,16 +1261,16 @@ def create_app(
 
                 # Check if we were cancelled (interrupted by stop button or new chat)
                 if pipeline._cancelled:
-                    # Save as interrupted - browser will update with actual spoken text
+                    # Save as interrupted - browser will update content with actual spoken text
                     spoken_text = pipeline.get_spoken_text()
                     if spoken_text:
                         msg_idx, db_id = await save_conversation_message(
                             character_name=name,
                             role="assistant",
-                            content=spoken_text,
+                            content=spoken_text,  # Will be updated by browser's stream_stopped
                             persist=character.persist_memory,
                             interrupted=True,
-                            generated_text=spoken_text,
+                            generated_text=response_text,  # Full LLM response for strikethrough
                         )
                         # Track for browser update
                         pending_interrupted[name] = (msg_idx, character.persist_memory, db_id)
