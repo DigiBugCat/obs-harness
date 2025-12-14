@@ -2,7 +2,7 @@
  * OBS Browser Source Channel Handler
  * Handles audio playback, streaming, and text overlays via WebSocket
  */
-console.log('[channel.js] VERSION 6 LOADED - stop_stream support');
+console.log('[channel.js] VERSION 7 LOADED - actual playback time tracking');
 
 (function() {
     'use strict';
@@ -348,6 +348,28 @@ console.log('[channel.js] VERSION 6 LOADED - stop_stream support');
     function stopStream() {
         console.log(`[${channelName}] Stop stream: forcefully stopping ${scheduledSources.length} audio sources`);
 
+        // Calculate actual playback position and what was really spoken
+        let actualPlaybackTime = 0;
+        let actualSpokenText = '';
+        let actualWordCount = 0;
+
+        if (audioContext && audioStartContextTime > 0) {
+            actualPlaybackTime = audioContext.currentTime - audioStartContextTime;
+
+            // Build spoken text from words that were actually played (based on timing)
+            for (const word of wordTimingData) {
+                if (word.start <= actualPlaybackTime) {
+                    if (actualSpokenText) actualSpokenText += ' ';
+                    actualSpokenText += word.word;
+                    actualWordCount++;
+                } else {
+                    break;  // Words are in order, so stop when we hit one that hasn't played
+                }
+            }
+        }
+
+        console.log(`[${channelName}] Stop at ${actualPlaybackTime.toFixed(2)}s - ${actualWordCount}/${wordTimingData.length} words played: "${actualSpokenText.substring(0, 50)}..."`);
+
         // Stop all scheduled audio sources immediately
         for (const source of scheduledSources) {
             try {
@@ -365,6 +387,7 @@ console.log('[channel.js] VERSION 6 LOADED - stop_stream support');
         nextPlayTime = 0;
         audioStreamEndTime = 0;
         firstAudioChunkReceived = false;
+        audioStartContextTime = 0;
 
         // Clear word timing state
         wordTimingEnabled = false;
@@ -380,7 +403,13 @@ console.log('[channel.js] VERSION 6 LOADED - stop_stream support');
             textAnimator.clear();
         }
 
-        sendEvent({ event: 'stream_stopped' });
+        // Report actual playback position and spoken text
+        sendEvent({
+            event: 'stream_stopped',
+            playback_time: actualPlaybackTime,
+            spoken_text: actualSpokenText,
+            word_count: actualWordCount
+        });
     }
 
     // =========================================================================

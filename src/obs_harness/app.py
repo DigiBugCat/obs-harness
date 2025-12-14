@@ -492,6 +492,13 @@ def create_app(
                         manager.set_channel_state(character, "playing", False)
                     elif event_type == "stream_ended":
                         manager.set_channel_state(character, "streaming", False)
+                    elif event_type == "stream_stopped":
+                        # Browser reports actual playback position when forcefully stopped
+                        manager.set_channel_state(character, "streaming", False)
+                        actual_text = event.get("spoken_text", "")
+                        playback_time = event.get("playback_time", 0)
+                        word_count = event.get("word_count", 0)
+                        print(f"[{character}] Stream stopped at {playback_time:.2f}s - {word_count} words actually played: \"{actual_text[:100]}...\"")
 
                 except json.JSONDecodeError:
                     pass
