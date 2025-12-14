@@ -613,12 +613,9 @@ console.log('[channel.js] VERSION 8 LOADED - nuclear AudioContext close on stop'
                     const prevWord = wordTimingData[revealedWordCount - 1];
                     pauseDuration = word.start - prevWord.end;
 
-                    // Check if previous word ended with sentence punctuation (ignore formatting markers)
-                    const prevWordClean = prevWord.word.replace(/[*^]/g, '');
-                    const prevEndsWithPunctuation = /[.!?]["']?$/.test(prevWordClean);
-
-                    // Longer pause OR sentence ending = new line (mimics natural speech cadence)
-                    if ((pauseDuration >= PAUSE_THRESHOLD || prevEndsWithPunctuation) && !lastAppendWasNewline) {
+                    // Longer pause = new line (mimics natural speech cadence)
+                    // Only use pause duration, not punctuation, to avoid too many line breaks
+                    if (pauseDuration >= PAUSE_THRESHOLD && !lastAppendWasNewline) {
                         prefix = '\n';
                         lastAppendWasNewline = true;
                     } else {

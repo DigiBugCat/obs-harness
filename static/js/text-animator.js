@@ -26,6 +26,8 @@ class TextAnimator {
 
         // Max lines to display at once (cull old sentences when exceeded)
         this.maxDisplayLines = 4;
+        // Hard cap - force clear everything if we hit this many lines
+        this.hardMaxLines = 7;
 
         // Fade-out state for clearing old sentences
         this.clearFadeStart = null;
@@ -817,21 +819,32 @@ class TextAnimator {
 
         // Combine committed + current lines
         const allLines = [...committedLines, ...currentLines];
-
-        // Apply line cap - when total lines exceed max, fade out everything and start fresh
-        // (only if we have committed sentences to clear)
         const totalLines = allLines.length;
+
+        // Hard cap - if we hit max lines, force clear everything immediately
+        if (totalLines >= this.hardMaxLines && this.clearFadeStart === null) {
+            // Force clear all - reset everything
+            this.committedSentences = [];
+            this.lastCommittedIndex = this.revealIndex;  // Skip to current position
+            this.clearFadeStart = null;
+            this.pendingSentencesToRemove = null;
+            console.log(`[TextAnimator] Hard cap hit (${totalLines} lines) - force clearing`);
+            return;  // Skip this frame, next frame will have fresh start
+        }
+
+        // Soft cap - when total lines exceed max, fade out committed sentences
+        // (only if we have committed sentences to clear)
         if (totalLines > this.maxDisplayLines && this.clearFadeStart === null && this.committedSentences.length > 0) {
-            // Fade out all lines, then reset
+            // Fade out all committed lines, then reset
             this.pendingSentencesToRemove = this.committedSentences.length;
             this.clearFadeStart = performance.now();
         }
 
         if (allLines.length === 0) return;
 
-        // Calculate position - anchor to top, horizontally centered
+        // Calculate position - anchor near top of screen, horizontally centered
         const centerX = settings.positionX * this.width;
-        const topY = settings.positionY * this.height;
+        const topY = this.height * 0.08;  // Start 8% from top
         const startY = topY + lineHeight / 2;
 
         // Draw each line
