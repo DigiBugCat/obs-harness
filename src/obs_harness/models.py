@@ -78,6 +78,7 @@ class Character(SQLModel, table=True):
 
     # Voice settings (required for TTS)
     elevenlabs_voice_id: str = SQLField()
+    elevenlabs_model_id: str = SQLField(default="eleven_multilingual_v2")
     voice_stability: float = SQLField(default=0.5)
     voice_similarity_boost: float = SQLField(default=0.75)
     voice_style: float = SQLField(default=0.0)
@@ -86,6 +87,7 @@ class Character(SQLModel, table=True):
     # AI settings (optional - for chat endpoint)
     system_prompt: str | None = SQLField(default=None)
     model: str = SQLField(default="anthropic/claude-sonnet-4.5")
+    provider: str | None = SQLField(default=None)  # OpenRouter provider routing (None = default)
     temperature: float = SQLField(default=0.7)
     max_tokens: int = SQLField(default=1024)
 
@@ -203,6 +205,7 @@ class CharacterCreate(BaseModel):
     text_duration: int = Field(default=3000, ge=500, le=30000)
 
     # Voice settings
+    elevenlabs_model_id: str = "eleven_multilingual_v2"
     voice_stability: float = Field(default=0.5, ge=0.0, le=1.0)
     voice_similarity_boost: float = Field(default=0.75, ge=0.0, le=1.0)
     voice_style: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -211,6 +214,7 @@ class CharacterCreate(BaseModel):
     # AI settings (optional)
     system_prompt: str | None = None
     model: str = "anthropic/claude-sonnet-4.5"
+    provider: str | None = None  # OpenRouter provider routing (None = default)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int = Field(default=1024, ge=1, le=8192)
 
@@ -249,6 +253,7 @@ class CharacterUpdate(BaseModel):
 
     # Voice settings
     elevenlabs_voice_id: str | None = None
+    elevenlabs_model_id: str | None = None
     voice_stability: float | None = Field(default=None, ge=0.0, le=1.0)
     voice_similarity_boost: float | None = Field(default=None, ge=0.0, le=1.0)
     voice_style: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -257,6 +262,7 @@ class CharacterUpdate(BaseModel):
     # AI settings
     system_prompt: str | None = None
     model: str | None = None
+    provider: str | None = None  # OpenRouter provider routing (None = default)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, ge=1, le=8192)
 
@@ -297,6 +303,7 @@ class CharacterResponse(BaseModel):
 
     # Voice settings
     elevenlabs_voice_id: str
+    elevenlabs_model_id: str
     voice_stability: float
     voice_similarity_boost: float
     voice_style: float
@@ -305,6 +312,7 @@ class CharacterResponse(BaseModel):
     # AI settings
     system_prompt: str | None
     model: str
+    provider: str | None
     temperature: float
     max_tokens: int
 

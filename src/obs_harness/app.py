@@ -20,6 +20,9 @@ from sqlmodel import select
 from .chat_pipeline import ChatPipeline, ChatPipelineConfig
 from .database import close_db, get_session, init_db
 from .elevenlabs import ElevenLabsClient, ElevenLabsError
+from .elevenlabs_ws import ElevenLabsWSError
+from .tts_pipeline import TTSStreamer, TTSStreamConfig, TextDisplayConfig
+from .openrouter import OpenRouterClient
 from .models import (
     Character,
     CharacterCreate,
@@ -572,6 +575,27 @@ def create_app(
         }
 
     # =========================================================================
+    # OpenRouter API Routes
+    # =========================================================================
+
+    @app.get("/api/openrouter/models/{model:path}/providers")
+    async def get_model_providers(model: str) -> dict:
+        """Get available providers for an OpenRouter model.
+
+        Args:
+            model: Model identifier (e.g., "anthropic/claude-sonnet-4.5")
+
+        Returns:
+            List of provider names that can serve this model.
+        """
+        if not os.environ.get("OPENROUTER_API_KEY"):
+            return {"providers": []}
+
+        async with OpenRouterClient() as client:
+            providers = await client.get_model_providers(model)
+            return {"providers": providers}
+
+    # =========================================================================
     # Character API Routes
     # =========================================================================
 
@@ -595,12 +619,14 @@ def create_app(
             text_position_y=c.text_position_y,
             text_duration=c.text_duration,
             elevenlabs_voice_id=c.elevenlabs_voice_id,
+            elevenlabs_model_id=c.elevenlabs_model_id,
             voice_stability=c.voice_stability,
             voice_similarity_boost=c.voice_similarity_boost,
             voice_style=c.voice_style,
             voice_speed=c.voice_speed,
             system_prompt=c.system_prompt,
             model=c.model,
+            provider=c.provider,
             temperature=c.temperature,
             max_tokens=c.max_tokens,
             twitch_chat_enabled=c.twitch_chat_enabled,
@@ -612,6 +638,87 @@ def create_app(
             streaming=manager._channel_state.get(c.name, {}).get("streaming", False),
             created_at=c.created_at,
         )
+
+    # -------------------------------------------------------------------------
+    # ElevenLabs API endpoints
+    # -------------------------------------------------------------------------
+
+    @app.get("/api/elevenlabs/models")
+    async def list_elevenlabs_models() -> list[dict]:
+        """Get list of available ElevenLabs TTS models.
+
+        Returns models that support text-to-speech with their capabilities.
+        """
+        try:
+            async with ElevenLabsClient() as client:
+                models = await client.get_models()
+                # Filter to only TTS-capable models and return relevant info
+                tts_models = []
+                for m in models:
+                    if m.get("can_do_text_to_speech"):
+                        tts_models.append({
+                            "model_id": m.get("model_id"),
+                            "name": m.get("name"),
+                            "description": m.get("description"),
+                            "languages": [
+                                lang.get("language_id")
+                                for lang in m.get("languages", [])
+                            ],
+                            "can_be_finetuned": m.get("can_be_finetuned", False),
+                            "can_use_style": m.get("can_use_style", False),
+                            "can_use_speaker_boost": m.get("can_use_speaker_boost", False),
+                            "serves_pro_voices": m.get("serves_pro_voices", False),
+                            "max_characters_request_free_user": m.get("max_characters_request_free_user"),
+                            "max_characters_request_subscribed_user": m.get("max_characters_request_subscribed_user"),
+                        })
+                return tts_models
+        except ElevenLabsError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+
+    @app.get("/api/elevenlabs/voices")
+    async def list_elevenlabs_voices() -> list[dict]:
+        """Get list of available ElevenLabs voices."""
+        try:
+            async with ElevenLabsClient() as client:
+                voices = await client.get_voices()
+                # Return simplified voice info
+                return [
+                    {
+                        "voice_id": v.get("voice_id"),
+                        "name": v.get("name"),
+                        "category": v.get("category"),
+                        "description": v.get("description"),
+                        "labels": v.get("labels", {}),
+                        "preview_url": v.get("preview_url"),
+                        "high_quality_base_model_ids": v.get("high_quality_base_model_ids", []),
+                    }
+                    for v in voices
+                ]
+        except ElevenLabsError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+
+    @app.get("/api/elevenlabs/voices/{voice_id}")
+    async def get_elevenlabs_voice(voice_id: str) -> dict:
+        """Get details for a specific ElevenLabs voice including compatible models."""
+        try:
+            async with ElevenLabsClient() as client:
+                voice = await client.get_voice(voice_id)
+                return {
+                    "voice_id": voice.get("voice_id"),
+                    "name": voice.get("name"),
+                    "category": voice.get("category"),
+                    "description": voice.get("description"),
+                    "labels": voice.get("labels", {}),
+                    "preview_url": voice.get("preview_url"),
+                    "high_quality_base_model_ids": voice.get("high_quality_base_model_ids", []),
+                    "settings": voice.get("settings", {}),
+                }
+        except ElevenLabsError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+
+    # -------------------------------------------------------------------------
+    # Character CRUD and interaction endpoints
+    # -------------------------------------------------------------------------
 
     @app.post("/api/characters", status_code=201)
     async def create_character(request: CharacterCreate) -> Character:
@@ -722,52 +829,58 @@ def create_app(
                 status_code=400, detail=f"Character '{name}' is not connected"
             )
 
+        # Create TTS and text display configs
+        tts_config = TTSStreamConfig(
+            voice_id=character.elevenlabs_voice_id,
+            model_id=character.elevenlabs_model_id,
+            stability=character.voice_stability,
+            similarity_boost=character.voice_similarity_boost,
+            style=character.voice_style,
+            speed=character.voice_speed,
+        )
+        text_config = TextDisplayConfig(
+            font_family=character.text_font_family,
+            font_size=character.text_font_size,
+            color=character.text_color,
+            stroke_color=character.text_stroke_color,
+            stroke_width=character.text_stroke_width,
+            position_x=character.text_position_x,
+            position_y=character.text_position_y,
+        )
+
+        # Create unified TTS streamer with browser callbacks
+        streamer = TTSStreamer(
+            tts_config=tts_config,
+            text_config=text_config,
+            show_text=request.show_text,
+            send_text_start=lambda: harness.text_stream_start(
+                name,
+                font_family=text_config.font_family,
+                font_size=text_config.font_size,
+                color=text_config.color,
+                stroke_color=text_config.stroke_color,
+                stroke_width=text_config.stroke_width,
+                position_x=text_config.position_x,
+                position_y=text_config.position_y,
+            ),
+            send_text_end=lambda: harness.text_stream_end(name),
+            send_audio_start=lambda: harness.stream_start(name, sample_rate=24000, channels=1),
+            send_audio_chunk=lambda audio: harness.stream_audio(name, audio),
+            send_audio_end=lambda: harness.stream_end(name),
+            send_word_timing=lambda words: harness.word_timing(name, words),
+        )
+
         try:
-            # Start audio stream
-            await harness.stream_start(name, sample_rate=24000, channels=1)
-
-            # Start text stream (syncs with audio via streaming text system)
-            # Use instant_reveal=True since we send full text at once for speak
-            text_started = False
-            if request.show_text:
-                await harness.text_stream_start(
-                    name,
-                    font_family=character.text_font_family,
-                    font_size=character.text_font_size,
-                    color=character.text_color,
-                    stroke_color=character.text_stroke_color,
-                    stroke_width=character.text_stroke_width,
-                    position_x=character.text_position_x,
-                    position_y=character.text_position_y,
-                    instant_reveal=True,
-                )
-                text_started = True
-
-            # Stream TTS audio from ElevenLabs
-            text_shown = False
-            async with ElevenLabsClient() as client:
-                async for chunk in client.stream_tts(character.elevenlabs_voice_id, request.text):
-                    # Send full text on first audio chunk (syncs text with audio start)
-                    if not text_shown and text_started:
-                        await harness.text_chunk(name, request.text)
-                        text_shown = True
-                    await harness.stream_audio(name, chunk)
-
-            # End streams - audio first, then text (so text syncs to audio end)
-            await harness.stream_end(name)
-            if text_started:
-                await harness.text_stream_end(name)
+            await streamer.stream(request.text)
 
             # Log the speak
             await harness._log_playback(name, request.text, "stream")
 
             return {"success": True, "character": name}
 
-        except ElevenLabsError as e:
-            await harness.stream_end(name)
+        except ElevenLabsWSError as e:
             raise HTTPException(status_code=500, detail=str(e))
         except Exception as e:
-            await harness.stream_end(name)
             raise HTTPException(status_code=500, detail=f"TTS error: {e}")
 
     @app.post("/api/characters/{name}/chat")
@@ -834,65 +947,62 @@ def create_app(
             # Only include user/assistant messages for LLM context
             history = [m for m in all_history if m.get("role") in ("user", "assistant")]
 
-        # Create pipeline configuration
-        config = ChatPipelineConfig(
-            character_name=character.name,
-            system_prompt=character.system_prompt,
+        # Create TTS and text display configs
+        tts_config = TTSStreamConfig(
             voice_id=character.elevenlabs_voice_id,
-            channel=name,  # Character name is used as channel
+            model_id=character.elevenlabs_model_id,
+            stability=character.voice_stability,
+            similarity_boost=character.voice_similarity_boost,
+            style=character.voice_style,
+            speed=character.voice_speed,
+        )
+        text_config = TextDisplayConfig(
+            font_family=character.text_font_family,
+            font_size=character.text_font_size,
+            color=character.text_color,
+            stroke_color=character.text_stroke_color,
+            stroke_width=character.text_stroke_width,
+            position_x=character.text_position_x,
+            position_y=character.text_position_y,
+        )
+
+        # Create unified TTS streamer with browser callbacks
+        tts_streamer = TTSStreamer(
+            tts_config=tts_config,
+            text_config=text_config,
+            show_text=request.show_text,
+            send_text_start=lambda: harness.text_stream_start(
+                name,
+                font_family=text_config.font_family,
+                font_size=text_config.font_size,
+                color=text_config.color,
+                stroke_color=text_config.stroke_color,
+                stroke_width=text_config.stroke_width,
+                position_x=text_config.position_x,
+                position_y=text_config.position_y,
+            ),
+            send_text_end=lambda: harness.text_stream_end(name),
+            send_audio_start=lambda: harness.stream_start(name, sample_rate=24000, channels=1),
+            send_audio_chunk=lambda audio: harness.stream_audio(name, audio),
+            send_audio_end=lambda: harness.stream_end(name),
+            send_word_timing=lambda words: harness.word_timing(name, words),
+        )
+
+        # Create LLM pipeline configuration
+        pipeline_config = ChatPipelineConfig(
+            system_prompt=character.system_prompt,
             model=character.model,
+            provider=character.provider,
             temperature=character.temperature,
             max_tokens=character.max_tokens,
-            voice_stability=character.voice_stability,
-            voice_similarity_boost=character.voice_similarity_boost,
-            voice_style=character.voice_style,
-            voice_speed=character.voice_speed,
-            show_text=request.show_text,
             twitch_chat_context=twitch_chat_context,
             conversation_history=history,
         )
 
-        # Create callbacks that use the harness methods
-        async def send_text_start() -> bool:
-            return await harness.text_stream_start(
-                name,
-                font_family=character.text_font_family,
-                font_size=character.text_font_size,
-                color=character.text_color,
-                stroke_color=character.text_stroke_color,
-                stroke_width=character.text_stroke_width,
-                position_x=character.text_position_x,
-                position_y=character.text_position_y,
-            )
-
-        async def send_text_chunk(text: str) -> bool:
-            return await harness.text_chunk(name, text)
-
-        async def send_text_end() -> bool:
-            return await harness.text_stream_end(name)
-
-        async def send_audio_start() -> bool:
-            return await harness.stream_start(name, sample_rate=24000, channels=1)
-
-        async def send_audio_chunk(audio_bytes: bytes) -> bool:
-            return await harness.stream_audio(name, audio_bytes)
-
-        async def send_audio_end() -> bool:
-            return await harness.stream_end(name)
-
-        async def send_word_timing(words: list[dict]) -> bool:
-            return await harness.word_timing(name, words)
-
         # Create and run pipeline
         pipeline = ChatPipeline(
-            config=config,
-            send_text_start=send_text_start,
-            send_text_chunk=send_text_chunk,
-            send_text_end=send_text_end,
-            send_audio_start=send_audio_start,
-            send_audio_chunk=send_audio_chunk,
-            send_audio_end=send_audio_end,
-            send_word_timing=send_word_timing,
+            config=pipeline_config,
+            tts_streamer=tts_streamer,
         )
 
         try:

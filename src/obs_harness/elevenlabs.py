@@ -185,7 +185,7 @@ class ElevenLabsClient:
         try:
             async with self._client.stream(
                 "POST",
-                f"/text-to-speech/{voice_id}/stream-with-timestamps",
+                f"/text-to-speech/{voice_id}/stream/with-timestamps",
                 json={
                     "text": text,
                     "model_id": model_id,
@@ -252,6 +252,38 @@ class ElevenLabsClient:
         response.raise_for_status()
         data = response.json()
         return data.get("voices", [])
+
+    async def get_voice(self, voice_id: str) -> dict:
+        """Get details for a specific voice including compatible models.
+
+        Args:
+            voice_id: ElevenLabs voice ID.
+
+        Returns:
+            Voice dictionary with id, name, high_quality_base_model_ids, settings, etc.
+
+        Raises:
+            ElevenLabsError: If the API request fails.
+        """
+        try:
+            response = await self._client.get(f"/voices/{voice_id}")
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPError as e:
+            raise ElevenLabsError(f"Failed to get voice {voice_id}: {e}") from e
+
+    async def get_models(self) -> list[dict]:
+        """Get list of available ElevenLabs models.
+
+        Returns:
+            List of model dictionaries with model_id, name, can_do_text_to_speech, etc.
+        """
+        try:
+            response = await self._client.get("/models")
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPError as e:
+            raise ElevenLabsError(f"Failed to get models: {e}") from e
 
     async def close(self) -> None:
         """Close the HTTP client."""

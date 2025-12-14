@@ -17,6 +17,7 @@
     let editingCharacter = null;
     let chatCharacter = null;
     let speakCharacter = null;
+    let elevenlabsModels = [];  // Cached ElevenLabs models
 
     // DOM elements
     const wsStatus = document.getElementById('ws-status');
@@ -225,6 +226,114 @@
         const result = await apiCall(`/api/characters/${name}`, 'DELETE');
         await getAllCharacters();
         return result;
+    }
+
+    // Provider dropdown
+    async function updateProviderDropdown(model) {
+        const select = document.getElementById('character-provider');
+        if (!select) return;
+
+        // Reset to default while loading
+        select.innerHTML = '<option value="">Loading providers...</option>';
+        select.disabled = true;
+
+        if (!model || model.trim() === '') {
+            select.innerHTML = '<option value="">Default (auto)</option>';
+            select.disabled = false;
+            return;
+        }
+
+        try {
+            const result = await apiCall(`/api/openrouter/models/${encodeURIComponent(model)}/providers`, 'GET', null, false);
+            select.innerHTML = '<option value="">Default (auto)</option>';
+
+            if (result.providers && result.providers.length > 0) {
+                for (const provider of result.providers) {
+                    const option = document.createElement('option');
+                    option.value = provider;
+                    option.textContent = provider;
+                    select.appendChild(option);
+                }
+            }
+        } catch (e) {
+            console.error('Error fetching providers:', e);
+            select.innerHTML = '<option value="">Default (auto)</option>';
+        } finally {
+            select.disabled = false;
+        }
+    }
+
+    // ElevenLabs Models
+    async function loadElevenLabsModels() {
+        const select = document.getElementById('character-tts-model');
+        if (!select) return;
+
+        try {
+            const models = await apiCall('/api/elevenlabs/models', 'GET', null, false);
+            if (Array.isArray(models)) {
+                elevenlabsModels = models;
+                // Populate dropdown with all models
+                select.innerHTML = models.map(m => {
+                    const label = m.name || m.model_id;
+                    return `<option value="${m.model_id}">${label}</option>`;
+                }).join('');
+            }
+        } catch (e) {
+            console.error('Error fetching ElevenLabs models:', e);
+            // Keep default options if API fails
+        }
+    }
+
+    async function loadVoiceModels(voiceId) {
+        const select = document.getElementById('character-tts-model');
+        const infoEl = document.getElementById('tts-model-info');
+        if (!select || !voiceId) return;
+
+        // Clear info
+        if (infoEl) infoEl.textContent = '';
+
+        try {
+            const voice = await apiCall(`/api/elevenlabs/voices/${voiceId}`, 'GET', null, false);
+            if (voice && voice.high_quality_base_model_ids && voice.high_quality_base_model_ids.length > 0) {
+                // Highlight compatible models
+                const compatibleIds = new Set(voice.high_quality_base_model_ids);
+                Array.from(select.options).forEach(option => {
+                    if (compatibleIds.has(option.value)) {
+                        // Mark as recommended
+                        const model = elevenlabsModels.find(m => m.model_id === option.value);
+                        option.textContent = `${model?.name || option.value} (Recommended)`;
+                    } else {
+                        // Restore original name
+                        const model = elevenlabsModels.find(m => m.model_id === option.value);
+                        option.textContent = model?.name || option.value;
+                    }
+                });
+
+                if (infoEl) {
+                    infoEl.textContent = `Voice "${voice.name}" is optimized for: ${voice.high_quality_base_model_ids.join(', ')}`;
+                }
+            }
+        } catch (e) {
+            console.error('Error fetching voice info:', e);
+            if (infoEl) infoEl.textContent = 'Could not fetch voice info';
+        }
+    }
+
+    function updateModelInfo(modelId) {
+        const infoEl = document.getElementById('tts-model-info');
+        if (!infoEl) return;
+
+        const model = elevenlabsModels.find(m => m.model_id === modelId);
+        if (model) {
+            const features = [];
+            if (model.can_use_style) features.push('style');
+            if (model.can_use_speaker_boost) features.push('speaker boost');
+            if (model.can_be_finetuned) features.push('finetunable');
+
+            infoEl.textContent = features.length > 0
+                ? `Features: ${features.join(', ')}`
+                : '';
+        }
     }
 
     // Character actions
@@ -457,9 +566,15 @@
         document.getElementById('character-position-y').value = 50;
         document.getElementById('character-pos-y-value').textContent = '50';
         document.getElementById('character-model').value = 'anthropic/claude-sonnet-4.5';
+        document.getElementById('character-provider').innerHTML = '<option value="">Default (auto)</option>';
+        document.getElementById('character-provider').value = '';
         document.getElementById('character-temperature').value = 70;
         document.getElementById('character-temp-value').textContent = '0.7';
         document.getElementById('character-max-tokens').value = 1024;
+
+        // TTS model default
+        document.getElementById('character-tts-model').value = 'eleven_multilingual_v2';
+        document.getElementById('tts-model-info').textContent = '';
 
         // Memory & Twitch settings
         document.getElementById('character-memory-enabled').checked = false;
@@ -483,6 +598,9 @@
 
         // Voice settings
         document.getElementById('character-voice-id').value = character.elevenlabs_voice_id;
+        document.getElementById('character-tts-model').value = character.elevenlabs_model_id || 'eleven_multilingual_v2';
+        // Load voice info to show compatible models
+        loadVoiceModels(character.elevenlabs_voice_id);
         document.getElementById('character-stability').value = Math.round(character.voice_stability * 100);
         document.getElementById('character-stability-value').textContent = character.voice_stability.toFixed(2);
         document.getElementById('character-similarity').value = Math.round(character.voice_similarity_boost * 100);
@@ -514,6 +632,10 @@
         // AI settings
         document.getElementById('character-prompt').value = character.system_prompt || '';
         document.getElementById('character-model').value = character.model;
+        // Fetch providers for this model and set current value
+        updateProviderDropdown(character.model).then(() => {
+            document.getElementById('character-provider').value = character.provider || '';
+        });
         document.getElementById('character-temperature').value = Math.round(character.temperature * 100);
         document.getElementById('character-temp-value').textContent = character.temperature.toFixed(1);
         document.getElementById('character-max-tokens').value = character.max_tokens;
@@ -542,6 +664,7 @@
             color: document.getElementById('character-color').value,
             icon: document.getElementById('character-icon').value,
             elevenlabs_voice_id: document.getElementById('character-voice-id').value,
+            elevenlabs_model_id: document.getElementById('character-tts-model').value,
             voice_stability: parseInt(document.getElementById('character-stability').value) / 100,
             voice_similarity_boost: parseInt(document.getElementById('character-similarity').value) / 100,
             voice_style: parseInt(document.getElementById('character-voice-style').value) / 100,
@@ -560,6 +683,7 @@
             text_position_y: parseInt(document.getElementById('character-position-y').value) / 100,
             system_prompt: document.getElementById('character-prompt').value || null,
             model: document.getElementById('character-model').value,
+            provider: document.getElementById('character-provider').value || null,
             temperature: parseInt(document.getElementById('character-temperature').value) / 100,
             max_tokens: parseInt(document.getElementById('character-max-tokens').value),
             memory_enabled: document.getElementById('character-memory-enabled').checked,
@@ -859,8 +983,9 @@
                 <div class="channel-controls">
                     <div class="control-row" style="font-size: 0.75rem; color: var(--text-secondary);">
                         <span>Voice: ${character.elevenlabs_voice_id.substring(0, 12)}...</span>
-                        ${character.system_prompt ? `<span>Model: ${character.model.split('/').pop()}</span>` : ''}
+                        <span>TTS: ${(character.elevenlabs_model_id || 'eleven_multilingual_v2').replace('eleven_', '').replace('_', ' ')}</span>
                     </div>
+                    ${character.system_prompt ? `<div class="control-row" style="font-size: 0.75rem; color: var(--text-secondary);"><span>AI: ${character.model.split('/').pop()}</span></div>` : ''}
                 </div>
                 <div class="channel-actions">
                     <button onclick="window.openSpeakModal('${character.name}')">Speak</button>
@@ -904,6 +1029,13 @@
     // Preview exports
     window.previewCharacterTextStyle = previewCharacterTextStyle;
     window.stopCharacterTextPreview = stopCharacterTextPreview;
+
+    // Provider dropdown
+    window.updateProviderDropdown = updateProviderDropdown;
+
+    // ElevenLabs models
+    window.loadVoiceModels = loadVoiceModels;
+    window.updateModelInfo = updateModelInfo;
 
     // Copy URL function
     window.copyCharacterUrl = async function(characterName) {
@@ -994,6 +1126,7 @@
     loadPresets();
     loadHistory();
     checkTwitchStatus();
+    loadElevenLabsModels();
 
     // Refresh history periodically
     setInterval(loadHistory, 10000);
