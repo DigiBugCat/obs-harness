@@ -18,6 +18,8 @@
     let chatCharacter = null;
     let speakCharacter = null;
     let elevenlabsModels = [];  // Cached ElevenLabs models
+    let activeGenerationCharacter = null;  // Track which character has active generation
+    let activeGenerationModal = null;  // 'speak' or 'chat'
 
     // DOM elements
     const wsStatus = document.getElementById('ws-status');
@@ -83,6 +85,18 @@
                 streaming: statusMap.get(ch.name)?.streaming || false,
             }));
             renderCharacters();
+
+            // Check if active generation's streaming has ended
+            if (activeGenerationCharacter && activeGenerationModal) {
+                const charStatus = statusMap.get(activeGenerationCharacter);
+                if (charStatus && !charStatus.streaming) {
+                    // Streaming ended - hide stop button
+                    const stopBtn = document.getElementById(`${activeGenerationModal}-stop-btn`);
+                    if (stopBtn) stopBtn.style.display = 'none';
+                    activeGenerationCharacter = null;
+                    activeGenerationModal = null;
+                }
+            }
         }
     }
 
@@ -816,21 +830,33 @@
         sendBtn.disabled = true;
         stopBtn.style.display = 'inline-block';
 
+        // Track active generation so we can hide stop button when streaming ends
+        activeGenerationCharacter = speakCharacter.name;
+        activeGenerationModal = 'speak';
+
         try {
             const result = await sendCharacterSpeak(speakCharacter.name, text, showText);
             if (result.error || result.detail) {
                 statusText.textContent = `Error: ${result.error || result.detail}`;
+                // Error - hide stop button immediately
+                stopBtn.style.display = 'none';
+                activeGenerationCharacter = null;
+                activeGenerationModal = null;
             } else {
-                statusText.textContent = 'Complete!';
+                statusText.textContent = 'Playing audio...';
                 document.getElementById('speak-text').value = '';
                 loadHistory();
+                // Stop button will be hidden by handleMessage when streaming ends
             }
         } catch (error) {
             console.error('Speak error:', error);
             statusText.textContent = `Error: ${error.message || 'Unknown error'}`;
+            // Error - hide stop button immediately
+            stopBtn.style.display = 'none';
+            activeGenerationCharacter = null;
+            activeGenerationModal = null;
         } finally {
             sendBtn.disabled = false;
-            stopBtn.style.display = 'none';
         }
     }
 
@@ -875,6 +901,9 @@
                 stopBtn.disabled = false;
                 stopBtn.style.display = 'none';
             }
+            // Clear active generation tracking
+            activeGenerationCharacter = null;
+            activeGenerationModal = null;
             // Re-enable send button
             const sendBtn = document.getElementById(`${modalType}-send-btn`);
             if (sendBtn) sendBtn.disabled = false;
@@ -954,6 +983,10 @@
         sendBtn.disabled = true;
         stopBtn.style.display = 'inline-block';
 
+        // Track active generation so we can hide stop button when streaming ends
+        activeGenerationCharacter = chatCharacter.name;
+        activeGenerationModal = 'chat';
+
         try {
             // Add user message bubble immediately
             addChatBubble('user', message, chatCharacter.name);
@@ -962,6 +995,10 @@
             const result = await sendCharacterChat(chatCharacter.name, message, showText, twitchSeconds);
             if (result.error || result.detail) {
                 statusText.textContent = `Error: ${result.error || result.detail}`;
+                // Error - hide stop button immediately
+                stopBtn.style.display = 'none';
+                activeGenerationCharacter = null;
+                activeGenerationModal = null;
             } else {
                 // Add Twitch context bubble if present
                 if (result.twitch_chat_context) {
@@ -974,7 +1011,7 @@
                 // Add assistant response bubble
                 addChatBubble('assistant', result.response_text, chatCharacter.name);
 
-                let statusMsg = 'Response complete!';
+                let statusMsg = 'Playing audio...';
                 const twitchDetails = document.getElementById('chat-twitch-details');
                 const twitchSummary = document.getElementById('chat-twitch-summary');
                 const twitchContextText = document.getElementById('chat-twitch-context-text');
@@ -994,13 +1031,17 @@
                 const memoryInfo = await getCharacterMemory(chatCharacter.name);
                 document.getElementById('chat-memory-count').textContent =
                     `Memory: ${memoryInfo.message_count} messages${chatCharacter.memory_enabled ? '' : ' (not saving)'}`;
+                // Stop button will be hidden by handleMessage when streaming ends
             }
         } catch (error) {
             console.error('Chat error:', error);
             statusText.textContent = `Error: ${error.message || 'Unknown error'}`;
+            // Error - hide stop button immediately
+            stopBtn.style.display = 'none';
+            activeGenerationCharacter = null;
+            activeGenerationModal = null;
         } finally {
             sendBtn.disabled = false;
-            stopBtn.style.display = 'none';
         }
     }
 
