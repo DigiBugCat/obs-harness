@@ -663,6 +663,7 @@
                     ${character.system_prompt
                         ? `<button onclick="window.openChatModal('${character.name}')">Chat</button>`
                         : ''}
+                    <button onclick="window.copyCharacterUrl('${character.name}')">Copy URL</button>
                     <button onclick="window.openTextStyleModal('${character.name}')">Text Style</button>
                     <button onclick="window.editCharacter('${character.name}')">Edit</button>
                     <button class="secondary" onclick="window.deleteCharacter('${character.name}')">Delete</button>
@@ -701,6 +702,28 @@
     window.openChatModal = openChatModal;
     window.closeChatModal = closeChatModal;
     window.sendChat = sendChat;
+
+    // Copy URL function
+    window.copyCharacterUrl = async function(characterName) {
+        const url = `${window.location.origin}/channel/${characterName}`;
+        try {
+            await navigator.clipboard.writeText(url);
+            // Brief visual feedback - find the button and flash it
+            const card = document.querySelector(`[data-character="${characterName}"]`);
+            if (card) {
+                const btn = Array.from(card.querySelectorAll('button')).find(b => b.textContent === 'Copy URL');
+                if (btn) {
+                    const originalText = btn.textContent;
+                    btn.textContent = 'Copied!';
+                    setTimeout(() => { btn.textContent = originalText; }, 1500);
+                }
+            }
+        } catch (err) {
+            console.error('Failed to copy URL:', err);
+            // Fallback: show the URL in an alert
+            prompt('Copy this URL:', url);
+        }
+    };
 
     // =========================================================================
     // Initialize
