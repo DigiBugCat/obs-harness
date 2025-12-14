@@ -90,9 +90,11 @@
             if (activeGenerationCharacter && activeGenerationModal) {
                 const charStatus = statusMap.get(activeGenerationCharacter);
                 if (charStatus && !charStatus.streaming) {
-                    // Streaming ended - hide stop button
+                    // Streaming ended - hide stop button and update status
                     const stopBtn = document.getElementById(`${activeGenerationModal}-stop-btn`);
+                    const statusText = document.getElementById(`${activeGenerationModal}-status-text`);
                     if (stopBtn) stopBtn.style.display = 'none';
+                    if (statusText) statusText.textContent = 'Complete!';
                     activeGenerationCharacter = null;
                     activeGenerationModal = null;
                 }
