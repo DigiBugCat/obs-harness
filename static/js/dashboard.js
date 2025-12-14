@@ -420,7 +420,45 @@
 
                 const content = document.createElement('div');
                 content.className = 'chat-bubble-content';
-                content.textContent = msg.content;
+
+                // Handle interrupted messages - show spoken text normally, cut-off in strikethrough
+                if (msg.interrupted && msg.generated_text) {
+                    const spokenText = msg.content || '';
+                    const generatedText = msg.generated_text || '';
+
+                    // Show what was actually spoken
+                    if (spokenText) {
+                        const spokenSpan = document.createElement('span');
+                        spokenSpan.textContent = spokenText;
+                        content.appendChild(spokenSpan);
+                    }
+
+                    // Show what was cut off in strikethrough
+                    // Try to find the cut-off portion by removing the spoken prefix
+                    let cutOffText = '';
+                    if (generatedText.startsWith(spokenText)) {
+                        cutOffText = generatedText.substring(spokenText.length).trim();
+                    } else if (generatedText.length > spokenText.length) {
+                        // Fallback: just show the extra characters
+                        cutOffText = generatedText.substring(spokenText.length).trim();
+                    }
+
+                    if (cutOffText) {
+                        const cutOffSpan = document.createElement('span');
+                        cutOffSpan.style.textDecoration = 'line-through';
+                        cutOffSpan.style.opacity = '0.6';
+                        cutOffSpan.textContent = ' ' + cutOffText;
+                        content.appendChild(cutOffSpan);
+                    }
+
+                    // Add interrupted indicator
+                    const interruptedBadge = document.createElement('span');
+                    interruptedBadge.style.cssText = 'display: inline-block; margin-left: 8px; padding: 2px 6px; background: #ff6b6b33; color: #ff6b6b; border-radius: 4px; font-size: 0.7rem;';
+                    interruptedBadge.textContent = '⚡ interrupted';
+                    content.appendChild(interruptedBadge);
+                } else {
+                    content.textContent = msg.content;
+                }
 
                 bubble.appendChild(label);
                 bubble.appendChild(content);
@@ -811,6 +849,20 @@
                 } else {
                     statusText.textContent = 'Nothing to stop';
                 }
+            }
+
+            // Refresh chat history after a short delay (to let browser report actual spoken text)
+            if (modalType === 'chat' && result.was_active) {
+                setTimeout(async () => {
+                    try {
+                        const memoryInfo = await getCharacterMemory(characterName);
+                        document.getElementById('chat-memory-count').textContent =
+                            `Memory: ${memoryInfo.message_count} messages`;
+                        renderChatHistory(memoryInfo.messages, characterName);
+                    } catch (e) {
+                        console.error('Error refreshing memory after stop:', e);
+                    }
+                }, 500);  // Wait for browser to send stream_stopped event
             }
         } catch (error) {
             console.error('Stop error:', error);

@@ -337,6 +337,10 @@ def create_app(
     # In-memory conversation history per character (for memory_enabled characters)
     conversation_memory: dict[str, list[dict]] = {}
 
+    # Track pending interrupted messages that need actual spoken text from browser
+    # Maps character name -> index of the interrupted message in conversation_memory
+    pending_interrupted: dict[str, int] = {}
+
     # Generation tracking - only one generation per character at a time
     active_generations: dict[str, Union[ChatPipeline, TTSStreamer]] = {}
     generation_locks: dict[str, asyncio.Lock] = {}
@@ -499,6 +503,15 @@ def create_app(
                         playback_time = event.get("playback_time", 0)
                         word_count = event.get("word_count", 0)
                         print(f"[{character}] Stream stopped at {playback_time:.2f}s - {word_count} words actually played: \"{actual_text[:100]}...\"")
+
+                        # Update interrupted message with actual spoken text
+                        if character in pending_interrupted:
+                            msg_idx = pending_interrupted[character]
+                            if character in conversation_memory and msg_idx < len(conversation_memory[character]):
+                                msg = conversation_memory[character][msg_idx]
+                                msg["content"] = actual_text  # What was actually played
+                                print(f"[{character}] Updated memory[{msg_idx}] with actual spoken text")
+                            del pending_interrupted[character]
 
                 except json.JSONDecodeError:
                     pass
@@ -1087,12 +1100,20 @@ def create_app(
                 if name in active_generations:
                     # Save partial memory from interrupted chat
                     prev_gen = active_generations[name]
-                    spoken_text = prev_gen.get_spoken_text()
-                    if spoken_text:
-                        # Save the partial response that was actually spoken
+                    generated_text = prev_gen.get_spoken_text()  # Text converted to audio
+                    if generated_text:
+                        # Save as interrupted - browser will update with actual spoken text
                         if name not in conversation_memory:
                             conversation_memory[name] = []
-                        conversation_memory[name].append({"role": "assistant", "content": spoken_text})
+                        interrupted_msg = {
+                            "role": "assistant",
+                            "content": generated_text,  # Will be updated to actual spoken
+                            "interrupted": True,
+                            "generated_text": generated_text,  # What was converted to audio
+                        }
+                        conversation_memory[name].append(interrupted_msg)
+                        # Track index so we can update when browser reports actual spoken text
+                        pending_interrupted[name] = len(conversation_memory[name]) - 1
                         interrupted_prev = True
                     await cancel_active_generation(name)
                     await harness.stop_stream(name)
@@ -1136,8 +1157,25 @@ def create_app(
             if name not in active_generations:
                 return {"success": True, "character": name, "was_active": False}
 
-            # Cancel and get partial text
-            spoken_text = await cancel_active_generation(name)
+            # Get the generation before cancelling
+            gen = active_generations[name]
+            is_chat = isinstance(gen, ChatPipeline)
+
+            # Cancel and get partial text (text converted to audio)
+            generated_text = await cancel_active_generation(name)
+
+            # Save interrupted message to memory for chat generations
+            if is_chat and generated_text:
+                if name not in conversation_memory:
+                    conversation_memory[name] = []
+                interrupted_msg = {
+                    "role": "assistant",
+                    "content": generated_text,  # Will be updated by browser
+                    "interrupted": True,
+                    "generated_text": generated_text,
+                }
+                conversation_memory[name].append(interrupted_msg)
+                pending_interrupted[name] = len(conversation_memory[name]) - 1
 
             # Forcefully stop audio playback and clear text in browser
             await harness.stop_stream(name)
@@ -1146,7 +1184,7 @@ def create_app(
                 "success": True,
                 "character": name,
                 "was_active": True,
-                "spoken_text": spoken_text,
+                "spoken_text": generated_text,
             }
 
     @app.delete("/api/characters/{name}/memory")
