@@ -27,6 +27,11 @@ class TextAnimator {
         // Display window for character cap
         this.displayStartIndex = 0;
         this.maxDisplayChars = 120;
+
+        // Fade-out state for clearing old text
+        this.pendingDisplayStartIndex = null;
+        this.clearFadeStart = null;
+        this.clearFadeDuration = 400; // ms
     }
 
     resize(width, height) {
@@ -411,6 +416,8 @@ class TextAnimator {
         this.streamText = '';
         this.revealIndex = 0;
         this.displayStartIndex = 0;
+        this.pendingDisplayStartIndex = null;
+        this.clearFadeStart = null;
         this.streamSettings = {
             fontFamily: settings.fontFamily || 'Arial',
             fontSize: settings.fontSize || 48,
@@ -460,6 +467,8 @@ class TextAnimator {
         this.streamText = '';
         this.revealIndex = 0;
         this.displayStartIndex = 0;
+        this.pendingDisplayStartIndex = null;
+        this.clearFadeStart = null;
         this.streamFadeStart = null;
         this.streamSettings = null;
     }
@@ -675,9 +684,24 @@ class TextAnimator {
         const settings = this.streamSettings;
         const ctx = this.ctx;
 
-        // Apply character cap - advance displayStartIndex if we've exceeded max chars
+        // Handle fade-out animation for clearing old text
+        let clearFadeOpacity = 1;
+        if (this.clearFadeStart !== null) {
+            const fadeElapsed = performance.now() - this.clearFadeStart;
+            clearFadeOpacity = 1 - (fadeElapsed / this.clearFadeDuration);
+
+            if (clearFadeOpacity <= 0) {
+                // Fade complete - advance to new position
+                this.displayStartIndex = this.pendingDisplayStartIndex;
+                this.pendingDisplayStartIndex = null;
+                this.clearFadeStart = null;
+                clearFadeOpacity = 1;
+            }
+        }
+
+        // Apply character cap - start fade if we've exceeded max chars
         const visibleLength = this.revealIndex - this.displayStartIndex;
-        if (visibleLength > this.maxDisplayChars) {
+        if (visibleLength > this.maxDisplayChars && this.clearFadeStart === null) {
             // Find sentence boundary to clear to (look for ". ", "! ", "? ")
             const searchText = this.streamText.substring(this.displayStartIndex, this.revealIndex);
             const sentenceEndings = [
@@ -689,13 +713,18 @@ class TextAnimator {
                 searchText.lastIndexOf('?\n')
             ].filter(i => i > 0);
 
+            let newStartIndex;
             if (sentenceEndings.length > 0) {
                 const sentenceEnd = Math.max(...sentenceEndings);
-                this.displayStartIndex += sentenceEnd + 2; // Move past sentence ending
+                newStartIndex = this.displayStartIndex + sentenceEnd + 2; // Move past sentence ending
             } else {
                 // No sentence boundary found, advance by half
-                this.displayStartIndex += Math.floor(this.maxDisplayChars / 2);
+                newStartIndex = this.displayStartIndex + Math.floor(this.maxDisplayChars / 2);
             }
+
+            // Start fade-out animation
+            this.pendingDisplayStartIndex = newStartIndex;
+            this.clearFadeStart = performance.now();
         }
 
         // Get the raw visible text
@@ -746,7 +775,7 @@ class TextAnimator {
 
         // Draw each line
         ctx.save();
-        ctx.globalAlpha = this.streamOpacity;
+        ctx.globalAlpha = this.streamOpacity * clearFadeOpacity;
 
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
