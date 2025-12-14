@@ -319,6 +319,18 @@
         }
     }
 
+    // Model descriptions from ElevenLabs docs
+    const modelDescriptions = {
+        'eleven_v3': 'Latest flagship model with emotionally rich, expressive speech. 70+ languages. Best for audiobooks & dramatic content. Not optimized for real-time.',
+        'eleven_multilingual_v2': 'Advanced emotionally-aware synthesis. 29 languages. Most stable for long-form. Higher latency but best quality.',
+        'eleven_flash_v2_5': 'Fastest model (~75ms latency). 32 languages. 50% lower cost. Best for real-time agents & bulk processing.',
+        'eleven_turbo_v2_5': 'Balanced quality & speed (~250ms). 32 languages. Good middle-ground between Flash and Multilingual.',
+        'eleven_flash_v2': 'Ultra-fast for real-time (~75ms). English only. Great for conversational agents.',
+        'eleven_turbo_v2': 'Quality-focused with low latency (~250ms). English only. Good balance for English projects.',
+        'eleven_multilingual_v1': 'Legacy multilingual model. Use v2 for better results.',
+        'eleven_monolingual_v1': 'Legacy English model. Use newer models for better quality.',
+    };
+
     function updateModelInfo(modelId) {
         const infoEl = document.getElementById('tts-model-info');
         const styleRow = document.getElementById('voice-style-row');
@@ -337,18 +349,9 @@
                 similarityRow.style.display = model.can_use_speaker_boost ? '' : 'none';
             }
 
-            // Update info text
+            // Update info text with description
             if (infoEl) {
-                const features = [];
-                if (model.can_use_style) features.push('style');
-                if (model.can_use_speaker_boost) features.push('similarity boost');
-                if (!model.can_use_style && !model.can_use_speaker_boost) {
-                    infoEl.textContent = 'This model uses stability only';
-                } else {
-                    infoEl.textContent = features.length > 0
-                        ? `Supports: ${features.join(', ')}`
-                        : '';
-                }
+                infoEl.textContent = modelDescriptions[modelId] || '';
             }
         }
     }
