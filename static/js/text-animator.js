@@ -24,14 +24,18 @@ class TextAnimator {
         this.streamFadeDuration = 1000;
         this.streamOpacity = 1;
 
-        // Display window for character cap
-        this.displayStartIndex = 0;
+        // Character cap for display
         this.maxDisplayChars = 120;
 
-        // Fade-out state for clearing old text
-        this.pendingDisplayStartIndex = null;
+        // Fade-out state for clearing old lines
         this.clearFadeStart = null;
         this.clearFadeDuration = 400; // ms
+        this.pendingLinesToRemove = null;
+
+        // Committed lines - locked and won't re-wrap
+        this.committedLines = [];
+        this.committedCharCount = 0;
+        this.lastCommittedIndex = 0; // Index in streamText where we last committed
     }
 
     resize(width, height) {
@@ -415,9 +419,11 @@ class TextAnimator {
         this.isStreaming = true;
         this.streamText = '';
         this.revealIndex = 0;
-        this.displayStartIndex = 0;
-        this.pendingDisplayStartIndex = null;
         this.clearFadeStart = null;
+        this.pendingLinesToRemove = null;
+        this.committedLines = [];
+        this.committedCharCount = 0;
+        this.lastCommittedIndex = 0;
         this.streamSettings = {
             fontFamily: settings.fontFamily || 'Arial',
             fontSize: settings.fontSize || 48,
@@ -466,9 +472,11 @@ class TextAnimator {
         this.isStreaming = false;
         this.streamText = '';
         this.revealIndex = 0;
-        this.displayStartIndex = 0;
-        this.pendingDisplayStartIndex = null;
         this.clearFadeStart = null;
+        this.pendingLinesToRemove = null;
+        this.committedLines = [];
+        this.committedCharCount = 0;
+        this.lastCommittedIndex = 0;
         this.streamFadeStart = null;
         this.streamSettings = null;
     }
@@ -676,13 +684,37 @@ class TextAnimator {
     }
 
     /**
+     * Find sentence ending in text, returns index after the ending or -1.
+     */
+    findSentenceEnd(text, startFrom = 0) {
+        const endings = ['. ', '! ', '? ', '.\n', '!\n', '?\n', '."', '!"', '?"', ".'", "!'", "?'"];
+        let earliest = -1;
+
+        for (const ending of endings) {
+            const idx = text.indexOf(ending, startFrom);
+            if (idx !== -1 && (earliest === -1 || idx < earliest)) {
+                earliest = idx;
+            }
+        }
+
+        if (earliest !== -1) {
+            // Return position after the sentence-ending punctuation
+            return earliest + 1;
+        }
+        return -1;
+    }
+
+    /**
      * Draw streaming text with word wrapping and formatting.
+     * Uses committed lines to prevent text from shifting.
      */
     drawStream() {
         if (!this.streamText || !this.streamSettings) return;
 
         const settings = this.streamSettings;
         const ctx = this.ctx;
+        const maxWidth = this.width * 0.9;
+        const lineHeight = settings.fontSize * 1.3;
 
         // Handle fade-out animation for clearing old text
         let clearFadeOpacity = 1;
@@ -691,94 +723,120 @@ class TextAnimator {
             clearFadeOpacity = 1 - (fadeElapsed / this.clearFadeDuration);
 
             if (clearFadeOpacity <= 0) {
-                // Fade complete - advance to new position
-                this.displayStartIndex = this.pendingDisplayStartIndex;
-                this.pendingDisplayStartIndex = null;
+                // Fade complete - remove oldest committed lines
+                const linesToRemove = this.pendingLinesToRemove || 1;
+                this.committedLines.splice(0, linesToRemove);
+                // Recalculate committed char count
+                this.committedCharCount = this.committedLines.reduce((sum, l) => sum + l.charCount, 0);
+                this.pendingLinesToRemove = null;
                 this.clearFadeStart = null;
                 clearFadeOpacity = 1;
             }
         }
 
+        // Get revealed text
+        const revealedText = this.streamText.substring(0, this.revealIndex);
+        if (!revealedText) return;
+
+        // Check for new sentence endings to commit
+        const unprocessedText = revealedText.substring(this.lastCommittedIndex);
+        let searchPos = 0;
+        let sentenceEnd = this.findSentenceEnd(unprocessedText, searchPos);
+
+        while (sentenceEnd !== -1) {
+            // Found a sentence ending - commit text up to this point
+            const sentenceText = unprocessedText.substring(searchPos, sentenceEnd);
+
+            if (sentenceText.trim()) {
+                // Get formatting state at start of this sentence
+                const formatState = this.getFormattingStateAt(this.streamText, this.lastCommittedIndex + searchPos);
+                let textToWrap = sentenceText;
+                if (formatState.bold) textToWrap = '**' + textToWrap;
+                if (formatState.italic) textToWrap = '*' + textToWrap;
+
+                // Wrap and commit this sentence
+                const isQuote = textToWrap.trimStart().startsWith('>');
+                const paraText = isQuote ? textToWrap.trimStart().substring(1).trimStart() : textToWrap;
+                const wrappedLines = this.wrapFormattedParagraph(paraText, maxWidth, settings, isQuote);
+
+                for (const line of wrappedLines) {
+                    const lineCharCount = line.segments.reduce((sum, s) => sum + s.text.length, 0);
+                    this.committedLines.push({
+                        ...line,
+                        charCount: lineCharCount
+                    });
+                    this.committedCharCount += lineCharCount;
+                }
+            }
+
+            searchPos = sentenceEnd;
+            // Skip any whitespace after sentence
+            while (searchPos < unprocessedText.length && /\s/.test(unprocessedText[searchPos])) {
+                searchPos++;
+            }
+            sentenceEnd = this.findSentenceEnd(unprocessedText, searchPos);
+        }
+
+        // Update last committed index
+        this.lastCommittedIndex += searchPos;
+
         // Apply character cap - start fade if we've exceeded max chars
-        const visibleLength = this.revealIndex - this.displayStartIndex;
-        if (visibleLength > this.maxDisplayChars && this.clearFadeStart === null) {
-            // Find sentence boundary to clear to (look for ". ", "! ", "? ")
-            const searchText = this.streamText.substring(this.displayStartIndex, this.revealIndex);
-            const sentenceEndings = [
-                searchText.lastIndexOf('. '),
-                searchText.lastIndexOf('! '),
-                searchText.lastIndexOf('? '),
-                searchText.lastIndexOf('.\n'),
-                searchText.lastIndexOf('!\n'),
-                searchText.lastIndexOf('?\n')
-            ].filter(i => i > 0);
+        if (this.committedCharCount > this.maxDisplayChars && this.clearFadeStart === null && this.committedLines.length > 1) {
+            // Find how many lines to remove to get under the cap
+            let charsToRemove = this.committedCharCount - this.maxDisplayChars;
+            let linesToRemove = 0;
+            let removedChars = 0;
 
-            let newStartIndex;
-            if (sentenceEndings.length > 0) {
-                const sentenceEnd = Math.max(...sentenceEndings);
-                newStartIndex = this.displayStartIndex + sentenceEnd + 2; // Move past sentence ending
-            } else {
-                // No sentence boundary found, advance by half
-                newStartIndex = this.displayStartIndex + Math.floor(this.maxDisplayChars / 2);
+            for (const line of this.committedLines) {
+                if (removedChars >= charsToRemove) break;
+                removedChars += line.charCount;
+                linesToRemove++;
             }
 
-            // Start fade-out animation
-            this.pendingDisplayStartIndex = newStartIndex;
-            this.clearFadeStart = performance.now();
-        }
+            // Keep at least one line
+            linesToRemove = Math.min(linesToRemove, this.committedLines.length - 1);
 
-        // Get the raw visible text
-        let visibleText = this.streamText.substring(this.displayStartIndex, this.revealIndex);
-
-        if (!visibleText) return;
-
-        // If we're starting mid-stream, check formatting state and prepend markers
-        if (this.displayStartIndex > 0) {
-            const state = this.getFormattingStateAt(this.streamText, this.displayStartIndex);
-            let prefix = '';
-            if (state.bold) prefix += '**';
-            if (state.italic) prefix += '*';
-            visibleText = prefix + visibleText;
-        }
-
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'middle';
-
-        const maxWidth = this.width * 0.9;
-        const lineHeight = settings.fontSize * 1.3;
-
-        // Split by newlines first, then wrap each paragraph
-        const paragraphs = visibleText.split('\n');
-        const lines = [];
-
-        for (const para of paragraphs) {
-            if (para === '') {
-                // Empty line (blank paragraph)
-                lines.push({ segments: [], isQuote: false });
-                continue;
+            if (linesToRemove > 0) {
+                this.pendingLinesToRemove = linesToRemove;
+                this.clearFadeStart = performance.now();
             }
-
-            // Check if this is a quote line
-            const isQuote = para.trimStart().startsWith('>');
-            const paraText = isQuote ? para.trimStart().substring(1).trimStart() : para;
-
-            // Use format-aware wrapping that preserves bold/italic across line breaks
-            const wrappedLines = this.wrapFormattedParagraph(paraText, maxWidth, settings, isQuote);
-            lines.push(...wrappedLines);
         }
 
-        // Calculate position
-        const totalHeight = lines.length * lineHeight;
+        // Get current (uncommitted) text
+        const currentText = revealedText.substring(this.lastCommittedIndex);
+        let currentLines = [];
+
+        if (currentText.trim()) {
+            // Get formatting state for current text
+            const formatState = this.getFormattingStateAt(this.streamText, this.lastCommittedIndex);
+            let textToWrap = currentText;
+            if (formatState.bold) textToWrap = '**' + textToWrap;
+            if (formatState.italic) textToWrap = '*' + textToWrap;
+
+            const isQuote = textToWrap.trimStart().startsWith('>');
+            const paraText = isQuote ? textToWrap.trimStart().substring(1).trimStart() : textToWrap;
+            currentLines = this.wrapFormattedParagraph(paraText, maxWidth, settings, isQuote);
+        }
+
+        // Combine committed + current lines
+        const allLines = [...this.committedLines, ...currentLines];
+
+        if (allLines.length === 0) return;
+
+        // Calculate position (centered)
+        const totalHeight = allLines.length * lineHeight;
         const centerX = settings.positionX * this.width;
         const centerY = settings.positionY * this.height;
         const startY = centerY - totalHeight / 2 + lineHeight / 2;
 
         // Draw each line
         ctx.save();
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
         ctx.globalAlpha = this.streamOpacity * clearFadeOpacity;
 
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
+        for (let i = 0; i < allLines.length; i++) {
+            const line = allLines[i];
             const lineY = startY + i * lineHeight;
 
             // Calculate line width for centering
