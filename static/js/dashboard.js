@@ -321,18 +321,35 @@
 
     function updateModelInfo(modelId) {
         const infoEl = document.getElementById('tts-model-info');
-        if (!infoEl) return;
+        const styleRow = document.getElementById('voice-style-row');
+        const similarityRow = document.getElementById('voice-similarity-row');
 
         const model = elevenlabsModels.find(m => m.model_id === modelId);
-        if (model) {
-            const features = [];
-            if (model.can_use_style) features.push('style');
-            if (model.can_use_speaker_boost) features.push('speaker boost');
-            if (model.can_be_finetuned) features.push('finetunable');
 
-            infoEl.textContent = features.length > 0
-                ? `Features: ${features.join(', ')}`
-                : '';
+        if (model) {
+            // Show/hide style slider based on model capability
+            if (styleRow) {
+                styleRow.style.display = model.can_use_style ? '' : 'none';
+            }
+
+            // Show/hide similarity boost slider based on model capability
+            if (similarityRow) {
+                similarityRow.style.display = model.can_use_speaker_boost ? '' : 'none';
+            }
+
+            // Update info text
+            if (infoEl) {
+                const features = [];
+                if (model.can_use_style) features.push('style');
+                if (model.can_use_speaker_boost) features.push('similarity boost');
+                if (!model.can_use_style && !model.can_use_speaker_boost) {
+                    infoEl.textContent = 'This model uses stability only';
+                } else {
+                    infoEl.textContent = features.length > 0
+                        ? `Supports: ${features.join(', ')}`
+                        : '';
+                }
+            }
         }
     }
 
@@ -575,6 +592,7 @@
         // TTS model default
         document.getElementById('character-tts-model').value = 'eleven_multilingual_v2';
         document.getElementById('tts-model-info').textContent = '';
+        updateModelInfo('eleven_multilingual_v2');
 
         // Memory & Twitch settings
         document.getElementById('character-memory-enabled').checked = false;
@@ -598,7 +616,10 @@
 
         // Voice settings
         document.getElementById('character-voice-id').value = character.elevenlabs_voice_id;
-        document.getElementById('character-tts-model').value = character.elevenlabs_model_id || 'eleven_multilingual_v2';
+        const modelId = character.elevenlabs_model_id || 'eleven_multilingual_v2';
+        document.getElementById('character-tts-model').value = modelId;
+        // Update settings visibility based on model capabilities
+        updateModelInfo(modelId);
         // Load voice info to show compatible models
         loadVoiceModels(character.elevenlabs_voice_id);
         document.getElementById('character-stability').value = Math.round(character.voice_stability * 100);
