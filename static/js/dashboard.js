@@ -17,18 +17,12 @@
     let editingCharacter = null;
     let chatCharacter = null;
     let speakCharacter = null;
-    let textStyleAnimator = null;
-    let textStyleAnimationFrame = null;
-    let editingTextStyleCharacter = null;
 
     // DOM elements
     const wsStatus = document.getElementById('ws-status');
     const wsStatusText = document.getElementById('ws-status-text');
     const charactersContainer = document.getElementById('characters-container');
     const historyList = document.getElementById('history-list');
-    const textStyleModal = document.getElementById('text-style-modal');
-    const textStyleModalTitle = document.getElementById('text-style-modal-title');
-    const textStylePreviewCanvas = document.getElementById('ts-preview-canvas');
 
     // =========================================================================
     // WebSocket Connection
@@ -169,75 +163,36 @@
     }
 
     // =========================================================================
-    // Text Style Modal Functions
+    // Character Text Style Preview
     // =========================================================================
 
-    function openTextStyleModal(characterName) {
-        const character = characters.find(c => c.name === characterName);
-        if (!character) return;
+    let characterPreviewAnimator = null;
+    let characterPreviewAnimationFrame = null;
 
-        editingTextStyleCharacter = character;
-        textStyleModalTitle.textContent = `Edit Text Style - ${character.name}`;
+    function previewCharacterTextStyle() {
+        stopCharacterTextPreview();
 
-        // Populate form with character's current text settings
-        document.getElementById('ts-style').value = character.default_text_style;
-        document.getElementById('ts-font-family').value = character.text_font_family;
-        document.getElementById('ts-font-size').value = character.text_font_size;
-        document.getElementById('ts-duration').value = character.text_duration;
-        document.getElementById('ts-color').value = character.text_color;
-        document.getElementById('ts-stroke-color').value = character.text_stroke_color || '#000000';
-        document.getElementById('ts-stroke-width').value = character.text_stroke_width;
-        document.getElementById('ts-stroke-width-value').textContent = character.text_stroke_width;
-        document.getElementById('ts-position-x').value = Math.round(character.text_position_x * 100);
-        document.getElementById('ts-pos-x-value').textContent = Math.round(character.text_position_x * 100);
-        document.getElementById('ts-position-y').value = Math.round(character.text_position_y * 100);
-        document.getElementById('ts-pos-y-value').textContent = Math.round(character.text_position_y * 100);
-
-        // Initialize TextAnimator for preview if not already
-        if (!textStyleAnimator && textStylePreviewCanvas) {
-            const ctx = textStylePreviewCanvas.getContext('2d');
-            textStyleAnimator = new TextAnimator(ctx, textStylePreviewCanvas.width, textStylePreviewCanvas.height);
-        }
-
-        textStyleModal.classList.add('active');
-    }
-
-    function closeTextStyleModal() {
-        textStyleModal.classList.remove('active');
-        editingTextStyleCharacter = null;
-        stopTextStylePreview();
-    }
-
-    function getTextStyleConfig() {
-        return {
-            style: document.getElementById('ts-style').value,
-            fontFamily: document.getElementById('ts-font-family').value,
-            fontSize: parseInt(document.getElementById('ts-font-size').value),
-            duration: parseInt(document.getElementById('ts-duration').value),
-            color: document.getElementById('ts-color').value,
-            strokeColor: document.getElementById('ts-stroke-color').value,
-            strokeWidth: parseInt(document.getElementById('ts-stroke-width').value),
-            positionX: parseInt(document.getElementById('ts-position-x').value) / 100,
-            positionY: parseInt(document.getElementById('ts-position-y').value) / 100,
-        };
-    }
-
-    function playTextStylePreview() {
-        stopTextStylePreview();
-
-        const canvas = document.getElementById('ts-preview-canvas');
-        if (!canvas) {
-            console.error('Preview canvas not found');
-            return;
-        }
+        const canvas = document.getElementById('character-preview-canvas');
+        if (!canvas) return;
         const ctx = canvas.getContext('2d');
 
-        textStyleAnimator = new TextAnimator(ctx, canvas.width, canvas.height);
+        characterPreviewAnimator = new TextAnimator(ctx, canvas.width, canvas.height);
 
-        const config = getTextStyleConfig();
+        const config = {
+            style: document.getElementById('character-text-style').value,
+            fontFamily: document.getElementById('character-font-family').value,
+            fontSize: parseInt(document.getElementById('character-font-size').value),
+            duration: parseInt(document.getElementById('character-text-duration').value),
+            color: document.getElementById('character-text-color').value,
+            strokeColor: document.getElementById('character-stroke-color').value,
+            strokeWidth: parseInt(document.getElementById('character-stroke-width').value),
+            positionX: parseInt(document.getElementById('character-position-x').value) / 100,
+            positionY: parseInt(document.getElementById('character-position-y').value) / 100,
+        };
+
         const scaleFactor = canvas.width / 800;
 
-        textStyleAnimator.show({
+        characterPreviewAnimator.show({
             text: 'Sample Text',
             style: config.style,
             duration: config.duration,
@@ -252,55 +207,29 @@
 
         function animate() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            textStyleAnimator.update();
-            textStyleAnimator.draw();
+            characterPreviewAnimator.update();
+            characterPreviewAnimator.draw();
 
-            if (textStyleAnimator.current) {
-                textStyleAnimationFrame = requestAnimationFrame(animate);
+            if (characterPreviewAnimator.current) {
+                characterPreviewAnimationFrame = requestAnimationFrame(animate);
             }
         }
 
         animate();
     }
 
-    function stopTextStylePreview() {
-        if (textStyleAnimationFrame) {
-            cancelAnimationFrame(textStyleAnimationFrame);
-            textStyleAnimationFrame = null;
+    function stopCharacterTextPreview() {
+        if (characterPreviewAnimationFrame) {
+            cancelAnimationFrame(characterPreviewAnimationFrame);
+            characterPreviewAnimationFrame = null;
         }
-        if (textStyleAnimator) {
-            textStyleAnimator.clear();
+        if (characterPreviewAnimator) {
+            characterPreviewAnimator.clear();
         }
-        const canvas = document.getElementById('ts-preview-canvas');
+        const canvas = document.getElementById('character-preview-canvas');
         if (canvas) {
             const ctx = canvas.getContext('2d');
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-        }
-    }
-
-    async function saveTextStyle() {
-        if (!editingTextStyleCharacter) return;
-
-        const config = getTextStyleConfig();
-
-        const updateData = {
-            default_text_style: config.style,
-            text_font_family: config.fontFamily,
-            text_font_size: config.fontSize,
-            text_color: config.color,
-            text_stroke_color: config.strokeWidth > 0 ? config.strokeColor : null,
-            text_stroke_width: config.strokeWidth,
-            text_position_x: config.positionX,
-            text_position_y: config.positionY,
-            text_duration: config.duration,
-        };
-
-        try {
-            await updateCharacter(editingTextStyleCharacter.name, updateData);
-            closeTextStyleModal();
-        } catch (error) {
-            console.error('Error saving text style:', error);
-            alert('Error saving text style. Check console for details.');
         }
     }
 
@@ -405,6 +334,7 @@
     function closeCharacterModal() {
         characterModal.classList.remove('active');
         editingCharacter = null;
+        stopCharacterTextPreview();
     }
 
     async function handleCharacterFormSubmit(e) {
@@ -664,7 +594,6 @@
                         ? `<button onclick="window.openChatModal('${character.name}')">Chat</button>`
                         : ''}
                     <button onclick="window.copyCharacterUrl('${character.name}')">Copy URL</button>
-                    <button onclick="window.openTextStyleModal('${character.name}')">Text Style</button>
                     <button onclick="window.editCharacter('${character.name}')">Edit</button>
                     <button class="secondary" onclick="window.deleteCharacter('${character.name}')">Delete</button>
                 </div>
@@ -675,12 +604,6 @@
     // =========================================================================
     // Global Functions (for onclick handlers)
     // =========================================================================
-
-    window.openTextStyleModal = openTextStyleModal;
-    window.closeTextStyleModal = closeTextStyleModal;
-    window.playTextStylePreview = playTextStylePreview;
-    window.stopTextStylePreview = stopTextStylePreview;
-    window.saveTextStyle = saveTextStyle;
 
     // Character modal exports
     window.openCreateCharacterModal = openCreateCharacterModal;
@@ -702,6 +625,10 @@
     window.openChatModal = openChatModal;
     window.closeChatModal = closeChatModal;
     window.sendChat = sendChat;
+
+    // Preview exports
+    window.previewCharacterTextStyle = previewCharacterTextStyle;
+    window.stopCharacterTextPreview = stopCharacterTextPreview;
 
     // Copy URL function
     window.copyCharacterUrl = async function(characterName) {
@@ -728,15 +655,6 @@
     // =========================================================================
     // Initialize
     // =========================================================================
-
-    // Close text style modal on background click
-    if (textStyleModal) {
-        textStyleModal.addEventListener('click', (e) => {
-            if (e.target === textStyleModal) {
-                closeTextStyleModal();
-            }
-        });
-    }
 
     // Character form submission
     if (characterForm) {
@@ -767,28 +685,6 @@
             if (e.target === chatModal) {
                 closeChatModal();
             }
-        });
-    }
-
-    // Text style slider value display updates
-    const strokeWidthSlider = document.getElementById('ts-stroke-width');
-    if (strokeWidthSlider) {
-        strokeWidthSlider.addEventListener('input', function() {
-            document.getElementById('ts-stroke-width-value').textContent = this.value;
-        });
-    }
-
-    const posXSlider = document.getElementById('ts-position-x');
-    if (posXSlider) {
-        posXSlider.addEventListener('input', function() {
-            document.getElementById('ts-pos-x-value').textContent = this.value;
-        });
-    }
-
-    const posYSlider = document.getElementById('ts-position-y');
-    if (posYSlider) {
-        posYSlider.addEventListener('input', function() {
-            document.getElementById('ts-pos-y-value').textContent = this.value;
         });
     }
 

@@ -466,94 +466,6 @@
         </div>
     </div>
 
-    <!-- Text Style Editor Modal -->
-    <div id="text-style-modal" class="modal">
-        <div class="modal-content" style="max-width: 800px;">
-            <h2 id="text-style-modal-title">Edit Text Style</h2>
-
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;">
-                <!-- Left Column: Controls -->
-                <div class="text-style-controls">
-                    <div class="form-group">
-                        <label>Animation Style</label>
-                        <select id="ts-style">
-                            <option value="typewriter">Typewriter</option>
-                            <option value="fade">Fade</option>
-                            <option value="slide">Slide</option>
-                            <option value="bounce">Bounce</option>
-                            <option value="wave">Wave</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Font Family</label>
-                        <select id="ts-font-family">
-                            <option value="Arial">Arial</option>
-                            <option value="Helvetica">Helvetica</option>
-                            <option value="Georgia">Georgia</option>
-                            <option value="Times New Roman">Times New Roman</option>
-                            <option value="Courier New">Courier New</option>
-                            <option value="Verdana">Verdana</option>
-                            <option value="Impact">Impact</option>
-                        </select>
-                    </div>
-
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Font Size</label>
-                            <input type="number" id="ts-font-size" value="48" min="12" max="200">
-                        </div>
-                        <div class="form-group">
-                            <label>Duration (ms)</label>
-                            <input type="number" id="ts-duration" value="3000" min="500" max="30000" step="100">
-                        </div>
-                    </div>
-
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Text Color</label>
-                            <input type="color" id="ts-color" value="#ffffff">
-                        </div>
-                        <div class="form-group">
-                            <label>Stroke Color</label>
-                            <input type="color" id="ts-stroke-color" value="#000000">
-                        </div>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Stroke Width: <span id="ts-stroke-width-value">0</span>px</label>
-                        <input type="range" id="ts-stroke-width" min="0" max="20" value="0">
-                    </div>
-
-                    <div class="form-group">
-                        <label>Position X: <span id="ts-pos-x-value">50</span>%</label>
-                        <input type="range" id="ts-position-x" min="0" max="100" value="50">
-                    </div>
-
-                    <div class="form-group">
-                        <label>Position Y: <span id="ts-pos-y-value">50</span>%</label>
-                        <input type="range" id="ts-position-y" min="0" max="100" value="50">
-                    </div>
-
-                    <div class="button-row">
-                        <button type="button" onclick="window.playTextStylePreview()">Preview</button>
-                        <button type="button" class="secondary" onclick="window.stopTextStylePreview()">Stop</button>
-                    </div>
-                </div>
-
-                <!-- Right Column: Preview Canvas -->
-                <div class="text-style-preview" style="background: #000; border-radius: 4px; display: flex; align-items: center; justify-content: center;">
-                    <canvas id="ts-preview-canvas" width="400" height="225" style="width: 100%; height: auto;"></canvas>
-                </div>
-            </div>
-
-            <div class="button-row" style="margin-top: 1.5rem;">
-                <button type="button" onclick="window.saveTextStyle()">Save</button>
-                <button type="button" class="secondary" onclick="window.closeTextStyleModal()">Cancel</button>
-            </div>
-        </div>
-    </div>
-
     <!-- Character Create/Edit Modal -->
     <div id="character-modal" class="modal">
         <div class="modal-content" style="max-width: 700px;">
@@ -691,6 +603,16 @@
                         <label>Position Y (<span id="character-pos-y-value">50</span>%)</label>
                         <input type="range" id="character-position-y" min="0" max="100" value="50"
                                oninput="document.getElementById('character-pos-y-value').textContent = this.value">
+                    </div>
+                </div>
+                <div class="form-group" style="margin-top: 1rem;">
+                    <label>Preview</label>
+                    <div style="background: #000; border-radius: 4px; padding: 0.5rem;">
+                        <canvas id="character-preview-canvas" width="400" height="120" style="width: 100%; height: auto;"></canvas>
+                    </div>
+                    <div class="button-row" style="margin-top: 0.5rem;">
+                        <button type="button" onclick="window.previewCharacterTextStyle()">Preview</button>
+                        <button type="button" class="secondary" onclick="window.stopCharacterTextPreview()">Stop</button>
                     </div>
                 </div>
 
