@@ -212,8 +212,10 @@ class TTSStreamer:
                 if chunk.audio:
                     await self._send_audio_chunk(chunk.audio)
 
-        except Exception as e:
-            logger.error(f"TTS receive error: {e}")
+        except asyncio.CancelledError:
+            # Task was cancelled - this is expected during stop/cancel
+            pass
+        # Let other exceptions (callback errors, WebSocket errors) propagate to stream()
 
     async def cancel(self) -> None:
         """Cancel the streaming - closes WebSocket immediately."""

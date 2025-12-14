@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -349,7 +350,8 @@ def create_app(
 
     # Generation tracking - only one generation per character at a time
     active_generations: dict[str, Union[ChatPipeline, TTSStreamer]] = {}
-    generation_locks: dict[str, asyncio.Lock] = {}
+    # Using defaultdict ensures thread-safe lock creation (no race on first access)
+    generation_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     # =========================================================================
     # Conversation Memory Helpers
@@ -486,12 +488,6 @@ def create_app(
                         for m in messages
                     ]
                     logger.info(f"Loaded {len(messages)} persisted messages for {char.name}")
-
-    def get_generation_lock(name: str) -> asyncio.Lock:
-        """Get or create a lock for a character's generation."""
-        if name not in generation_locks:
-            generation_locks[name] = asyncio.Lock()
-        return generation_locks[name]
 
     async def cancel_active_generation(name: str) -> str | None:
         """Cancel any active generation for a character and return partial spoken text."""
@@ -1093,28 +1089,24 @@ def create_app(
             send_word_timing=lambda words: harness.word_timing(name, words),
         )
 
-        try:
-            # Acquire lock and cancel any existing generation
-            async with get_generation_lock(name):
-                if name in active_generations:
-                    await cancel_active_generation(name)
-                    await harness.stop_stream(name)
-                active_generations[name] = streamer
+        # Acquire lock for entire streaming operation to prevent concurrent requests
+        async with generation_locks[name]:
+            if name in active_generations:
+                await cancel_active_generation(name)
+                await harness.stop_stream(name)
+            active_generations[name] = streamer
 
-            await streamer.stream(request.text)
-
-            # Log the speak
-            await harness._log_playback(name, request.text, "stream")
-
-            return {"success": True, "character": name}
-
-        except ElevenLabsWSError as e:
-            raise HTTPException(status_code=500, detail=str(e))
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"TTS error: {e}")
-        finally:
-            # Clear active generation (use get to avoid race with stop endpoint)
-            if active_generations.get(name) is streamer:
+            try:
+                await streamer.stream(request.text)
+                await harness._log_playback(name, request.text, "stream")
+                return {"success": True, "character": name}
+            except ElevenLabsWSError as e:
+                await harness.stop_stream(name)
+                raise HTTPException(status_code=500, detail=str(e))
+            except Exception as e:
+                await harness.stop_stream(name)
+                raise HTTPException(status_code=500, detail=f"TTS error: {e}")
+            finally:
                 active_generations.pop(name, None)
 
     @app.post("/api/characters/{name}/chat")
@@ -1239,69 +1231,63 @@ def create_app(
             tts_streamer=tts_streamer,
         )
 
-        # Track if we saved partial memory from an interrupted generation
-        interrupted_prev = False
+        # Acquire lock for entire pipeline operation to prevent concurrent requests
+        async with generation_locks[name]:
+            if name in active_generations:
+                # Cancel the previous generation - it will save its own interrupted state
+                await cancel_active_generation(name)
+                await harness.stop_stream(name)
+            active_generations[name] = pipeline
 
-        try:
-            # Acquire lock and cancel any existing generation
-            async with get_generation_lock(name):
-                if name in active_generations:
-                    # Cancel the previous generation - it will save its own interrupted state
-                    await cancel_active_generation(name)
-                    await harness.stop_stream(name)
-                    interrupted_prev = True
-                active_generations[name] = pipeline
+            try:
+                response_text = await pipeline.run(request.message)
 
-            response_text = await pipeline.run(request.message)
-
-            # Store conversation in memory
-            # Store twitch context if present
-            if twitch_chat_context:
-                await save_conversation_message(
-                    name, "context", twitch_chat_context, character.persist_memory
-                )
-            await save_conversation_message(
-                name, "user", request.message, character.persist_memory
-            )
-
-            # Check if we were cancelled (interrupted by stop button or new chat)
-            if pipeline._cancelled:
-                # Save as interrupted - browser will update with actual spoken text
-                spoken_text = pipeline.get_spoken_text()
-                if spoken_text:
-                    msg_idx, db_id = await save_conversation_message(
-                        character_name=name,
-                        role="assistant",
-                        content=spoken_text,
-                        persist=character.persist_memory,
-                        interrupted=True,
-                        generated_text=spoken_text,
+                # Store conversation in memory
+                # Store twitch context if present
+                if twitch_chat_context:
+                    await save_conversation_message(
+                        name, "context", twitch_chat_context, character.persist_memory
                     )
-                    # Track for browser update
-                    pending_interrupted[name] = (msg_idx, character.persist_memory, db_id)
-            else:
-                # Normal completion - save full response
                 await save_conversation_message(
-                    name, "assistant", response_text, character.persist_memory
+                    name, "user", request.message, character.persist_memory
                 )
-                # Log the chat
-                await harness._log_playback(name, f"chat:{name}", "stream")
 
-            return ChatResponse(
-                success=True,
-                character=name,
-                response_text=response_text,
-                twitch_chat_context=twitch_chat_context,
-            )
+                # Check if we were cancelled (interrupted by stop button or new chat)
+                if pipeline._cancelled:
+                    # Save as interrupted - browser will update with actual spoken text
+                    spoken_text = pipeline.get_spoken_text()
+                    if spoken_text:
+                        msg_idx, db_id = await save_conversation_message(
+                            character_name=name,
+                            role="assistant",
+                            content=spoken_text,
+                            persist=character.persist_memory,
+                            interrupted=True,
+                            generated_text=spoken_text,
+                        )
+                        # Track for browser update
+                        pending_interrupted[name] = (msg_idx, character.persist_memory, db_id)
+                else:
+                    # Normal completion - save full response
+                    await save_conversation_message(
+                        name, "assistant", response_text, character.persist_memory
+                    )
+                    # Log the chat
+                    await harness._log_playback(name, f"chat:{name}", "stream")
 
-        except Exception as e:
-            # Ensure streams are cleaned up on error
-            await harness.stream_end(name)
-            await harness.text_stream_end(name)
-            raise HTTPException(status_code=500, detail=f"Chat error: {e}")
-        finally:
-            # Clear active generation (use get to avoid race with stop endpoint)
-            if active_generations.get(name) is pipeline:
+                return ChatResponse(
+                    success=True,
+                    character=name,
+                    response_text=response_text,
+                    twitch_chat_context=twitch_chat_context,
+                )
+
+            except Exception as e:
+                # Force stop streams on error and clean up pending state
+                pending_interrupted.pop(name, None)
+                await harness.stop_stream(name)
+                raise HTTPException(status_code=500, detail=f"Chat error: {e}")
+            finally:
                 active_generations.pop(name, None)
 
     @app.post("/api/characters/{name}/stop")
@@ -1314,7 +1300,7 @@ def create_app(
         was_active = False
         spoken_text = None
 
-        async with get_generation_lock(name):
+        async with generation_locks[name]:
             if name in active_generations:
                 was_active = True
                 # Cancel the generation (sets _cancelled=True)
