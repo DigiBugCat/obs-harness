@@ -328,21 +328,26 @@ console.log('[channel.js] VERSION 8 LOADED - nuclear AudioContext close on stop'
         isStreaming = false;
         streamBuffer = [];
 
+        // Clear pending text state (it should have been flushed by now)
+        pendingTextSettings = null;
+        pendingTextChunks = [];
+
         // Calculate when all scheduled audio will finish playing
         if (audioContext && nextPlayTime > audioContext.currentTime) {
             audioStreamEndTime = nextPlayTime;
             const remainingMs = (nextPlayTime - audioContext.currentTime) * 1000;
             console.log(`[${channelName}] Stream ended, audio finishes in ${remainingMs.toFixed(0)}ms`);
+
+            // Send stream_ended AFTER audio actually finishes playing
+            setTimeout(() => {
+                sendEvent({ event: 'stream_ended' });
+                console.log(`[${channelName}] Audio playback complete, sent stream_ended`);
+            }, remainingMs + 100); // Small buffer to ensure audio is done
         } else {
             audioStreamEndTime = 0;
             console.log(`[${channelName}] Stream ended, no pending audio`);
+            sendEvent({ event: 'stream_ended' });
         }
-
-        // Clear pending text state (it should have been flushed by now)
-        pendingTextSettings = null;
-        pendingTextChunks = [];
-
-        sendEvent({ event: 'stream_ended' });
     }
 
     function stopStream() {
