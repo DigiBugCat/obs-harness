@@ -2,6 +2,7 @@
  * OBS Browser Source Channel Handler
  * Handles audio playback, streaming, and text overlays via WebSocket
  */
+console.log('[channel.js] VERSION 6 LOADED - stop_stream support');
 
 (function() {
     'use strict';
@@ -27,6 +28,7 @@
     let nextPlayTime = 0;
     let audioStreamEndTime = 0;  // When all scheduled audio will finish
     let firstAudioChunkReceived = false;  // Track if first audio chunk arrived
+    let scheduledSources = [];  // Track scheduled AudioBufferSourceNodes for stopping
 
     // Pending text (waits for audio to start)
     let pendingTextSettings = null;
@@ -147,6 +149,9 @@
                 case 'stream_end':
                     endStream();
                     break;
+                case 'stop_stream':
+                    stopStream();
+                    break;
                 case 'text':
                     showText(msg);
                     break;
@@ -238,6 +243,7 @@
         isStreaming = true;
         nextPlayTime = audioContext.currentTime;
         firstAudioChunkReceived = false;
+        scheduledSources = [];  // Clear any leftover sources
 
         console.log(`[${channelName}] Stream started: ${streamSampleRate}Hz, ${streamChannels}ch`);
     }
@@ -282,6 +288,13 @@
 
         source.start(nextPlayTime);
 
+        // Track source for potential stopping
+        scheduledSources.push(source);
+        source.onended = () => {
+            const idx = scheduledSources.indexOf(source);
+            if (idx !== -1) scheduledSources.splice(idx, 1);
+        };
+
         // On first audio chunk, trigger pending text display and record start time
         if (!firstAudioChunkReceived) {
             firstAudioChunkReceived = true;
@@ -296,12 +309,8 @@
     function flushPendingText() {
         if (!textAnimator || !pendingTextSettings) return;
 
-        // When word timing is enabled, force instant reveal so words appear immediately
-        if (wordTimingEnabled) {
-            pendingTextSettings.instantReveal = true;
-        }
-
         // Start the text stream now that audio is playing
+        // Words are added via word timing, then revealed with typewriter effect
         textAnimator.startStream(pendingTextSettings);
         console.log(`[${channelName}] Text stream activated (synced to audio, wordTiming=${wordTimingEnabled})`);
 
@@ -334,6 +343,44 @@
         pendingTextChunks = [];
 
         sendEvent({ event: 'stream_ended' });
+    }
+
+    function stopStream() {
+        console.log(`[${channelName}] Stop stream: forcefully stopping ${scheduledSources.length} audio sources`);
+
+        // Stop all scheduled audio sources immediately
+        for (const source of scheduledSources) {
+            try {
+                source.stop();
+                source.disconnect();
+            } catch (e) {
+                // Source may already be stopped/ended
+            }
+        }
+        scheduledSources = [];
+
+        // Reset streaming state
+        isStreaming = false;
+        streamBuffer = [];
+        nextPlayTime = 0;
+        audioStreamEndTime = 0;
+        firstAudioChunkReceived = false;
+
+        // Clear word timing state
+        wordTimingEnabled = false;
+        wordTimingData = [];
+        revealedWordCount = 0;
+
+        // Clear pending text state
+        pendingTextSettings = null;
+        pendingTextChunks = [];
+
+        // Clear any visible text immediately
+        if (textAnimator) {
+            textAnimator.clear();
+        }
+
+        sendEvent({ event: 'stream_stopped' });
     }
 
     // =========================================================================
@@ -395,16 +442,11 @@
         wordTimingData = [];
         revealedWordCount = 0;
 
-        // If audio hasn't started yet, buffer the text settings
-        if (!firstAudioChunkReceived) {
-            pendingTextSettings = settings;
-            pendingTextChunks = [];
-            console.log(`[${channelName}] Text stream pending (waiting for audio)`);
-        } else {
-            // Audio already playing, start text immediately
-            textAnimator.startStream(settings);
-            console.log(`[${channelName}] Text stream started (instant=${msg.instant_reveal || false})`);
-        }
+        // Always buffer text settings - flushPendingText will activate when audio starts
+        // This ensures correct ordering even if text_stream_start arrives before stream_start resets flags
+        pendingTextSettings = settings;
+        pendingTextChunks = [];
+        console.log(`[${channelName}] Text stream pending (waiting for audio)`);
     }
 
     function handleTextChunk(msg) {
@@ -436,7 +478,7 @@
             });
         }
 
-        console.log(`[${channelName}] Word timing received: ${msg.words.length} words (total: ${wordTimingData.length})`);
+        console.log(`[${channelName}] Word timing received: ${msg.words.map(w => `"${w.word}"@${w.start.toFixed(2)}s`).join(', ')} (total: ${wordTimingData.length})`);
     }
 
     function endTextStream() {
@@ -450,12 +492,17 @@
             fadeDelay = (audioStreamEndTime - audioContext.currentTime) * 1000 + lingerTime;
         }
 
-        textAnimator.endStream(fadeDelay);
-        console.log(`[${channelName}] Text stream ended, fade in ${fadeDelay.toFixed(0)}ms`);
-        sendEvent({ event: 'text_stream_complete' });
+        // DON'T reset wordTimingEnabled yet - let the reveal continue until audio ends
+        // Schedule the reset after the fade delay
+        setTimeout(() => {
+            wordTimingEnabled = false;
+            wordTimingData = [];
+            revealedWordCount = 0;
+        }, fadeDelay);
 
-        // Reset word timing state
-        wordTimingEnabled = false;
+        textAnimator.endStream(fadeDelay);
+        console.log(`[${channelName}] Text stream ended, fade in ${fadeDelay.toFixed(0)}ms, unrevealed words: ${wordTimingData.length - revealedWordCount}`);
+        sendEvent({ event: 'text_stream_complete' });
     }
 
     // =========================================================================
@@ -505,6 +552,11 @@
             return;
         }
 
+        // Check text animator exists
+        if (!textAnimator) {
+            return;
+        }
+
         // Calculate current audio playback position (seconds since audio started)
         const currentAudioTime = audioContext.currentTime - audioStartContextTime;
 
@@ -514,7 +566,9 @@
             if (currentAudioTime >= word.start) {
                 // Reveal this word (append with space if not first word)
                 const prefix = revealedWordCount > 0 ? ' ' : '';
-                textAnimator.appendText(prefix + word.word);
+                const fullText = prefix + word.word;
+                console.log(`[REVEAL] "${word.word}" at ${currentAudioTime.toFixed(2)}s (word ${revealedWordCount + 1}/${wordTimingData.length})`);
+                textAnimator.appendText(fullText);
                 revealedWordCount++;
             } else {
                 break;  // Not time for this word yet

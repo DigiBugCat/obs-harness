@@ -415,6 +415,12 @@ class StreamEndCommand(BaseModel):
     action: Literal["stream_end"] = "stream_end"
 
 
+class StopStreamCommand(BaseModel):
+    """WebSocket command to forcefully stop audio stream and clear playback."""
+
+    action: Literal["stop_stream"] = "stop_stream"
+
+
 class TextCommand(BaseModel):
     """WebSocket command to display text."""
 

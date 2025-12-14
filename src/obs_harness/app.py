@@ -38,6 +38,7 @@ from .models import (
     PresetCreate,
     SpeakRequest,
     StopCommand,
+    StopStreamCommand,
     StreamEndCommand,
     StreamStartCommand,
     TextChunkCommand,
@@ -211,6 +212,14 @@ class OBSHarness:
     async def stream_end(self, channel: str) -> bool:
         """End an audio stream on a channel."""
         cmd = StreamEndCommand()
+        success = await self._manager.send_to_channel(channel, cmd.model_dump())
+        if success:
+            self._manager.set_channel_state(channel, "streaming", False)
+        return success
+
+    async def stop_stream(self, channel: str) -> bool:
+        """Forcefully stop audio stream and clear playback on a channel."""
+        cmd = StopStreamCommand()
         success = await self._manager.send_to_channel(channel, cmd.model_dump())
         if success:
             self._manager.set_channel_state(channel, "streaming", False)
@@ -921,8 +930,7 @@ def create_app(
             async with get_generation_lock(name):
                 if name in active_generations:
                     await cancel_active_generation(name)
-                    await harness.stream_end(name)
-                    await harness.text_stream_end(name)
+                    await harness.stop_stream(name)
                 active_generations[name] = streamer
 
             await streamer.stream(request.text)
@@ -1080,8 +1088,7 @@ def create_app(
                         conversation_memory[name].append({"role": "assistant", "content": spoken_text})
                         interrupted_prev = True
                     await cancel_active_generation(name)
-                    await harness.stream_end(name)
-                    await harness.text_stream_end(name)
+                    await harness.stop_stream(name)
                 active_generations[name] = pipeline
 
             response_text = await pipeline.run(request.message)
@@ -1125,9 +1132,8 @@ def create_app(
             # Cancel and get partial text
             spoken_text = await cancel_active_generation(name)
 
-            # Send stream end commands to browser
-            await harness.stream_end(name)
-            await harness.text_stream_end(name)
+            # Forcefully stop audio playback and clear text in browser
+            await harness.stop_stream(name)
 
             return {
                 "success": True,

@@ -42,10 +42,6 @@ def main() -> None:
     # Import here to avoid slow startup for --help
     import uvicorn
 
-    from .app import create_app
-
-    app = create_app(db_url=args.db, static_dir=args.static_dir)
-
     print(f"\n  OBS Audio Harness")
     print(f"  ─────────────────")
     print(f"  Dashboard:    http://{args.host}:{args.port}/")
@@ -54,12 +50,23 @@ def main() -> None:
     print(f"  API Docs:     http://{args.host}:{args.port}/docs")
     print()
 
-    uvicorn.run(
-        app,
-        host=args.host,
-        port=args.port,
-        reload=args.reload,
-    )
+    if args.reload:
+        # Use import string for reload support
+        uvicorn.run(
+            "obs_harness.app:create_app",
+            factory=True,
+            host=args.host,
+            port=args.port,
+            reload=True,
+        )
+    else:
+        from .app import create_app
+        app = create_app(db_url=args.db, static_dir=args.static_dir)
+        uvicorn.run(
+            app,
+            host=args.host,
+            port=args.port,
+        )
 
 
 if __name__ == "__main__":

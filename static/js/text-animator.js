@@ -19,7 +19,7 @@ class TextAnimator {
         this.revealIndex = 0;
         this.streamSettings = null;
         this.lastRevealTime = 0;
-        this.revealRate = 32; // chars per second (~320 WPM)
+        this.revealRate = 40; // chars per second
         this.streamFadeStart = null;
         this.streamFadeDuration = 1000;
         this.streamOpacity = 1;
@@ -439,13 +439,11 @@ class TextAnimator {
      * @param {number} fadeDelay - Delay in ms before starting fade (default 500ms)
      */
     endStream(fadeDelay = 500) {
-        this.isStreaming = false;
-
-        // Schedule fade-out after the specified delay
+        // Keep isStreaming true until fadeDelay so appendText() continues to work
+        // This allows word-synced reveals to continue until audio finishes
         setTimeout(() => {
-            if (!this.isStreaming) {
-                this.streamFadeStart = performance.now();
-            }
+            this.isStreaming = false;
+            this.streamFadeStart = performance.now();
         }, fadeDelay);
     }
 
@@ -501,7 +499,89 @@ class TextAnimator {
     }
 
     /**
-     * Draw streaming text with word wrapping.
+     * Parse text into formatted segments.
+     * Supports **bold**, *italic*, and newlines.
+     * @param {string} text - Raw text with formatting markers
+     * @returns {Array} Array of {text, bold, italic, newline} segments
+     */
+    parseFormattedText(text) {
+        const segments = [];
+        let remaining = text;
+        let currentBold = false;
+        let currentItalic = false;
+
+        while (remaining.length > 0) {
+            // Check for newline
+            if (remaining[0] === '\n') {
+                segments.push({ text: '', newline: true, bold: false, italic: false });
+                remaining = remaining.substring(1);
+                continue;
+            }
+
+            // Check for bold marker **
+            if (remaining.startsWith('**')) {
+                currentBold = !currentBold;
+                remaining = remaining.substring(2);
+                continue;
+            }
+
+            // Check for italic marker * (but not **)
+            if (remaining[0] === '*' && !remaining.startsWith('**')) {
+                currentItalic = !currentItalic;
+                remaining = remaining.substring(1);
+                continue;
+            }
+
+            // Find next marker or newline
+            let nextMarker = remaining.length;
+            const markers = [
+                remaining.indexOf('**'),
+                remaining.indexOf('*'),
+                remaining.indexOf('\n')
+            ].filter(i => i > 0);
+
+            if (markers.length > 0) {
+                nextMarker = Math.min(...markers);
+            }
+
+            // Extract text up to next marker
+            const chunk = remaining.substring(0, nextMarker);
+            if (chunk) {
+                segments.push({
+                    text: chunk,
+                    bold: currentBold,
+                    italic: currentItalic,
+                    newline: false
+                });
+            }
+            remaining = remaining.substring(nextMarker);
+        }
+
+        return segments;
+    }
+
+    /**
+     * Measure width of formatted segments.
+     * @param {Array} segments - Parsed segments
+     * @param {Object} settings - Font settings
+     * @returns {number} Total width in pixels
+     */
+    measureFormattedText(segments, settings) {
+        const ctx = this.ctx;
+        let width = 0;
+
+        for (const seg of segments) {
+            if (seg.newline) continue;
+            const fontStyle = (seg.bold ? 'bold ' : '') + (seg.italic ? 'italic ' : '');
+            ctx.font = `${fontStyle}${settings.fontSize}px ${settings.fontFamily}`;
+            width += ctx.measureText(seg.text).width;
+        }
+
+        return width;
+    }
+
+    /**
+     * Draw streaming text with word wrapping and formatting.
      */
     drawStream() {
         if (!this.streamText || !this.streamSettings) return;
@@ -512,34 +592,61 @@ class TextAnimator {
 
         if (!visibleText) return;
 
-        // Set up font
-        ctx.font = `${settings.fontSize}px ${settings.fontFamily}`;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
 
-        // Calculate wrapped lines
         const maxWidth = this.width * 0.9;
-        const words = visibleText.split(' ');
+        const lineHeight = settings.fontSize * 1.3;
+
+        // Split by newlines first, then wrap each paragraph
+        const paragraphs = visibleText.split('\n');
         const lines = [];
-        let currentLine = '';
 
-        for (const word of words) {
-            const testLine = currentLine ? currentLine + ' ' + word : word;
-            const metrics = ctx.measureText(testLine);
-
-            if (metrics.width > maxWidth && currentLine) {
-                lines.push(currentLine);
-                currentLine = word;
-            } else {
-                currentLine = testLine;
+        for (const para of paragraphs) {
+            if (para === '') {
+                // Empty line (blank paragraph)
+                lines.push({ segments: [], isQuote: false });
+                continue;
             }
-        }
-        if (currentLine) {
-            lines.push(currentLine);
+
+            // Check if this is a quote line
+            const isQuote = para.trimStart().startsWith('>');
+            const paraText = isQuote ? para.trimStart().substring(1).trimStart() : para;
+
+            // Parse formatting
+            const segments = this.parseFormattedText(paraText);
+
+            // Word wrap this paragraph
+            ctx.font = `${settings.fontSize}px ${settings.fontFamily}`;
+
+            // Simple word wrapping - split into words and rebuild lines
+            const words = paraText.split(' ');
+            let currentLineText = '';
+
+            for (const word of words) {
+                const testLine = currentLineText ? currentLineText + ' ' + word : word;
+                const testSegments = this.parseFormattedText(testLine);
+                const testWidth = this.measureFormattedText(testSegments, settings);
+
+                if (testWidth > maxWidth && currentLineText) {
+                    lines.push({
+                        segments: this.parseFormattedText(currentLineText),
+                        isQuote
+                    });
+                    currentLineText = word;
+                } else {
+                    currentLineText = testLine;
+                }
+            }
+            if (currentLineText) {
+                lines.push({
+                    segments: this.parseFormattedText(currentLineText),
+                    isQuote
+                });
+            }
         }
 
         // Calculate position
-        const lineHeight = settings.fontSize * 1.3;
         const totalHeight = lines.length * lineHeight;
         const centerX = settings.positionX * this.width;
         const centerY = settings.positionY * this.height;
@@ -551,20 +658,41 @@ class TextAnimator {
 
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
-            const lineWidth = ctx.measureText(line).width;
-            const lineX = centerX - lineWidth / 2;
             const lineY = startY + i * lineHeight;
 
-            // Draw stroke if configured
-            if (settings.strokeColor && settings.strokeWidth > 0) {
-                ctx.strokeStyle = settings.strokeColor;
-                ctx.lineWidth = settings.strokeWidth;
-                ctx.strokeText(line, lineX, lineY);
+            // Calculate line width for centering
+            const lineWidth = this.measureFormattedText(line.segments, settings);
+            let lineX = centerX - lineWidth / 2;
+
+            // Draw quote indicator
+            if (line.isQuote) {
+                ctx.font = `${settings.fontSize}px ${settings.fontFamily}`;
+                ctx.fillStyle = settings.quoteColor || '#888888';
+                ctx.fillText('│ ', lineX - ctx.measureText('│ ').width, lineY);
             }
 
-            // Draw fill
-            ctx.fillStyle = settings.color;
-            ctx.fillText(line, lineX, lineY);
+            // Draw each segment
+            for (const seg of line.segments) {
+                if (seg.newline) continue;
+
+                const fontStyle = (seg.bold ? 'bold ' : '') + (seg.italic ? 'italic ' : '');
+                ctx.font = `${fontStyle}${settings.fontSize}px ${settings.fontFamily}`;
+
+                const segWidth = ctx.measureText(seg.text).width;
+
+                // Draw stroke if configured
+                if (settings.strokeColor && settings.strokeWidth > 0) {
+                    ctx.strokeStyle = settings.strokeColor;
+                    ctx.lineWidth = settings.strokeWidth;
+                    ctx.strokeText(seg.text, lineX, lineY);
+                }
+
+                // Draw fill - use quote color if it's a quote line
+                ctx.fillStyle = line.isQuote ? (settings.quoteColor || '#aaaaaa') : settings.color;
+                ctx.fillText(seg.text, lineX, lineY);
+
+                lineX += segWidth;
+            }
         }
 
         ctx.restore();
