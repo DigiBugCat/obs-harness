@@ -41,8 +41,13 @@ from .models import (
     TextPreset,
     TextStreamEndCommand,
     TextStreamStartCommand,
+    TwitchChannelRequest,
+    TwitchConfig,
+    TwitchStatusResponse,
+    TwitchTokenRequest,
     VolumeCommand,
 )
+from .twitch_chat import TwitchChatManager
 
 
 class ConnectionManager:
@@ -285,11 +290,29 @@ def create_app(
 
     manager = ConnectionManager()
     harness = OBSHarness(manager)
+    twitch_manager = TwitchChatManager()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await init_db(db_url)
+
+        # Load saved Twitch config and auto-connect if available
+        try:
+            async with get_session() as session:
+                result = await session.execute(select(TwitchConfig).limit(1))
+                twitch_config = result.scalar_one_or_none()
+                if twitch_config:
+                    await twitch_manager.start(
+                        access_token=twitch_config.access_token,
+                        channel=twitch_config.channel,
+                    )
+                    print(f"Twitch chat auto-connected to #{twitch_config.channel}")
+        except Exception as e:
+            print(f"Failed to auto-connect Twitch chat: {e}")
+
         yield
+
+        await twitch_manager.stop()
         await close_db()
 
     app = FastAPI(
@@ -302,6 +325,7 @@ def create_app(
     # Attach harness to app state for external access
     app.state.harness = harness
     app.state.manager = manager
+    app.state.twitch = twitch_manager
 
     # Mount static files
     if static_dir.exists():
@@ -334,6 +358,14 @@ def create_app(
         if editor_path.exists():
             return FileResponse(editor_path)
         return HTMLResponse("<html><body><h1>Text Editor</h1><p>Editor not found.</p></body></html>")
+
+    @app.get("/twitch", response_class=HTMLResponse)
+    async def twitch_page():
+        """Serve the Twitch OAuth sign-in page."""
+        twitch_path = static_dir / "twitch.html"
+        if twitch_path.exists():
+            return FileResponse(twitch_path)
+        return HTMLResponse("<html><body><h1>Twitch</h1><p>Twitch page not found.</p></body></html>")
 
     # =========================================================================
     # WebSocket Routes
@@ -434,6 +466,95 @@ def create_app(
             return list(result.scalars().all())
 
     # =========================================================================
+    # Twitch API Routes
+    # =========================================================================
+
+    @app.get("/api/twitch/status")
+    async def twitch_status() -> TwitchStatusResponse:
+        """Get Twitch chat connection status."""
+        return TwitchStatusResponse(
+            connected=twitch_manager.is_connected,
+            channel=twitch_manager.current_channel,
+        )
+
+    @app.post("/api/twitch/token")
+    async def twitch_save_token(request: TwitchTokenRequest) -> dict:
+        """Save Twitch OAuth token and connect to chat.
+
+        Called by frontend after OAuth implicit grant flow completes.
+        """
+        # Save or update token in database
+        async with get_session() as session:
+            result = await session.execute(select(TwitchConfig).limit(1))
+            twitch_config = result.scalar_one_or_none()
+
+            if twitch_config:
+                # Update existing config
+                twitch_config.access_token = request.access_token
+                twitch_config.channel = request.channel
+                twitch_config.updated_at = datetime.utcnow()
+            else:
+                # Create new config
+                twitch_config = TwitchConfig(
+                    access_token=request.access_token,
+                    channel=request.channel,
+                )
+                session.add(twitch_config)
+
+            await session.commit()
+
+        # Start Twitch chat connection
+        await twitch_manager.start(
+            access_token=request.access_token,
+            channel=request.channel,
+        )
+
+        return {"success": True, "channel": request.channel}
+
+    @app.post("/api/twitch/channel")
+    async def twitch_set_channel(request: TwitchChannelRequest) -> dict:
+        """Change the Twitch channel to listen to."""
+        if not twitch_manager.is_connected:
+            raise HTTPException(status_code=400, detail="Not connected to Twitch")
+
+        # Update channel in database
+        async with get_session() as session:
+            result = await session.execute(select(TwitchConfig).limit(1))
+            twitch_config = result.scalar_one_or_none()
+
+            if twitch_config:
+                # Leave old channel
+                if twitch_config.channel != request.channel:
+                    await twitch_manager.leave_channel(twitch_config.channel)
+
+                twitch_config.channel = request.channel
+                twitch_config.updated_at = datetime.utcnow()
+                await session.commit()
+
+        # Join new channel
+        await twitch_manager.join_channel(request.channel)
+
+        return {"success": True, "channel": request.channel}
+
+    @app.post("/api/twitch/disconnect")
+    async def twitch_disconnect() -> dict:
+        """Disconnect from Twitch chat."""
+        await twitch_manager.stop()
+        return {"success": True}
+
+    @app.get("/api/twitch/chat")
+    async def get_twitch_chat(seconds: int = 60) -> dict:
+        """Get recent chat messages (for debugging/preview)."""
+        if not twitch_manager.current_channel:
+            return {"messages": [], "channel": None}
+
+        context = await twitch_manager.get_chat_context(seconds=seconds)
+        return {
+            "channel": twitch_manager.current_channel,
+            "context": context,
+        }
+
+    # =========================================================================
     # Character API Routes
     # =========================================================================
 
@@ -465,6 +586,9 @@ def create_app(
             model=c.model,
             temperature=c.temperature,
             max_tokens=c.max_tokens,
+            twitch_chat_enabled=c.twitch_chat_enabled,
+            twitch_chat_window_seconds=c.twitch_chat_window_seconds,
+            twitch_chat_max_messages=c.twitch_chat_max_messages,
             connected=manager.is_connected(c.name),
             playing=manager._channel_state.get(c.name, {}).get("playing", False),
             streaming=manager._channel_state.get(c.name, {}).get("streaming", False),
@@ -670,6 +794,14 @@ def create_app(
                 status_code=400, detail=f"Character '{name}' is not connected"
             )
 
+        # Get Twitch chat context if enabled for this character
+        twitch_chat_context = None
+        if character.twitch_chat_enabled and twitch_manager.is_connected:
+            twitch_chat_context = await twitch_manager.get_chat_context(
+                seconds=character.twitch_chat_window_seconds,
+                max_messages=character.twitch_chat_max_messages,
+            )
+
         # Create pipeline configuration
         config = ChatPipelineConfig(
             character_name=character.name,
@@ -684,6 +816,7 @@ def create_app(
             voice_style=character.voice_style,
             voice_speed=character.voice_speed,
             show_text=request.show_text,
+            twitch_chat_context=twitch_chat_context,
         )
 
         # Create callbacks that use the harness methods

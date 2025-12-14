@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Twitch Chat Integration</title>
+    <style>
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-card: #0f3460;
+            --text-primary: #eaeaea;
+            --text-secondary: #a0a0a0;
+            --accent: #9146ff;
+            --accent-hover: #a970ff;
+            --success: #4ecca3;
+            --warning: #ffc107;
+            --error: #e94560;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--bg-card);
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .back-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 0.875rem;
+        }
+
+        .back-link:hover {
+            color: var(--text-primary);
+        }
+
+        .card {
+            background: var(--bg-card);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .card-title {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .status-row {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--warning);
+        }
+
+        .status-dot.connected {
+            background: var(--success);
+        }
+
+        .status-text {
+            color: var(--text-secondary);
+        }
+
+        .channel-name {
+            color: var(--accent);
+            font-weight: 500;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid var(--bg-secondary);
+            border-radius: 6px;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            font-size: 1rem;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .btn-twitch {
+            background: var(--accent);
+            color: white;
+            width: 100%;
+        }
+
+        .btn-twitch:hover {
+            background: var(--accent-hover);
+        }
+
+        .btn-danger {
+            background: var(--error);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #ff6b6b;
+        }
+
+        .btn-secondary {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-primary);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .button-row {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .button-row .btn {
+            flex: 1;
+        }
+
+        .chat-preview {
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            padding: 1rem;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 0.875rem;
+            white-space: pre-wrap;
+            color: var(--text-secondary);
+        }
+
+        .chat-preview:empty::before {
+            content: "No recent messages...";
+            color: var(--text-secondary);
+            opacity: 0.5;
+        }
+
+        .message {
+            color: var(--success);
+            margin-bottom: 1rem;
+            padding: 0.75rem;
+            background: rgba(78, 204, 163, 0.1);
+            border-radius: 6px;
+        }
+
+        .error {
+            color: var(--error);
+            margin-bottom: 1rem;
+            padding: 0.75rem;
+            background: rgba(233, 69, 96, 0.1);
+            border-radius: 6px;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .twitch-logo {
+            width: 20px;
+            height: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Twitch Chat Integration</h1>
+            <a href="/" class="back-link">Back to Dashboard</a>
+        </header>
+
+        <div id="message" class="message hidden"></div>
+        <div id="error" class="error hidden"></div>
+
+        <!-- Connection Status -->
+        <div class="card">
+            <div class="card-title">Connection Status</div>
+            <div class="status-row">
+                <div id="status-dot" class="status-dot"></div>
+                <span id="status-text" class="status-text">Checking...</span>
+            </div>
+            <div id="channel-display" class="hidden">
+                Listening to: <span id="channel-name" class="channel-name"></span>
+            </div>
+        </div>
+
+        <!-- Sign In (shown when not connected) -->
+        <div id="signin-section" class="card hidden">
+            <div class="card-title">Sign in with Twitch</div>
+            <div class="form-group">
+                <label for="channel">Channel to join (without #)</label>
+                <input type="text" id="channel" placeholder="yourchannelname">
+            </div>
+            <button id="signin-btn" class="btn btn-twitch">
+                <svg class="twitch-logo" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714Z"/>
+                </svg>
+                Sign in with Twitch
+            </button>
+        </div>
+
+        <!-- Connected Controls (shown when connected) -->
+        <div id="connected-section" class="card hidden">
+            <div class="card-title">Controls</div>
+            <div class="form-group">
+                <label for="new-channel">Change Channel</label>
+                <input type="text" id="new-channel" placeholder="newchannelname">
+            </div>
+            <div class="button-row">
+                <button id="change-channel-btn" class="btn btn-secondary">Change Channel</button>
+                <button id="disconnect-btn" class="btn btn-danger">Disconnect</button>
+            </div>
+        </div>
+
+        <!-- Chat Preview -->
+        <div id="preview-section" class="card hidden">
+            <div class="card-title">Recent Chat (Last 60 seconds)</div>
+            <div id="chat-preview" class="chat-preview"></div>
+            <button id="refresh-btn" class="btn btn-secondary" style="margin-top: 1rem; width: 100%;">Refresh</button>
+        </div>
+    </div>
+
+    <script>
+        const CLIENT_ID = 'h1x5odjr6qy1m8sesgev1p9wcssz63';
+        const REDIRECT_URI = `${window.location.origin}/twitch`;
+        const SCOPES = 'chat:read';
+
+        // DOM elements
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+        const channelDisplay = document.getElementById('channel-display');
+        const channelName = document.getElementById('channel-name');
+        const signinSection = document.getElementById('signin-section');
+        const connectedSection = document.getElementById('connected-section');
+        const previewSection = document.getElementById('preview-section');
+        const messageEl = document.getElementById('message');
+        const errorEl = document.getElementById('error');
+
+        // Check for OAuth token in URL fragment (after redirect)
+        async function checkOAuthCallback() {
+            const hash = window.location.hash;
+            if (hash && hash.includes('access_token')) {
+                const params = new URLSearchParams(hash.substring(1));
+                const accessToken = params.get('access_token');
+                const channel = localStorage.getItem('twitch_pending_channel') || '';
+
+                if (accessToken && channel) {
+                    // Clear the hash from URL
+                    history.replaceState(null, '', window.location.pathname);
+                    localStorage.removeItem('twitch_pending_channel');
+
+                    // Save token to server
+                    try {
+                        const response = await fetch('/api/twitch/token', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ access_token: accessToken, channel: channel })
+                        });
+
+                        if (response.ok) {
+                            showMessage('Successfully connected to Twitch!');
+                        } else {
+                            const data = await response.json();
+                            showError(data.detail || 'Failed to save token');
+                        }
+                    } catch (e) {
+                        showError('Failed to save token: ' + e.message);
+                    }
+                }
+            }
+        }
+
+        // Check connection status
+        async function checkStatus() {
+            try {
+                const response = await fetch('/api/twitch/status');
+                const data = await response.json();
+
+                if (data.connected) {
+                    statusDot.classList.add('connected');
+                    statusText.textContent = 'Connected';
+                    channelName.textContent = '#' + data.channel;
+                    channelDisplay.classList.remove('hidden');
+                    signinSection.classList.add('hidden');
+                    connectedSection.classList.remove('hidden');
+                    previewSection.classList.remove('hidden');
+                    document.getElementById('new-channel').value = data.channel;
+                } else {
+                    statusDot.classList.remove('connected');
+                    statusText.textContent = 'Not connected';
+                    channelDisplay.classList.add('hidden');
+                    signinSection.classList.remove('hidden');
+                    connectedSection.classList.add('hidden');
+                    previewSection.classList.add('hidden');
+                }
+            } catch (e) {
+                statusText.textContent = 'Error checking status';
+                showError('Failed to check status: ' + e.message);
+            }
+        }
+
+        // Refresh chat preview
+        async function refreshChat() {
+            try {
+                const response = await fetch('/api/twitch/chat?seconds=60');
+                const data = await response.json();
+                const preview = document.getElementById('chat-preview');
+                preview.textContent = data.context || '';
+            } catch (e) {
+                showError('Failed to load chat: ' + e.message);
+            }
+        }
+
+        // Sign in with Twitch
+        function signIn() {
+            const channel = document.getElementById('channel').value.trim().toLowerCase();
+            if (!channel) {
+                showError('Please enter a channel name');
+                return;
+            }
+
+            // Store channel for after redirect
+            localStorage.setItem('twitch_pending_channel', channel);
+
+            // Redirect to Twitch OAuth
+            const authUrl = `https://id.twitch.tv/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=token&scope=${SCOPES}`;
+            window.location.href = authUrl;
+        }
+
+        // Change channel
+        async function changeChannel() {
+            const channel = document.getElementById('new-channel').value.trim().toLowerCase();
+            if (!channel) {
+                showError('Please enter a channel name');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/twitch/channel', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ channel: channel })
+                });
+
+                if (response.ok) {
+                    showMessage('Channel changed successfully!');
+                    await checkStatus();
+                } else {
+                    const data = await response.json();
+                    showError(data.detail || 'Failed to change channel');
+                }
+            } catch (e) {
+                showError('Failed to change channel: ' + e.message);
+            }
+        }
+
+        // Disconnect
+        async function disconnect() {
+            try {
+                const response = await fetch('/api/twitch/disconnect', { method: 'POST' });
+                if (response.ok) {
+                    showMessage('Disconnected from Twitch');
+                    await checkStatus();
+                }
+            } catch (e) {
+                showError('Failed to disconnect: ' + e.message);
+            }
+        }
+
+        // Show message
+        function showMessage(text) {
+            messageEl.textContent = text;
+            messageEl.classList.remove('hidden');
+            errorEl.classList.add('hidden');
+            setTimeout(() => messageEl.classList.add('hidden'), 5000);
+        }
+
+        // Show error
+        function showError(text) {
+            errorEl.textContent = text;
+            errorEl.classList.remove('hidden');
+            messageEl.classList.add('hidden');
+            setTimeout(() => errorEl.classList.add('hidden'), 5000);
+        }
+
+        // Event listeners
+        document.getElementById('signin-btn').addEventListener('click', signIn);
+        document.getElementById('change-channel-btn').addEventListener('click', changeChannel);
+        document.getElementById('disconnect-btn').addEventListener('click', disconnect);
+        document.getElementById('refresh-btn').addEventListener('click', refreshChat);
+
+        // Allow Enter key in channel inputs
+        document.getElementById('channel').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') signIn();
+        });
+        document.getElementById('new-channel').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') changeChannel();
+        });
+
+        // Initialize
+        checkOAuthCallback().then(() => {
+            checkStatus();
+            // Auto-refresh chat every 5 seconds when connected
+            setInterval(() => {
+                if (!previewSection.classList.contains('hidden')) {
+                    refreshChat();
+                }
+            }, 5000);
+        });
+    </script>
+</body>
+</html>

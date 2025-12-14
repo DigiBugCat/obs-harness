@@ -28,6 +28,7 @@ class ChatPipelineConfig:
     voice_style: float = 0.0
     voice_speed: float = 1.0
     show_text: bool = True
+    twitch_chat_context: str | None = None  # Recent Twitch chat to inject
 
 
 class ChatPipeline:
@@ -83,8 +84,17 @@ class ChatPipeline:
         Returns:
             The complete response text from the LLM
         """
+        # Build system prompt with optional Twitch chat context
+        system_content = self.config.system_prompt
+        if self.config.twitch_chat_context:
+            system_content = f"""{self.config.system_prompt}
+
+---
+Recent Twitch chat (you can see what viewers are saying):
+{self.config.twitch_chat_context}"""
+
         messages = [
-            {"role": "system", "content": self.config.system_prompt},
+            {"role": "system", "content": system_content},
             {"role": "user", "content": user_message},
         ]
 

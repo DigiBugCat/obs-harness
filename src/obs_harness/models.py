@@ -41,6 +41,15 @@ class PlaybackLog(SQLModel, table=True):
     timestamp: datetime = SQLField(default_factory=datetime.utcnow)
 
 
+class TwitchConfig(SQLModel, table=True):
+    """Twitch chat configuration (singleton - only one row)."""
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    access_token: str  # OAuth token (no refresh token with implicit grant)
+    channel: str  # Channel to join (without #)
+    updated_at: datetime = SQLField(default_factory=datetime.utcnow)
+
+
 class Character(SQLModel, table=True):
     """A character with voice settings and optional AI personality."""
 
@@ -79,6 +88,11 @@ class Character(SQLModel, table=True):
     model: str = SQLField(default="anthropic/claude-sonnet-4.5")
     temperature: float = SQLField(default=0.7)
     max_tokens: int = SQLField(default=1024)
+
+    # Twitch chat settings
+    twitch_chat_enabled: bool = SQLField(default=False)
+    twitch_chat_window_seconds: int = SQLField(default=60)
+    twitch_chat_max_messages: int = SQLField(default=20)
 
     created_at: datetime = SQLField(default_factory=datetime.utcnow)
     updated_at: datetime | None = SQLField(default=None)
@@ -197,6 +211,11 @@ class CharacterCreate(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int = Field(default=1024, ge=1, le=8192)
 
+    # Twitch chat settings
+    twitch_chat_enabled: bool = False
+    twitch_chat_window_seconds: int = Field(default=60, ge=10, le=300)
+    twitch_chat_max_messages: int = Field(default=20, ge=5, le=50)
+
 
 class CharacterUpdate(BaseModel):
     """Request to update a character."""
@@ -234,6 +253,11 @@ class CharacterUpdate(BaseModel):
     model: str | None = None
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, ge=1, le=8192)
+
+    # Twitch chat settings
+    twitch_chat_enabled: bool | None = None
+    twitch_chat_window_seconds: int | None = Field(default=None, ge=10, le=300)
+    twitch_chat_max_messages: int | None = Field(default=None, ge=5, le=50)
 
 
 class CharacterResponse(BaseModel):
@@ -274,6 +298,11 @@ class CharacterResponse(BaseModel):
     model: str
     temperature: float
     max_tokens: int
+
+    # Twitch chat settings
+    twitch_chat_enabled: bool
+    twitch_chat_window_seconds: int
+    twitch_chat_max_messages: int
 
     # Status
     connected: bool = False
@@ -419,3 +448,28 @@ class BrowserEvent(BaseModel):
     event: str
     file: str | None = None
     message: str | None = None
+
+
+# =============================================================================
+# Twitch API Models
+# =============================================================================
+
+
+class TwitchTokenRequest(BaseModel):
+    """Request to save Twitch OAuth token."""
+
+    access_token: str
+    channel: str
+
+
+class TwitchChannelRequest(BaseModel):
+    """Request to set Twitch channel."""
+
+    channel: str
+
+
+class TwitchStatusResponse(BaseModel):
+    """Twitch connection status response."""
+
+    connected: bool
+    channel: str | None = None
