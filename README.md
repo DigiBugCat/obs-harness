@@ -2,6 +2,11 @@
 
 Push audio and animated text to OBS via browser sources. Features AI-powered characters with text-to-speech and optional Twitch chat awareness.
 
+## Documentation
+
+- **[Getting Started Guide](docs/GETTING_STARTED.md)** - Step-by-step setup tutorial
+- **[API Reference](docs/API.md)** - REST API endpoint documentation
+
 ## Features
 
 - **Audio Playback** - Play audio files or stream live audio to browser sources
