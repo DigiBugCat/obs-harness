@@ -1,0 +1,23 @@
+[project]
+name = "obs-harness"
+version = "0.1.0"
+description = "Push audio and animated text to OBS via browser sources"
+readme = "README.md"
+authors = [
+    { name = "digibugcat", email = "digibugcat@users.noreply.github.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "websockets>=14.0",
+    "sqlmodel>=0.0.22",
+    "aiosqlite>=0.20.0",
+]
+
+[project.scripts]
+obs-harness = "obs_harness.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

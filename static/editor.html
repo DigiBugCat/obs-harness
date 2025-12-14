@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Text Animation Editor - OBS Harness</title>
+    <style>
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-card: #0f3460;
+            --text-primary: #eaeaea;
+            --text-secondary: #a0a0a0;
+            --accent: #e94560;
+            --accent-hover: #ff6b6b;
+            --success: #4ecca3;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: 350px 1fr;
+            min-height: 100vh;
+        }
+
+        .sidebar {
+            background: var(--bg-secondary);
+            padding: 1.5rem;
+            overflow-y: auto;
+        }
+
+        .sidebar h1 {
+            font-size: 1.25rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .sidebar a {
+            color: var(--accent);
+            text-decoration: none;
+            font-size: 0.875rem;
+        }
+
+        .form-group {
+            margin-bottom: 1.25rem;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.5rem;
+        }
+
+        input[type="text"],
+        input[type="number"],
+        select {
+            width: 100%;
+            padding: 0.625rem;
+            border: none;
+            border-radius: 4px;
+            background: var(--bg-card);
+            color: var(--text-primary);
+            font-size: 0.875rem;
+        }
+
+        input[type="color"] {
+            width: 100%;
+            height: 40px;
+            border: none;
+            border-radius: 4px;
+            background: var(--bg-card);
+            cursor: pointer;
+        }
+
+        input[type="range"] {
+            width: 100%;
+        }
+
+        .range-value {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-align: right;
+        }
+
+        .row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        button {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 4px;
+            background: var(--accent);
+            color: white;
+            cursor: pointer;
+            font-size: 0.875rem;
+            font-weight: 500;
+            transition: background 0.2s;
+            width: 100%;
+        }
+
+        button:hover {
+            background: var(--accent-hover);
+        }
+
+        button.secondary {
+            background: var(--bg-card);
+        }
+
+        .button-row {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 1.5rem;
+        }
+
+        .presets-section {
+            margin-top: 2rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--bg-card);
+        }
+
+        .preset-list {
+            margin-top: 1rem;
+        }
+
+        .preset-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem;
+            background: var(--bg-card);
+            border-radius: 4px;
+            margin-bottom: 0.5rem;
+            cursor: pointer;
+        }
+
+        .preset-item:hover {
+            background: var(--bg-primary);
+        }
+
+        .preset-item button {
+            width: auto;
+            padding: 0.25rem 0.5rem;
+            font-size: 0.75rem;
+        }
+
+        .preview-area {
+            position: relative;
+            background: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #preview-canvas {
+            max-width: 100%;
+            max-height: 100%;
+        }
+
+        .preview-controls {
+            position: absolute;
+            bottom: 1rem;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 0.5rem;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+        }
+
+        .preview-controls button {
+            width: auto;
+            padding: 0.5rem 1rem;
+        }
+
+        .json-output {
+            margin-top: 1.5rem;
+            padding: 1rem;
+            background: var(--bg-card);
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.75rem;
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <h1>Text Animation Editor</h1>
+            <a href="/">← Back to Dashboard</a>
+
+            <div style="margin-top: 1.5rem;">
+                <div class="form-group">
+                    <label>Text Content</label>
+                    <input type="text" id="text" value="Hello World!" oninput="updatePreview()">
+                </div>
+
+                <div class="form-group">
+                    <label>Animation Style</label>
+                    <select id="style" onchange="updatePreview()">
+                        <option value="typewriter">Typewriter</option>
+                        <option value="fade">Fade</option>
+                        <option value="slide">Slide</option>
+                        <option value="bounce">Bounce</option>
+                        <option value="wave">Wave</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Font Family</label>
+                    <select id="fontFamily" onchange="updatePreview()">
+                        <option value="Arial">Arial</option>
+                        <option value="Helvetica">Helvetica</option>
+                        <option value="Georgia">Georgia</option>
+                        <option value="Times New Roman">Times New Roman</option>
+                        <option value="Courier New">Courier New</option>
+                        <option value="Verdana">Verdana</option>
+                        <option value="Impact">Impact</option>
+                    </select>
+                </div>
+
+                <div class="row">
+                    <div class="form-group">
+                        <label>Font Size</label>
+                        <input type="number" id="fontSize" value="48" min="12" max="200" onchange="updatePreview()">
+                    </div>
+                    <div class="form-group">
+                        <label>Duration (ms)</label>
+                        <input type="number" id="duration" value="3000" min="500" max="30000" step="100" onchange="updatePreview()">
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="form-group">
+                        <label>Text Color</label>
+                        <input type="color" id="color" value="#ffffff" onchange="updatePreview()">
+                    </div>
+                    <div class="form-group">
+                        <label>Stroke Color</label>
+                        <input type="color" id="strokeColor" value="#000000" onchange="updatePreview()">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Stroke Width: <span id="strokeWidthValue">0</span>px</label>
+                    <input type="range" id="strokeWidth" min="0" max="10" value="0" oninput="document.getElementById('strokeWidthValue').textContent = this.value; updatePreview()">
+                </div>
+
+                <div class="row">
+                    <div class="form-group">
+                        <label>Position X: <span id="posXValue">50</span>%</label>
+                        <input type="range" id="positionX" min="0" max="100" value="50" oninput="document.getElementById('posXValue').textContent = this.value; updatePreview()">
+                    </div>
+                    <div class="form-group">
+                        <label>Position Y: <span id="posYValue">50</span>%</label>
+                        <input type="range" id="positionY" min="0" max="100" value="50" oninput="document.getElementById('posYValue').textContent = this.value; updatePreview()">
+                    </div>
+                </div>
+
+                <div class="button-row">
+                    <button onclick="playPreview()">Preview</button>
+                    <button class="secondary" onclick="stopPreview()">Stop</button>
+                </div>
+
+                <div class="presets-section">
+                    <label style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em;">Presets</label>
+                    <div class="form-group" style="margin-top: 0.5rem;">
+                        <input type="text" id="presetName" placeholder="Preset name">
+                    </div>
+                    <button onclick="savePreset()">Save Preset</button>
+                    <div class="preset-list" id="presetList"></div>
+                </div>
+
+                <div class="json-output" id="jsonOutput"></div>
+            </div>
+        </div>
+
+        <div class="preview-area">
+            <canvas id="preview-canvas" width="1920" height="1080"></canvas>
+        </div>
+    </div>
+
+    <script src="/static/js/text-animator.js"></script>
+    <script>
+        const canvas = document.getElementById('preview-canvas');
+        const ctx = canvas.getContext('2d');
+        let textAnimator = new TextAnimator(ctx, canvas.width, canvas.height);
+        let animationFrame = null;
+        let presets = [];
+
+        function getConfig() {
+            return {
+                text: document.getElementById('text').value,
+                style: document.getElementById('style').value,
+                fontFamily: document.getElementById('fontFamily').value,
+                fontSize: parseInt(document.getElementById('fontSize').value),
+                duration: parseInt(document.getElementById('duration').value),
+                color: document.getElementById('color').value,
+                strokeColor: document.getElementById('strokeColor').value,
+                strokeWidth: parseInt(document.getElementById('strokeWidth').value),
+                position_x: parseInt(document.getElementById('positionX').value) / 100,
+                position_y: parseInt(document.getElementById('positionY').value) / 100,
+            };
+        }
+
+        function updatePreview() {
+            const config = getConfig();
+            document.getElementById('jsonOutput').textContent = JSON.stringify(config, null, 2);
+        }
+
+        function playPreview() {
+            stopPreview();
+
+            const config = getConfig();
+            textAnimator.show({
+                text: config.text,
+                style: config.style,
+                duration: config.duration,
+                x: config.position_x,
+                y: config.position_y,
+                fontFamily: config.fontFamily,
+                fontSize: config.fontSize,
+                color: config.color,
+                strokeColor: config.strokeWidth > 0 ? config.strokeColor : null,
+                strokeWidth: config.strokeWidth,
+                onComplete: () => {
+                    console.log('Animation complete');
+                }
+            });
+
+            animate();
+        }
+
+        function stopPreview() {
+            if (animationFrame) {
+                cancelAnimationFrame(animationFrame);
+                animationFrame = null;
+            }
+            textAnimator.clear();
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            textAnimator.update();
+            textAnimator.draw();
+            animationFrame = requestAnimationFrame(animate);
+        }
+
+        async function loadPresets() {
+            try {
+                const response = await fetch('/api/presets');
+                presets = await response.json();
+                renderPresets();
+            } catch (e) {
+                console.error('Failed to load presets:', e);
+            }
+        }
+
+        function renderPresets() {
+            const list = document.getElementById('presetList');
+            if (presets.length === 0) {
+                list.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 0.5rem;">No presets saved yet</p>';
+                return;
+            }
+
+            list.innerHTML = presets.map(p => `
+                <div class="preset-item" onclick="loadPreset(${p.id})">
+                    <span>${p.name}</span>
+                    <button onclick="event.stopPropagation(); deletePreset(${p.id})">Delete</button>
+                </div>
+            `).join('');
+        }
+
+        async function savePreset() {
+            const name = document.getElementById('presetName').value.trim();
+            if (!name) {
+                alert('Please enter a preset name');
+                return;
+            }
+
+            const config = getConfig();
+            try {
+                await fetch('/api/presets', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name,
+                        style: config.style,
+                        font_family: config.fontFamily,
+                        font_size: config.fontSize,
+                        color: config.color,
+                        stroke_color: config.strokeWidth > 0 ? config.strokeColor : null,
+                        stroke_width: config.strokeWidth,
+                        position_x: config.position_x,
+                        position_y: config.position_y,
+                        duration: config.duration,
+                    })
+                });
+                document.getElementById('presetName').value = '';
+                loadPresets();
+            } catch (e) {
+                console.error('Failed to save preset:', e);
+            }
+        }
+
+        function loadPreset(id) {
+            const preset = presets.find(p => p.id === id);
+            if (!preset) return;
+
+            document.getElementById('style').value = preset.style;
+            document.getElementById('fontFamily').value = preset.font_family;
+            document.getElementById('fontSize').value = preset.font_size;
+            document.getElementById('color').value = preset.color;
+            document.getElementById('strokeColor').value = preset.stroke_color || '#000000';
+            document.getElementById('strokeWidth').value = preset.stroke_width;
+            document.getElementById('strokeWidthValue').textContent = preset.stroke_width;
+            document.getElementById('positionX').value = Math.round(preset.position_x * 100);
+            document.getElementById('posXValue').textContent = Math.round(preset.position_x * 100);
+            document.getElementById('positionY').value = Math.round(preset.position_y * 100);
+            document.getElementById('posYValue').textContent = Math.round(preset.position_y * 100);
+            document.getElementById('duration').value = preset.duration;
+
+            updatePreview();
+        }
+
+        async function deletePreset(id) {
+            try {
+                await fetch(`/api/presets/${id}`, { method: 'DELETE' });
+                loadPresets();
+            } catch (e) {
+                console.error('Failed to delete preset:', e);
+            }
+        }
+
+        // Initialize
+        updatePreview();
+        loadPresets();
+    </script>
+</body>
+</html>

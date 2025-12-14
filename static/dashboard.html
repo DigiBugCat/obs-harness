@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OBS Harness Dashboard</title>
+    <style>
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-card: #0f3460;
+            --text-primary: #eaeaea;
+            --text-secondary: #a0a0a0;
+            --accent: #e94560;
+            --accent-hover: #ff6b6b;
+            --success: #4ecca3;
+            --warning: #ffc107;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--bg-card);
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--warning);
+        }
+
+        .status-dot.connected {
+            background: var(--success);
+        }
+
+        .section {
+            margin-bottom: 2rem;
+        }
+
+        .section-title {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .channels-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1rem;
+        }
+
+        .channel-card {
+            background: var(--bg-card);
+            border-radius: 8px;
+            padding: 1.5rem;
+        }
+
+        .channel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .channel-name {
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .channel-status {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            background: var(--bg-secondary);
+        }
+
+        .channel-status.playing {
+            background: var(--accent);
+        }
+
+        .channel-status.streaming {
+            background: var(--success);
+        }
+
+        .channel-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .control-row {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .control-row input[type="text"] {
+            flex: 1;
+            padding: 0.5rem;
+            border: none;
+            border-radius: 4px;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            font-size: 0.875rem;
+        }
+
+        .control-row input[type="range"] {
+            flex: 1;
+        }
+
+        button {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 4px;
+            background: var(--accent);
+            color: white;
+            cursor: pointer;
+            font-size: 0.875rem;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: var(--accent-hover);
+        }
+
+        button.secondary {
+            background: var(--bg-secondary);
+        }
+
+        button.secondary:hover {
+            background: var(--bg-primary);
+        }
+
+        .text-controls {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--bg-secondary);
+        }
+
+        select {
+            padding: 0.5rem;
+            border: none;
+            border-radius: 4px;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            font-size: 0.875rem;
+        }
+
+        .no-channels {
+            text-align: center;
+            padding: 3rem;
+            color: var(--text-secondary);
+            background: var(--bg-card);
+            border-radius: 8px;
+        }
+
+        .no-channels p {
+            margin-bottom: 1rem;
+        }
+
+        .no-channels code {
+            display: block;
+            background: var(--bg-secondary);
+            padding: 1rem;
+            border-radius: 4px;
+            font-family: monospace;
+            margin-top: 0.5rem;
+        }
+
+        .history-section {
+            background: var(--bg-card);
+            border-radius: 8px;
+            padding: 1.5rem;
+        }
+
+        .history-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .history-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--bg-secondary);
+            font-size: 0.875rem;
+        }
+
+        .history-item:last-child {
+            border-bottom: none;
+        }
+
+        .history-channel {
+            color: var(--accent);
+            font-weight: 500;
+        }
+
+        .history-content {
+            color: var(--text-secondary);
+            flex: 1;
+            margin: 0 1rem;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .history-time {
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+        }
+
+        .quick-actions {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .quick-actions a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .quick-actions a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>OBS Audio Harness</h1>
+            <div class="status-indicator">
+                <div class="status-dot" id="ws-status"></div>
+                <span id="ws-status-text">Connecting...</span>
+            </div>
+        </header>
+
+        <div class="quick-actions">
+            <a href="/editor">Text Animation Editor</a>
+        </div>
+
+        <div class="section">
+            <div class="section-title">Connected Channels</div>
+            <div id="channels-container">
+                <div class="no-channels">
+                    <p>No channels connected yet.</p>
+                    <p>Add a Browser Source in OBS with URL:</p>
+                    <code id="channel-url">http://localhost:8000/channel/your-channel-name</code>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">Playback History</div>
+            <div class="history-section">
+                <div class="history-list" id="history-list">
+                    <div class="history-item">
+                        <span class="history-content">No history yet</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>
