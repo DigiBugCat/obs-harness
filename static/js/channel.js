@@ -399,11 +399,12 @@
     function endTextStream() {
         if (!textAnimator) return;
 
-        // Calculate delay until audio finishes
-        let fadeDelay = 500;  // Default short delay
+        // Calculate delay until audio finishes, then linger for 2 seconds
+        const lingerTime = 2000;  // How long text stays after audio ends
+        let fadeDelay = lingerTime;  // Default if no audio
         if (audioContext && audioStreamEndTime > audioContext.currentTime) {
-            // Wait until audio finishes, plus a small buffer
-            fadeDelay = (audioStreamEndTime - audioContext.currentTime) * 1000 + 300;
+            // Wait until audio finishes, then linger
+            fadeDelay = (audioStreamEndTime - audioContext.currentTime) * 1000 + lingerTime;
         }
 
         textAnimator.endStream(fadeDelay);
