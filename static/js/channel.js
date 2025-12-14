@@ -2,7 +2,7 @@
  * OBS Browser Source Channel Handler
  * Handles audio playback, streaming, and text overlays via WebSocket
  */
-console.log('[channel.js] VERSION 7 LOADED - actual playback time tracking');
+console.log('[channel.js] VERSION 8 LOADED - nuclear AudioContext close on stop');
 
 (function() {
     'use strict';
@@ -346,7 +346,7 @@ console.log('[channel.js] VERSION 7 LOADED - actual playback time tracking');
     }
 
     function stopStream() {
-        console.log(`[${channelName}] Stop stream: forcefully stopping ${scheduledSources.length} audio sources`);
+        console.log(`[${channelName}] Stop stream: forcefully stopping audio (${scheduledSources.length} sources tracked)`);
 
         // Calculate actual playback position and what was really spoken
         let actualPlaybackTime = 0;
@@ -370,14 +370,11 @@ console.log('[channel.js] VERSION 7 LOADED - actual playback time tracking');
 
         console.log(`[${channelName}] Stop at ${actualPlaybackTime.toFixed(2)}s - ${actualWordCount}/${wordTimingData.length} words played: "${actualSpokenText.substring(0, 50)}..."`);
 
-        // Stop all scheduled audio sources immediately
-        for (const source of scheduledSources) {
-            try {
-                source.stop();
-                source.disconnect();
-            } catch (e) {
-                // Source may already be stopped/ended
-            }
+        // NUCLEAR OPTION: Close the entire AudioContext to immediately stop all audio
+        // This is the only reliable way to stop scheduled AudioBufferSourceNodes
+        if (audioContext) {
+            audioContext.close().catch(() => {});
+            audioContext = null;
         }
         scheduledSources = [];
 
