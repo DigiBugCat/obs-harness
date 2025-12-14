@@ -443,13 +443,13 @@
 
         <div class="section">
             <div class="section-header">
-                <div class="section-title" style="margin-bottom: 0;">Audio Channels</div>
-                <button onclick="window.openCreateChannelModal()">+ Create Channel</button>
+                <div class="section-title" style="margin-bottom: 0;">Characters</div>
+                <button onclick="window.openCreateCharacterModal()">+ Create Character</button>
             </div>
-            <div id="channels-container" class="channels-grid">
+            <div id="characters-container" class="channels-grid">
                 <div class="no-channels">
-                    <p>No channels configured yet.</p>
-                    <p>Click "Create Channel" to add one.</p>
+                    <p>No characters configured yet.</p>
+                    <p>Click "Create Character" to add one.</p>
                 </div>
             </div>
         </div>
@@ -466,28 +466,17 @@
         </div>
     </div>
 
-    <!-- Channel Create/Edit Modal -->
-    <div id="channel-modal" class="modal">
-        <div class="modal-content">
-            <h2 id="modal-title">Create Channel</h2>
-            <form id="channel-form">
-                <div class="form-group">
-                    <label>Name *</label>
-                    <input type="text" id="channel-name" required placeholder="e.g., music, alerts, voice">
-                </div>
-                <div class="form-group">
-                    <label>Description</label>
-                    <input type="text" id="channel-description" placeholder="Optional description">
-                </div>
-                <div class="form-row">
+    <!-- Text Style Editor Modal -->
+    <div id="text-style-modal" class="modal">
+        <div class="modal-content" style="max-width: 800px;">
+            <h2 id="text-style-modal-title">Edit Text Style</h2>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;">
+                <!-- Left Column: Controls -->
+                <div class="text-style-controls">
                     <div class="form-group">
-                        <label>Default Volume (<span id="volume-value">100</span>%)</label>
-                        <input type="range" id="channel-volume" min="0" max="100" value="100"
-                               oninput="document.getElementById('volume-value').textContent = this.value">
-                    </div>
-                    <div class="form-group">
-                        <label>Text Style</label>
-                        <select id="channel-text-style">
+                        <label>Animation Style</label>
+                        <select id="ts-style">
                             <option value="typewriter">Typewriter</option>
                             <option value="fade">Fade</option>
                             <option value="slide">Slide</option>
@@ -495,33 +484,293 @@
                             <option value="wave">Wave</option>
                         </select>
                     </div>
+
+                    <div class="form-group">
+                        <label>Font Family</label>
+                        <select id="ts-font-family">
+                            <option value="Arial">Arial</option>
+                            <option value="Helvetica">Helvetica</option>
+                            <option value="Georgia">Georgia</option>
+                            <option value="Times New Roman">Times New Roman</option>
+                            <option value="Courier New">Courier New</option>
+                            <option value="Verdana">Verdana</option>
+                            <option value="Impact">Impact</option>
+                        </select>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Font Size</label>
+                            <input type="number" id="ts-font-size" value="48" min="12" max="200">
+                        </div>
+                        <div class="form-group">
+                            <label>Duration (ms)</label>
+                            <input type="number" id="ts-duration" value="3000" min="500" max="30000" step="100">
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Text Color</label>
+                            <input type="color" id="ts-color" value="#ffffff">
+                        </div>
+                        <div class="form-group">
+                            <label>Stroke Color</label>
+                            <input type="color" id="ts-stroke-color" value="#000000">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Stroke Width: <span id="ts-stroke-width-value">0</span>px</label>
+                        <input type="range" id="ts-stroke-width" min="0" max="20" value="0">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Position X: <span id="ts-pos-x-value">50</span>%</label>
+                        <input type="range" id="ts-position-x" min="0" max="100" value="50">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Position Y: <span id="ts-pos-y-value">50</span>%</label>
+                        <input type="range" id="ts-position-y" min="0" max="100" value="50">
+                    </div>
+
+                    <div class="button-row">
+                        <button type="button" onclick="window.playTextStylePreview()">Preview</button>
+                        <button type="button" class="secondary" onclick="window.stopTextStylePreview()">Stop</button>
+                    </div>
+                </div>
+
+                <!-- Right Column: Preview Canvas -->
+                <div class="text-style-preview" style="background: #000; border-radius: 4px; display: flex; align-items: center; justify-content: center;">
+                    <canvas id="ts-preview-canvas" width="400" height="225" style="width: 100%; height: auto;"></canvas>
+                </div>
+            </div>
+
+            <div class="button-row" style="margin-top: 1.5rem;">
+                <button type="button" onclick="window.saveTextStyle()">Save</button>
+                <button type="button" class="secondary" onclick="window.closeTextStyleModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Character Create/Edit Modal -->
+    <div id="character-modal" class="modal">
+        <div class="modal-content" style="max-width: 700px;">
+            <h2 id="character-modal-title">Create Character</h2>
+            <form id="character-form">
+                <!-- Basic Info -->
+                <div class="form-group">
+                    <label>Name *</label>
+                    <input type="text" id="character-name" required placeholder="e.g., alice, narrator">
                 </div>
                 <div class="form-group">
-                    <label>ElevenLabs Voice ID</label>
-                    <input type="text" id="channel-voice-id" placeholder="Optional: e.g., 21m00Tcm4TlvDq8ikWAM">
+                    <label>Description</label>
+                    <input type="text" id="character-description" placeholder="Optional description">
                 </div>
                 <div class="form-row">
                     <div class="form-group">
                         <label>Color</label>
-                        <input type="color" id="channel-color" value="#e94560">
+                        <input type="color" id="character-color" value="#e94560">
                     </div>
                     <div class="form-group">
                         <label>Icon (emoji)</label>
-                        <input type="text" id="channel-icon" value="🔊" maxlength="4">
+                        <input type="text" id="character-icon" value="🔊" maxlength="4">
                     </div>
                 </div>
-                <div class="form-group checkbox">
-                    <input type="checkbox" id="channel-muted">
-                    <label for="channel-muted">Muted</label>
+
+                <!-- Voice Settings -->
+                <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--bg-secondary);">
+                    <div class="section-title" style="font-size: 0.75rem; margin-bottom: 0.75rem;">Voice Settings</div>
                 </div>
+                <div class="form-group">
+                    <label>ElevenLabs Voice ID *</label>
+                    <input type="text" id="character-voice-id" required placeholder="e.g., 21m00Tcm4TlvDq8ikWAM">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Stability (<span id="character-stability-value">0.50</span>)</label>
+                        <input type="range" id="character-stability" min="0" max="100" value="50"
+                               oninput="document.getElementById('character-stability-value').textContent = (this.value / 100).toFixed(2)">
+                    </div>
+                    <div class="form-group">
+                        <label>Similarity (<span id="character-similarity-value">0.75</span>)</label>
+                        <input type="range" id="character-similarity" min="0" max="100" value="75"
+                               oninput="document.getElementById('character-similarity-value').textContent = (this.value / 100).toFixed(2)">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Style (<span id="character-style-value">0.00</span>)</label>
+                        <input type="range" id="character-voice-style" min="0" max="100" value="0"
+                               oninput="document.getElementById('character-style-value').textContent = (this.value / 100).toFixed(2)">
+                    </div>
+                    <div class="form-group">
+                        <label>Speed (<span id="character-speed-value">1.0</span>x)</label>
+                        <input type="range" id="character-voice-speed" min="50" max="200" value="100"
+                               oninput="document.getElementById('character-speed-value').textContent = (this.value / 100).toFixed(1)">
+                    </div>
+                </div>
+
+                <!-- Audio Settings -->
+                <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--bg-secondary);">
+                    <div class="section-title" style="font-size: 0.75rem; margin-bottom: 0.75rem;">Audio Settings</div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Default Volume (<span id="character-volume-value">100</span>%)</label>
+                        <input type="range" id="character-volume" min="0" max="100" value="100"
+                               oninput="document.getElementById('character-volume-value').textContent = this.value">
+                    </div>
+                    <div class="form-group checkbox" style="align-self: end;">
+                        <input type="checkbox" id="character-muted">
+                        <label for="character-muted">Muted</label>
+                    </div>
+                </div>
+
+                <!-- Text Style Settings -->
+                <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--bg-secondary);">
+                    <div class="section-title" style="font-size: 0.75rem; margin-bottom: 0.75rem;">Text Style</div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Animation Style</label>
+                        <select id="character-text-style">
+                            <option value="typewriter">Typewriter</option>
+                            <option value="fade">Fade</option>
+                            <option value="slide">Slide</option>
+                            <option value="bounce">Bounce</option>
+                            <option value="wave">Wave</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Font Family</label>
+                        <select id="character-font-family">
+                            <option value="Arial">Arial</option>
+                            <option value="Helvetica">Helvetica</option>
+                            <option value="Georgia">Georgia</option>
+                            <option value="Times New Roman">Times New Roman</option>
+                            <option value="Courier New">Courier New</option>
+                            <option value="Verdana">Verdana</option>
+                            <option value="Impact">Impact</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Font Size</label>
+                        <input type="number" id="character-font-size" value="48" min="12" max="200">
+                    </div>
+                    <div class="form-group">
+                        <label>Duration (ms)</label>
+                        <input type="number" id="character-text-duration" value="3000" min="500" max="30000" step="100">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Text Color</label>
+                        <input type="color" id="character-text-color" value="#ffffff">
+                    </div>
+                    <div class="form-group">
+                        <label>Stroke Color</label>
+                        <input type="color" id="character-stroke-color" value="#000000">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Stroke Width (<span id="character-stroke-width-value">0</span>px)</label>
+                    <input type="range" id="character-stroke-width" min="0" max="20" value="0"
+                           oninput="document.getElementById('character-stroke-width-value').textContent = this.value">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Position X (<span id="character-pos-x-value">50</span>%)</label>
+                        <input type="range" id="character-position-x" min="0" max="100" value="50"
+                               oninput="document.getElementById('character-pos-x-value').textContent = this.value">
+                    </div>
+                    <div class="form-group">
+                        <label>Position Y (<span id="character-pos-y-value">50</span>%)</label>
+                        <input type="range" id="character-position-y" min="0" max="100" value="50"
+                               oninput="document.getElementById('character-pos-y-value').textContent = this.value">
+                    </div>
+                </div>
+
+                <!-- AI Settings (Optional) -->
+                <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--bg-secondary);">
+                    <div class="section-title" style="font-size: 0.75rem; margin-bottom: 0.75rem;">AI Settings (Optional)</div>
+                </div>
+                <div class="form-group">
+                    <label>System Prompt (leave empty for speak-only)</label>
+                    <textarea id="character-prompt" rows="3" placeholder="You are Alice, a helpful AI assistant..." style="width: 100%; padding: 0.5rem; border: none; border-radius: 4px; background: var(--bg-secondary); color: var(--text-primary); font-size: 0.875rem; resize: vertical;"></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Model</label>
+                        <input type="text" id="character-model" value="anthropic/claude-sonnet-4.5" placeholder="anthropic/claude-sonnet-4.5">
+                    </div>
+                    <div class="form-group">
+                        <label>Temperature (<span id="character-temp-value">0.7</span>)</label>
+                        <input type="range" id="character-temperature" min="0" max="200" value="70"
+                               oninput="document.getElementById('character-temp-value').textContent = (this.value / 100).toFixed(1)">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Max Tokens</label>
+                    <input type="number" id="character-max-tokens" value="1024" min="1" max="8192">
+                </div>
+
                 <div class="button-row">
                     <button type="submit">Save</button>
-                    <button type="button" class="secondary" onclick="window.closeChannelModal()">Cancel</button>
+                    <button type="button" class="secondary" onclick="window.closeCharacterModal()">Cancel</button>
                 </div>
             </form>
         </div>
     </div>
 
+    <!-- Speak Modal (Direct TTS) -->
+    <div id="speak-modal" class="modal">
+        <div class="modal-content" style="max-width: 600px;">
+            <h2 id="speak-modal-title">Speak as Character</h2>
+            <div class="form-group">
+                <label>Text to Speak</label>
+                <textarea id="speak-text" rows="4" placeholder="Enter text to speak..." style="width: 100%; padding: 0.5rem; border: none; border-radius: 4px; background: var(--bg-secondary); color: var(--text-primary); font-size: 0.875rem; resize: vertical;"></textarea>
+            </div>
+            <div class="form-group checkbox">
+                <input type="checkbox" id="speak-show-text" checked>
+                <label for="speak-show-text">Show text overlay</label>
+            </div>
+            <div id="speak-status" style="margin-bottom: 1rem; padding: 0.5rem; background: var(--bg-secondary); border-radius: 4px; display: none;">
+                <span id="speak-status-text">Ready</span>
+            </div>
+            <div class="button-row">
+                <button type="button" onclick="window.sendSpeak()" id="speak-send-btn">Speak</button>
+                <button type="button" class="secondary" onclick="window.closeSpeakModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Chat Modal (AI) -->
+    <div id="chat-modal" class="modal">
+        <div class="modal-content" style="max-width: 600px;">
+            <h2 id="chat-modal-title">Chat with Character</h2>
+            <div class="form-group">
+                <label>Message</label>
+                <textarea id="chat-message" rows="3" placeholder="Type your message here..." style="width: 100%; padding: 0.5rem; border: none; border-radius: 4px; background: var(--bg-secondary); color: var(--text-primary); font-size: 0.875rem; resize: vertical;"></textarea>
+            </div>
+            <div class="form-group checkbox">
+                <input type="checkbox" id="chat-show-text" checked>
+                <label for="chat-show-text">Show text overlay</label>
+            </div>
+            <div id="chat-status" style="margin-bottom: 1rem; padding: 0.5rem; background: var(--bg-secondary); border-radius: 4px; display: none;">
+                <span id="chat-status-text">Ready</span>
+            </div>
+            <div class="button-row">
+                <button type="button" onclick="window.sendChat()" id="chat-send-btn">Send</button>
+                <button type="button" class="secondary" onclick="window.closeChatModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/text-animator.js"></script>
     <script src="/static/js/dashboard.js"></script>
 </body>
 </html>

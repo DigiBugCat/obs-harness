@@ -14,22 +14,6 @@ from sqlmodel import SQLModel
 # =============================================================================
 
 
-class Channel(SQLModel, table=True):
-    """A channel configuration stored in the database."""
-
-    id: int | None = SQLField(default=None, primary_key=True)
-    name: str = SQLField(unique=True, index=True)
-    description: str | None = SQLField(default=None)
-    default_volume: float = SQLField(default=1.0)
-    default_text_style: str = SQLField(default="typewriter")
-    elevenlabs_voice_id: str | None = SQLField(default=None)
-    mute_state: bool = SQLField(default=False)
-    color: str = SQLField(default="#e94560")
-    icon: str = SQLField(default="🔊")
-    created_at: datetime = SQLField(default_factory=datetime.utcnow)
-    updated_at: datetime | None = SQLField(default=None)
-
-
 class TextPreset(SQLModel, table=True):
     """A saved text animation preset."""
 
@@ -55,6 +39,49 @@ class PlaybackLog(SQLModel, table=True):
     content: str  # filename or text content
     content_type: str  # "audio", "stream", "text"
     timestamp: datetime = SQLField(default_factory=datetime.utcnow)
+
+
+class Character(SQLModel, table=True):
+    """A character with voice settings and optional AI personality."""
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    name: str = SQLField(unique=True, index=True)
+    description: str | None = SQLField(default=None)
+
+    # Display settings
+    color: str = SQLField(default="#e94560")
+    icon: str = SQLField(default="🔊")
+
+    # Audio settings
+    default_volume: float = SQLField(default=1.0)
+    mute_state: bool = SQLField(default=False)
+
+    # Text style settings
+    default_text_style: str = SQLField(default="typewriter")
+    text_font_family: str = SQLField(default="Arial")
+    text_font_size: int = SQLField(default=48)
+    text_color: str = SQLField(default="#ffffff")
+    text_stroke_color: str | None = SQLField(default=None)
+    text_stroke_width: int = SQLField(default=0)
+    text_position_x: float = SQLField(default=0.5)
+    text_position_y: float = SQLField(default=0.5)
+    text_duration: int = SQLField(default=3000)
+
+    # Voice settings (required for TTS)
+    elevenlabs_voice_id: str = SQLField()
+    voice_stability: float = SQLField(default=0.5)
+    voice_similarity_boost: float = SQLField(default=0.75)
+    voice_style: float = SQLField(default=0.0)
+    voice_speed: float = SQLField(default=1.0)
+
+    # AI settings (optional - for chat endpoint)
+    system_prompt: str | None = SQLField(default=None)
+    model: str = SQLField(default="anthropic/claude-sonnet-4.5")
+    temperature: float = SQLField(default=0.7)
+    max_tokens: int = SQLField(default=1024)
+
+    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+    updated_at: datetime | None = SQLField(default=None)
 
 
 # =============================================================================
@@ -114,8 +141,8 @@ class PresetCreate(BaseModel):
     duration: int = 3000
 
 
-class ChannelStatus(BaseModel):
-    """Status information for a channel."""
+class CharacterStatus(BaseModel):
+    """Status information for a character."""
 
     name: str
     connected: bool
@@ -123,56 +150,152 @@ class ChannelStatus(BaseModel):
     streaming: bool = False
 
 
-class ChannelCreate(BaseModel):
-    """Request to create a channel."""
-
-    name: str
-    description: str | None = None
-    default_volume: float = Field(default=1.0, ge=0.0, le=1.0)
-    default_text_style: str = "typewriter"
-    elevenlabs_voice_id: str | None = None
-    mute_state: bool = False
-    color: str = "#e94560"
-    icon: str = "🔊"
-
-
-class ChannelUpdate(BaseModel):
-    """Request to update a channel."""
-
-    description: str | None = None
-    default_volume: float | None = Field(default=None, ge=0.0, le=1.0)
-    default_text_style: str | None = None
-    elevenlabs_voice_id: str | None = None
-    mute_state: bool | None = None
-    color: str | None = None
-    icon: str | None = None
-
-
-class ChannelResponse(BaseModel):
-    """Full channel information response."""
-
-    id: int
-    name: str
-    description: str | None
-    default_volume: float
-    default_text_style: str
-    elevenlabs_voice_id: str | None
-    mute_state: bool
-    color: str
-    icon: str
-    connected: bool = False
-    playing: bool = False
-    streaming: bool = False
-    created_at: datetime
-
-
-class TTSRequest(BaseModel):
-    """Request to generate and play TTS on a channel."""
+class SpeakRequest(BaseModel):
+    """Request to speak text directly (no AI)."""
 
     text: str
     show_text: bool = True
     text_style: str | None = None
     text_duration: int | None = None  # Auto-calculated if not provided
+
+
+class CharacterCreate(BaseModel):
+    """Request to create a character."""
+
+    name: str
+    description: str | None = None
+    elevenlabs_voice_id: str
+
+    # Display settings
+    color: str = "#e94560"
+    icon: str = "🔊"
+
+    # Audio settings
+    default_volume: float = Field(default=1.0, ge=0.0, le=1.0)
+    mute_state: bool = False
+
+    # Text style settings
+    default_text_style: str = "typewriter"
+    text_font_family: str = "Arial"
+    text_font_size: int = Field(default=48, ge=12, le=200)
+    text_color: str = "#ffffff"
+    text_stroke_color: str | None = None
+    text_stroke_width: int = Field(default=0, ge=0, le=20)
+    text_position_x: float = Field(default=0.5, ge=0.0, le=1.0)
+    text_position_y: float = Field(default=0.5, ge=0.0, le=1.0)
+    text_duration: int = Field(default=3000, ge=500, le=30000)
+
+    # Voice settings
+    voice_stability: float = Field(default=0.5, ge=0.0, le=1.0)
+    voice_similarity_boost: float = Field(default=0.75, ge=0.0, le=1.0)
+    voice_style: float = Field(default=0.0, ge=0.0, le=1.0)
+    voice_speed: float = Field(default=1.0, ge=0.5, le=2.0)
+
+    # AI settings (optional)
+    system_prompt: str | None = None
+    model: str = "anthropic/claude-sonnet-4.5"
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=1024, ge=1, le=8192)
+
+
+class CharacterUpdate(BaseModel):
+    """Request to update a character."""
+
+    description: str | None = None
+
+    # Display settings
+    color: str | None = None
+    icon: str | None = None
+
+    # Audio settings
+    default_volume: float | None = Field(default=None, ge=0.0, le=1.0)
+    mute_state: bool | None = None
+
+    # Text style settings
+    default_text_style: str | None = None
+    text_font_family: str | None = None
+    text_font_size: int | None = Field(default=None, ge=12, le=200)
+    text_color: str | None = None
+    text_stroke_color: str | None = None
+    text_stroke_width: int | None = Field(default=None, ge=0, le=20)
+    text_position_x: float | None = Field(default=None, ge=0.0, le=1.0)
+    text_position_y: float | None = Field(default=None, ge=0.0, le=1.0)
+    text_duration: int | None = Field(default=None, ge=500, le=30000)
+
+    # Voice settings
+    elevenlabs_voice_id: str | None = None
+    voice_stability: float | None = Field(default=None, ge=0.0, le=1.0)
+    voice_similarity_boost: float | None = Field(default=None, ge=0.0, le=1.0)
+    voice_style: float | None = Field(default=None, ge=0.0, le=1.0)
+    voice_speed: float | None = Field(default=None, ge=0.5, le=2.0)
+
+    # AI settings
+    system_prompt: str | None = None
+    model: str | None = None
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    max_tokens: int | None = Field(default=None, ge=1, le=8192)
+
+
+class CharacterResponse(BaseModel):
+    """Character information response."""
+
+    id: int
+    name: str
+    description: str | None
+
+    # Display settings
+    color: str
+    icon: str
+
+    # Audio settings
+    default_volume: float
+    mute_state: bool
+
+    # Text style settings
+    default_text_style: str
+    text_font_family: str
+    text_font_size: int
+    text_color: str
+    text_stroke_color: str | None
+    text_stroke_width: int
+    text_position_x: float
+    text_position_y: float
+    text_duration: int
+
+    # Voice settings
+    elevenlabs_voice_id: str
+    voice_stability: float
+    voice_similarity_boost: float
+    voice_style: float
+    voice_speed: float
+
+    # AI settings
+    system_prompt: str | None
+    model: str
+    temperature: float
+    max_tokens: int
+
+    # Status
+    connected: bool = False
+    playing: bool = False
+    streaming: bool = False
+
+    created_at: datetime
+
+
+class ChatRequest(BaseModel):
+    """Request to chat with a character."""
+
+    message: str
+    show_text: bool = True
+
+
+class ChatResponse(BaseModel):
+    """Response from character chat."""
+
+    success: bool
+    character: str
+    response_text: str  # Full response for logging
 
 
 # =============================================================================
@@ -190,6 +313,9 @@ class WSAction(str, Enum):
     STREAM_END = "stream_end"
     TEXT = "text"
     CLEAR_TEXT = "clear_text"
+    TEXT_STREAM_START = "text_stream_start"
+    TEXT_CHUNK = "text_chunk"
+    TEXT_STREAM_END = "text_stream_end"
 
 
 class WSEvent(str, Enum):
@@ -258,6 +384,32 @@ class ClearTextCommand(BaseModel):
     """WebSocket command to clear text overlay."""
 
     action: Literal["clear_text"] = "clear_text"
+
+
+class TextStreamStartCommand(BaseModel):
+    """WebSocket command to start streaming text display."""
+
+    action: Literal["text_stream_start"] = "text_stream_start"
+    font_family: str = "Arial"
+    font_size: int = 48
+    color: str = "#ffffff"
+    stroke_color: str | None = None
+    stroke_width: int = 0
+    position_x: float = 0.5
+    position_y: float = 0.5
+
+
+class TextChunkCommand(BaseModel):
+    """WebSocket command to send a text chunk for streaming display."""
+
+    action: Literal["text_chunk"] = "text_chunk"
+    text: str
+
+
+class TextStreamEndCommand(BaseModel):
+    """WebSocket command to end streaming text display."""
+
+    action: Literal["text_stream_end"] = "text_stream_end"
 
 
 class BrowserEvent(BaseModel):

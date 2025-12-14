@@ -12,6 +12,17 @@ class TextAnimator {
         this.queue = [];
         this.current = null;
         this.startTime = 0;
+
+        // Streaming text state
+        this.isStreaming = false;
+        this.streamText = '';
+        this.revealIndex = 0;
+        this.streamSettings = null;
+        this.lastRevealTime = 0;
+        this.revealRate = 15; // chars per second (~150 WPM)
+        this.streamFadeStart = null;
+        this.streamFadeDuration = 1000;
+        this.streamOpacity = 1;
     }
 
     resize(width, height) {
@@ -381,6 +392,174 @@ class TextAnimator {
         } else {
             return n1 * (t -= 2.625 / d1) * t + 0.984375;
         }
+    }
+
+    // =========================================================================
+    // Streaming Text Support
+    // =========================================================================
+
+    /**
+     * Start streaming text display mode.
+     * @param {Object} settings - Text styling settings
+     */
+    startStream(settings) {
+        this.isStreaming = true;
+        this.streamText = '';
+        this.revealIndex = 0;
+        this.streamSettings = {
+            fontFamily: settings.fontFamily || 'Arial',
+            fontSize: settings.fontSize || 48,
+            color: settings.color || '#ffffff',
+            strokeColor: settings.strokeColor || null,
+            strokeWidth: settings.strokeWidth || 0,
+            positionX: settings.positionX ?? 0.5,
+            positionY: settings.positionY ?? 0.5,
+        };
+        this.lastRevealTime = performance.now();
+        this.streamFadeStart = null;
+        this.streamOpacity = 1;
+
+        // Clear any existing animation
+        this.current = null;
+        this.queue = [];
+    }
+
+    /**
+     * Append text to the streaming buffer.
+     * @param {string} text - Text chunk to append
+     */
+    appendText(text) {
+        if (!this.isStreaming) return;
+        this.streamText += text;
+    }
+
+    /**
+     * End streaming mode and schedule fade-out.
+     */
+    endStream() {
+        this.isStreaming = false;
+
+        // Schedule fade-out after a short delay to allow reading
+        setTimeout(() => {
+            if (!this.isStreaming) {
+                this.streamFadeStart = performance.now();
+            }
+        }, 2000);
+    }
+
+    /**
+     * Clear streaming text immediately.
+     */
+    clearStream() {
+        this.isStreaming = false;
+        this.streamText = '';
+        this.revealIndex = 0;
+        this.streamFadeStart = null;
+        this.streamSettings = null;
+    }
+
+    /**
+     * Update streaming text state (progressive reveal).
+     */
+    updateStream() {
+        if (!this.streamText) return;
+
+        // Handle fade out
+        if (this.streamFadeStart) {
+            const fadeElapsed = performance.now() - this.streamFadeStart;
+            this.streamOpacity = 1 - (fadeElapsed / this.streamFadeDuration);
+            if (this.streamOpacity <= 0) {
+                this.streamText = '';
+                this.streamFadeStart = null;
+                this.streamSettings = null;
+                return;
+            }
+        }
+
+        // Progressive reveal while streaming
+        if (this.isStreaming || this.revealIndex < this.streamText.length) {
+            const now = performance.now();
+            const elapsed = now - this.lastRevealTime;
+            const charsToReveal = Math.floor(elapsed / (1000 / this.revealRate));
+
+            if (charsToReveal > 0) {
+                this.revealIndex = Math.min(
+                    this.revealIndex + charsToReveal,
+                    this.streamText.length
+                );
+                this.lastRevealTime = now;
+            }
+        }
+    }
+
+    /**
+     * Draw streaming text with word wrapping.
+     */
+    drawStream() {
+        if (!this.streamText || !this.streamSettings) return;
+
+        const settings = this.streamSettings;
+        const ctx = this.ctx;
+        const visibleText = this.streamText.substring(0, this.revealIndex);
+
+        if (!visibleText) return;
+
+        // Set up font
+        ctx.font = `${settings.fontSize}px ${settings.fontFamily}`;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+
+        // Calculate wrapped lines
+        const maxWidth = this.width * 0.9;
+        const words = visibleText.split(' ');
+        const lines = [];
+        let currentLine = '';
+
+        for (const word of words) {
+            const testLine = currentLine ? currentLine + ' ' + word : word;
+            const metrics = ctx.measureText(testLine);
+
+            if (metrics.width > maxWidth && currentLine) {
+                lines.push(currentLine);
+                currentLine = word;
+            } else {
+                currentLine = testLine;
+            }
+        }
+        if (currentLine) {
+            lines.push(currentLine);
+        }
+
+        // Calculate position
+        const lineHeight = settings.fontSize * 1.3;
+        const totalHeight = lines.length * lineHeight;
+        const centerX = settings.positionX * this.width;
+        const centerY = settings.positionY * this.height;
+        const startY = centerY - totalHeight / 2 + lineHeight / 2;
+
+        // Draw each line
+        ctx.save();
+        ctx.globalAlpha = this.streamOpacity;
+
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const lineWidth = ctx.measureText(line).width;
+            const lineX = centerX - lineWidth / 2;
+            const lineY = startY + i * lineHeight;
+
+            // Draw stroke if configured
+            if (settings.strokeColor && settings.strokeWidth > 0) {
+                ctx.strokeStyle = settings.strokeColor;
+                ctx.lineWidth = settings.strokeWidth;
+                ctx.strokeText(line, lineX, lineY);
+            }
+
+            // Draw fill
+            ctx.fillStyle = settings.color;
+            ctx.fillText(line, lineX, lineY);
+        }
+
+        ctx.restore();
     }
 }
 

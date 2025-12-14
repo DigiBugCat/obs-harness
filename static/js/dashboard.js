@@ -1,6 +1,6 @@
 /**
  * OBS Harness Dashboard
- * Real-time monitoring and control of audio channels
+ * Real-time monitoring and control of characters
  */
 
 (function() {
@@ -12,18 +12,23 @@
     const reconnectDelay = 2000;
 
     // State
-    let channels = [];
     let presets = [];
-    let editingChannel = null;
+    let characters = [];
+    let editingCharacter = null;
+    let chatCharacter = null;
+    let speakCharacter = null;
+    let textStyleAnimator = null;
+    let textStyleAnimationFrame = null;
+    let editingTextStyleCharacter = null;
 
     // DOM elements
     const wsStatus = document.getElementById('ws-status');
     const wsStatusText = document.getElementById('ws-status-text');
-    const channelsContainer = document.getElementById('channels-container');
+    const charactersContainer = document.getElementById('characters-container');
     const historyList = document.getElementById('history-list');
-    const channelModal = document.getElementById('channel-modal');
-    const channelForm = document.getElementById('channel-form');
-    const modalTitle = document.getElementById('modal-title');
+    const textStyleModal = document.getElementById('text-style-modal');
+    const textStyleModalTitle = document.getElementById('text-style-modal-title');
+    const textStylePreviewCanvas = document.getElementById('ts-preview-canvas');
 
     // =========================================================================
     // WebSocket Connection
@@ -73,16 +78,16 @@
     }
 
     function handleMessage(msg) {
-        if (msg.type === 'channels') {
-            // Merge connection status into full channel list
-            const connectedNames = new Set(msg.channels.map(c => c.name));
-            channels = channels.map(ch => ({
+        if (msg.type === 'characters') {
+            // Merge connection status into character list
+            const statusMap = new Map(msg.characters.map(c => [c.name, c]));
+            characters = characters.map(ch => ({
                 ...ch,
-                connected: connectedNames.has(ch.name),
-                playing: msg.channels.find(c => c.name === ch.name)?.playing || false,
-                streaming: msg.channels.find(c => c.name === ch.name)?.streaming || false,
+                connected: statusMap.has(ch.name),
+                playing: statusMap.get(ch.name)?.playing || false,
+                streaming: statusMap.get(ch.name)?.streaming || false,
             }));
-            renderChannels();
+            renderCharacters();
         }
     }
 
@@ -102,62 +107,6 @@
         return response.json();
     }
 
-    // Channel CRUD
-    async function getAllChannels() {
-        const result = await apiCall('/api/channels/all');
-        if (Array.isArray(result)) {
-            channels = result;
-            renderChannels();
-        }
-        return channels;
-    }
-
-    async function createChannel(data) {
-        const result = await apiCall('/api/channels', 'POST', data);
-        await getAllChannels();
-        return result;
-    }
-
-    async function updateChannel(name, data) {
-        const result = await apiCall(`/api/channels/${name}`, 'PUT', data);
-        await getAllChannels();
-        return result;
-    }
-
-    async function deleteChannel(name) {
-        if (!confirm(`Delete channel "${name}"? This cannot be undone.`)) {
-            return;
-        }
-        const result = await apiCall(`/api/channels/${name}`, 'DELETE');
-        await getAllChannels();
-        return result;
-    }
-
-    // Audio/Text controls
-    async function playAudio(channel, file, volume) {
-        return apiCall(`/api/channel/${channel}/play`, 'POST', { file, volume });
-    }
-
-    async function stopAudio(channel) {
-        return apiCall(`/api/channel/${channel}/stop`, 'POST');
-    }
-
-    async function setVolume(channel, level) {
-        return apiCall(`/api/channel/${channel}/volume`, 'POST', { level });
-    }
-
-    async function showText(channel, text, style, duration) {
-        return apiCall(`/api/channel/${channel}/text`, 'POST', { text, style, duration });
-    }
-
-    async function clearText(channel) {
-        return apiCall(`/api/channel/${channel}/text/clear`, 'POST');
-    }
-
-    async function sendTTS(channel, text, showText = true) {
-        return apiCall(`/api/channel/${channel}/tts`, 'POST', { text, show_text: showText });
-    }
-
     async function loadPresets() {
         const result = await apiCall('/api/presets');
         if (Array.isArray(result)) {
@@ -173,205 +122,466 @@
         }
     }
 
+    // Character CRUD
+    async function getAllCharacters() {
+        const result = await apiCall('/api/characters');
+        if (Array.isArray(result)) {
+            characters = result;
+            renderCharacters();
+        }
+        return characters;
+    }
+
+    async function createCharacter(data) {
+        const result = await apiCall('/api/characters', 'POST', data);
+        await getAllCharacters();
+        return result;
+    }
+
+    async function updateCharacter(name, data) {
+        const result = await apiCall(`/api/characters/${name}`, 'PUT', data);
+        await getAllCharacters();
+        return result;
+    }
+
+    async function deleteCharacterAPI(name) {
+        if (!confirm(`Delete character "${name}"? This cannot be undone.`)) {
+            return;
+        }
+        const result = await apiCall(`/api/characters/${name}`, 'DELETE');
+        await getAllCharacters();
+        return result;
+    }
+
+    // Character actions
+    async function sendCharacterSpeak(characterName, text, showText) {
+        return apiCall(`/api/characters/${characterName}/speak`, 'POST', {
+            text,
+            show_text: showText,
+        });
+    }
+
+    async function sendCharacterChat(characterName, message, showText) {
+        return apiCall(`/api/characters/${characterName}/chat`, 'POST', {
+            message,
+            show_text: showText,
+        });
+    }
+
     // =========================================================================
-    // Modal Functions
+    // Text Style Modal Functions
     // =========================================================================
 
-    function openCreateChannelModal() {
-        editingChannel = null;
-        modalTitle.textContent = 'Create Channel';
-        channelForm.reset();
-        document.getElementById('channel-name').disabled = false;
-        document.getElementById('channel-volume').value = 100;
-        document.getElementById('volume-value').textContent = '100';
-        document.getElementById('channel-color').value = '#e94560';
-        document.getElementById('channel-icon').value = '\uD83D\uDD0A';
-        channelModal.classList.add('active');
+    function openTextStyleModal(characterName) {
+        const character = characters.find(c => c.name === characterName);
+        if (!character) return;
+
+        editingTextStyleCharacter = character;
+        textStyleModalTitle.textContent = `Edit Text Style - ${character.name}`;
+
+        // Populate form with character's current text settings
+        document.getElementById('ts-style').value = character.default_text_style;
+        document.getElementById('ts-font-family').value = character.text_font_family;
+        document.getElementById('ts-font-size').value = character.text_font_size;
+        document.getElementById('ts-duration').value = character.text_duration;
+        document.getElementById('ts-color').value = character.text_color;
+        document.getElementById('ts-stroke-color').value = character.text_stroke_color || '#000000';
+        document.getElementById('ts-stroke-width').value = character.text_stroke_width;
+        document.getElementById('ts-stroke-width-value').textContent = character.text_stroke_width;
+        document.getElementById('ts-position-x').value = Math.round(character.text_position_x * 100);
+        document.getElementById('ts-pos-x-value').textContent = Math.round(character.text_position_x * 100);
+        document.getElementById('ts-position-y').value = Math.round(character.text_position_y * 100);
+        document.getElementById('ts-pos-y-value').textContent = Math.round(character.text_position_y * 100);
+
+        // Initialize TextAnimator for preview if not already
+        if (!textStyleAnimator && textStylePreviewCanvas) {
+            const ctx = textStylePreviewCanvas.getContext('2d');
+            textStyleAnimator = new TextAnimator(ctx, textStylePreviewCanvas.width, textStylePreviewCanvas.height);
+        }
+
+        textStyleModal.classList.add('active');
     }
 
-    function openEditChannelModal(channel) {
-        editingChannel = channel;
-        modalTitle.textContent = 'Edit Channel';
-        document.getElementById('channel-name').value = channel.name;
-        document.getElementById('channel-name').disabled = true;
-        document.getElementById('channel-description').value = channel.description || '';
-        document.getElementById('channel-volume').value = Math.round(channel.default_volume * 100);
-        document.getElementById('volume-value').textContent = Math.round(channel.default_volume * 100);
-        document.getElementById('channel-text-style').value = channel.default_text_style;
-        document.getElementById('channel-voice-id').value = channel.elevenlabs_voice_id || '';
-        document.getElementById('channel-color').value = channel.color;
-        document.getElementById('channel-icon').value = channel.icon;
-        document.getElementById('channel-muted').checked = channel.mute_state;
-        channelModal.classList.add('active');
+    function closeTextStyleModal() {
+        textStyleModal.classList.remove('active');
+        editingTextStyleCharacter = null;
+        stopTextStylePreview();
     }
 
-    function closeChannelModal() {
-        channelModal.classList.remove('active');
-        editingChannel = null;
+    function getTextStyleConfig() {
+        return {
+            style: document.getElementById('ts-style').value,
+            fontFamily: document.getElementById('ts-font-family').value,
+            fontSize: parseInt(document.getElementById('ts-font-size').value),
+            duration: parseInt(document.getElementById('ts-duration').value),
+            color: document.getElementById('ts-color').value,
+            strokeColor: document.getElementById('ts-stroke-color').value,
+            strokeWidth: parseInt(document.getElementById('ts-stroke-width').value),
+            positionX: parseInt(document.getElementById('ts-position-x').value) / 100,
+            positionY: parseInt(document.getElementById('ts-position-y').value) / 100,
+        };
     }
 
-    async function handleChannelFormSubmit(e) {
-        e.preventDefault();
+    function playTextStylePreview() {
+        stopTextStylePreview();
 
-        const data = {
-            name: document.getElementById('channel-name').value,
-            description: document.getElementById('channel-description').value || null,
-            default_volume: parseInt(document.getElementById('channel-volume').value) / 100,
-            default_text_style: document.getElementById('channel-text-style').value,
-            elevenlabs_voice_id: document.getElementById('channel-voice-id').value || null,
-            color: document.getElementById('channel-color').value,
-            icon: document.getElementById('channel-icon').value,
-            mute_state: document.getElementById('channel-muted').checked,
+        const canvas = document.getElementById('ts-preview-canvas');
+        if (!canvas) {
+            console.error('Preview canvas not found');
+            return;
+        }
+        const ctx = canvas.getContext('2d');
+
+        textStyleAnimator = new TextAnimator(ctx, canvas.width, canvas.height);
+
+        const config = getTextStyleConfig();
+        const scaleFactor = canvas.width / 800;
+
+        textStyleAnimator.show({
+            text: 'Sample Text',
+            style: config.style,
+            duration: config.duration,
+            x: config.positionX,
+            y: config.positionY,
+            fontFamily: config.fontFamily,
+            fontSize: Math.round(config.fontSize * scaleFactor),
+            color: config.color,
+            strokeColor: config.strokeWidth > 0 ? config.strokeColor : null,
+            strokeWidth: Math.round(config.strokeWidth * scaleFactor),
+        });
+
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            textStyleAnimator.update();
+            textStyleAnimator.draw();
+
+            if (textStyleAnimator.current) {
+                textStyleAnimationFrame = requestAnimationFrame(animate);
+            }
+        }
+
+        animate();
+    }
+
+    function stopTextStylePreview() {
+        if (textStyleAnimationFrame) {
+            cancelAnimationFrame(textStyleAnimationFrame);
+            textStyleAnimationFrame = null;
+        }
+        if (textStyleAnimator) {
+            textStyleAnimator.clear();
+        }
+        const canvas = document.getElementById('ts-preview-canvas');
+        if (canvas) {
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+    }
+
+    async function saveTextStyle() {
+        if (!editingTextStyleCharacter) return;
+
+        const config = getTextStyleConfig();
+
+        const updateData = {
+            default_text_style: config.style,
+            text_font_family: config.fontFamily,
+            text_font_size: config.fontSize,
+            text_color: config.color,
+            text_stroke_color: config.strokeWidth > 0 ? config.strokeColor : null,
+            text_stroke_width: config.strokeWidth,
+            text_position_x: config.positionX,
+            text_position_y: config.positionY,
+            text_duration: config.duration,
         };
 
         try {
-            if (editingChannel) {
-                await updateChannel(editingChannel.name, data);
-            } else {
-                await createChannel(data);
-            }
-            closeChannelModal();
+            await updateCharacter(editingTextStyleCharacter.name, updateData);
+            closeTextStyleModal();
         } catch (error) {
-            console.error('Error saving channel:', error);
-            alert('Error saving channel. Check console for details.');
+            console.error('Error saving text style:', error);
+            alert('Error saving text style. Check console for details.');
+        }
+    }
+
+    // =========================================================================
+    // Character Modal Functions
+    // =========================================================================
+
+    const characterModal = document.getElementById('character-modal');
+    const characterForm = document.getElementById('character-form');
+    const characterModalTitle = document.getElementById('character-modal-title');
+
+    function openCreateCharacterModal() {
+        editingCharacter = null;
+        characterModalTitle.textContent = 'Create Character';
+        characterForm.reset();
+        document.getElementById('character-name').disabled = false;
+
+        // Set defaults
+        document.getElementById('character-color').value = '#e94560';
+        document.getElementById('character-icon').value = '\uD83D\uDD0A';
+        document.getElementById('character-stability').value = 50;
+        document.getElementById('character-stability-value').textContent = '0.50';
+        document.getElementById('character-similarity').value = 75;
+        document.getElementById('character-similarity-value').textContent = '0.75';
+        document.getElementById('character-voice-style').value = 0;
+        document.getElementById('character-style-value').textContent = '0.00';
+        document.getElementById('character-voice-speed').value = 100;
+        document.getElementById('character-speed-value').textContent = '1.0';
+        document.getElementById('character-volume').value = 100;
+        document.getElementById('character-volume-value').textContent = '100';
+        document.getElementById('character-text-style').value = 'typewriter';
+        document.getElementById('character-font-family').value = 'Arial';
+        document.getElementById('character-font-size').value = 48;
+        document.getElementById('character-text-duration').value = 3000;
+        document.getElementById('character-text-color').value = '#ffffff';
+        document.getElementById('character-stroke-color').value = '#000000';
+        document.getElementById('character-stroke-width').value = 0;
+        document.getElementById('character-stroke-width-value').textContent = '0';
+        document.getElementById('character-position-x').value = 50;
+        document.getElementById('character-pos-x-value').textContent = '50';
+        document.getElementById('character-position-y').value = 50;
+        document.getElementById('character-pos-y-value').textContent = '50';
+        document.getElementById('character-model').value = 'anthropic/claude-sonnet-4.5';
+        document.getElementById('character-temperature').value = 70;
+        document.getElementById('character-temp-value').textContent = '0.7';
+        document.getElementById('character-max-tokens').value = 1024;
+
+        characterModal.classList.add('active');
+    }
+
+    function openEditCharacterModal(character) {
+        editingCharacter = character;
+        characterModalTitle.textContent = 'Edit Character';
+
+        // Basic info
+        document.getElementById('character-name').value = character.name;
+        document.getElementById('character-name').disabled = true;
+        document.getElementById('character-description').value = character.description || '';
+        document.getElementById('character-color').value = character.color;
+        document.getElementById('character-icon').value = character.icon;
+
+        // Voice settings
+        document.getElementById('character-voice-id').value = character.elevenlabs_voice_id;
+        document.getElementById('character-stability').value = Math.round(character.voice_stability * 100);
+        document.getElementById('character-stability-value').textContent = character.voice_stability.toFixed(2);
+        document.getElementById('character-similarity').value = Math.round(character.voice_similarity_boost * 100);
+        document.getElementById('character-similarity-value').textContent = character.voice_similarity_boost.toFixed(2);
+        document.getElementById('character-voice-style').value = Math.round(character.voice_style * 100);
+        document.getElementById('character-style-value').textContent = character.voice_style.toFixed(2);
+        document.getElementById('character-voice-speed').value = Math.round(character.voice_speed * 100);
+        document.getElementById('character-speed-value').textContent = character.voice_speed.toFixed(1);
+
+        // Audio settings
+        document.getElementById('character-volume').value = Math.round(character.default_volume * 100);
+        document.getElementById('character-volume-value').textContent = Math.round(character.default_volume * 100);
+        document.getElementById('character-muted').checked = character.mute_state;
+
+        // Text style settings
+        document.getElementById('character-text-style').value = character.default_text_style;
+        document.getElementById('character-font-family').value = character.text_font_family;
+        document.getElementById('character-font-size').value = character.text_font_size;
+        document.getElementById('character-text-duration').value = character.text_duration;
+        document.getElementById('character-text-color').value = character.text_color;
+        document.getElementById('character-stroke-color').value = character.text_stroke_color || '#000000';
+        document.getElementById('character-stroke-width').value = character.text_stroke_width;
+        document.getElementById('character-stroke-width-value').textContent = character.text_stroke_width;
+        document.getElementById('character-position-x').value = Math.round(character.text_position_x * 100);
+        document.getElementById('character-pos-x-value').textContent = Math.round(character.text_position_x * 100);
+        document.getElementById('character-position-y').value = Math.round(character.text_position_y * 100);
+        document.getElementById('character-pos-y-value').textContent = Math.round(character.text_position_y * 100);
+
+        // AI settings
+        document.getElementById('character-prompt').value = character.system_prompt || '';
+        document.getElementById('character-model').value = character.model;
+        document.getElementById('character-temperature').value = Math.round(character.temperature * 100);
+        document.getElementById('character-temp-value').textContent = character.temperature.toFixed(1);
+        document.getElementById('character-max-tokens').value = character.max_tokens;
+
+        characterModal.classList.add('active');
+    }
+
+    function closeCharacterModal() {
+        characterModal.classList.remove('active');
+        editingCharacter = null;
+    }
+
+    async function handleCharacterFormSubmit(e) {
+        e.preventDefault();
+
+        const data = {
+            name: document.getElementById('character-name').value,
+            description: document.getElementById('character-description').value || null,
+            color: document.getElementById('character-color').value,
+            icon: document.getElementById('character-icon').value,
+            elevenlabs_voice_id: document.getElementById('character-voice-id').value,
+            voice_stability: parseInt(document.getElementById('character-stability').value) / 100,
+            voice_similarity_boost: parseInt(document.getElementById('character-similarity').value) / 100,
+            voice_style: parseInt(document.getElementById('character-voice-style').value) / 100,
+            voice_speed: parseInt(document.getElementById('character-voice-speed').value) / 100,
+            default_volume: parseInt(document.getElementById('character-volume').value) / 100,
+            mute_state: document.getElementById('character-muted').checked,
+            default_text_style: document.getElementById('character-text-style').value,
+            text_font_family: document.getElementById('character-font-family').value,
+            text_font_size: parseInt(document.getElementById('character-font-size').value),
+            text_duration: parseInt(document.getElementById('character-text-duration').value),
+            text_color: document.getElementById('character-text-color').value,
+            text_stroke_color: parseInt(document.getElementById('character-stroke-width').value) > 0
+                ? document.getElementById('character-stroke-color').value : null,
+            text_stroke_width: parseInt(document.getElementById('character-stroke-width').value),
+            text_position_x: parseInt(document.getElementById('character-position-x').value) / 100,
+            text_position_y: parseInt(document.getElementById('character-position-y').value) / 100,
+            system_prompt: document.getElementById('character-prompt').value || null,
+            model: document.getElementById('character-model').value,
+            temperature: parseInt(document.getElementById('character-temperature').value) / 100,
+            max_tokens: parseInt(document.getElementById('character-max-tokens').value),
+        };
+
+        try {
+            if (editingCharacter) {
+                await updateCharacter(editingCharacter.name, data);
+            } else {
+                await createCharacter(data);
+            }
+            closeCharacterModal();
+        } catch (error) {
+            console.error('Error saving character:', error);
+            alert('Error saving character. Check console for details.');
+        }
+    }
+
+    // =========================================================================
+    // Speak Modal Functions
+    // =========================================================================
+
+    const speakModal = document.getElementById('speak-modal');
+
+    function openSpeakModal(characterName) {
+        const character = characters.find(c => c.name === characterName);
+        if (!character) return;
+
+        speakCharacter = character;
+        document.getElementById('speak-modal-title').textContent = `Speak as ${character.name}`;
+        document.getElementById('speak-text').value = '';
+        document.getElementById('speak-show-text').checked = true;
+        document.getElementById('speak-status').style.display = 'none';
+        document.getElementById('speak-send-btn').disabled = false;
+
+        speakModal.classList.add('active');
+    }
+
+    function closeSpeakModal() {
+        speakModal.classList.remove('active');
+        speakCharacter = null;
+    }
+
+    async function sendSpeak() {
+        if (!speakCharacter) return;
+
+        const text = document.getElementById('speak-text').value.trim();
+        const showText = document.getElementById('speak-show-text').checked;
+
+        if (!text) {
+            alert('Please enter text to speak');
+            return;
+        }
+
+        const statusDiv = document.getElementById('speak-status');
+        const statusText = document.getElementById('speak-status-text');
+        const sendBtn = document.getElementById('speak-send-btn');
+
+        statusDiv.style.display = 'block';
+        statusText.textContent = 'Speaking...';
+        sendBtn.disabled = true;
+
+        try {
+            const result = await sendCharacterSpeak(speakCharacter.name, text, showText);
+            if (result.error || result.detail) {
+                statusText.textContent = `Error: ${result.error || result.detail}`;
+            } else {
+                statusText.textContent = 'Complete!';
+                document.getElementById('speak-text').value = '';
+                loadHistory();
+            }
+        } catch (error) {
+            console.error('Speak error:', error);
+            statusText.textContent = `Error: ${error.message || 'Unknown error'}`;
+        } finally {
+            sendBtn.disabled = false;
+        }
+    }
+
+    // =========================================================================
+    // Chat Modal Functions
+    // =========================================================================
+
+    const chatModal = document.getElementById('chat-modal');
+
+    function openChatModal(characterName) {
+        const character = characters.find(c => c.name === characterName);
+        if (!character) return;
+
+        // Check if character has system_prompt set
+        if (!character.system_prompt) {
+            alert('This character has no AI system prompt configured. Use "Speak" for direct TTS.');
+            return;
+        }
+
+        chatCharacter = character;
+        document.getElementById('chat-modal-title').textContent = `Chat with ${character.name}`;
+        document.getElementById('chat-message').value = '';
+        document.getElementById('chat-show-text').checked = true;
+        document.getElementById('chat-status').style.display = 'none';
+        document.getElementById('chat-send-btn').disabled = false;
+
+        chatModal.classList.add('active');
+    }
+
+    function closeChatModal() {
+        chatModal.classList.remove('active');
+        chatCharacter = null;
+    }
+
+    async function sendChat() {
+        if (!chatCharacter) return;
+
+        const message = document.getElementById('chat-message').value.trim();
+        const showText = document.getElementById('chat-show-text').checked;
+
+        if (!message) {
+            alert('Please enter a message');
+            return;
+        }
+
+        const statusDiv = document.getElementById('chat-status');
+        const statusText = document.getElementById('chat-status-text');
+        const sendBtn = document.getElementById('chat-send-btn');
+
+        statusDiv.style.display = 'block';
+        statusText.textContent = 'Sending...';
+        sendBtn.disabled = true;
+
+        try {
+            const result = await sendCharacterChat(chatCharacter.name, message, showText);
+            if (result.error || result.detail) {
+                statusText.textContent = `Error: ${result.error || result.detail}`;
+            } else {
+                statusText.textContent = 'Response complete!';
+                document.getElementById('chat-message').value = '';
+                loadHistory();
+            }
+        } catch (error) {
+            console.error('Chat error:', error);
+            statusText.textContent = `Error: ${error.message || 'Unknown error'}`;
+        } finally {
+            sendBtn.disabled = false;
         }
     }
 
     // =========================================================================
     // Rendering
     // =========================================================================
-
-    function renderChannels() {
-        if (channels.length === 0) {
-            channelsContainer.innerHTML = `
-                <div class="no-channels">
-                    <p>No channels configured yet.</p>
-                    <p>Click "Create Channel" to add one.</p>
-                </div>
-            `;
-            return;
-        }
-
-        channelsContainer.innerHTML = channels.map(ch => renderChannelCard(ch)).join('');
-
-        // Attach event listeners
-        channels.forEach(ch => {
-            attachChannelEvents(ch.name);
-        });
-    }
-
-    function renderChannelCard(channel) {
-        let statusClass = '';
-        let statusText = 'offline';
-        if (!channel.connected) {
-            statusClass = '';
-            statusText = 'offline';
-        } else if (channel.streaming) {
-            statusClass = 'streaming';
-            statusText = 'streaming';
-        } else if (channel.playing) {
-            statusClass = 'playing';
-            statusText = 'playing';
-        } else {
-            statusText = 'ready';
-        }
-
-        const connectedClass = channel.connected ? '' : 'disconnected';
-        const voiceIndicator = channel.elevenlabs_voice_id
-            ? '<span class="voice-indicator">TTS</span>'
-            : '';
-
-        // TTS channels get simplified controls - just text input and generate button
-        // Non-TTS channels get audio file controls and separate text display controls
-        const channelControls = channel.elevenlabs_voice_id ? `
-            <div class="channel-controls">
-                <div class="control-row">
-                    <input type="text" placeholder="Text to generate..." id="tts-${channel.name}">
-                    <button onclick="window.dashboardSendTTS('${channel.name}')">Generate</button>
-                </div>
-            </div>
-        ` : `
-            <div class="channel-controls">
-                <div class="control-row">
-                    <input type="text" placeholder="audio-file.mp3" id="audio-${channel.name}">
-                    <button onclick="window.dashboardPlayAudio('${channel.name}')">Play</button>
-                    <button class="secondary" onclick="window.dashboardStopAudio('${channel.name}')">Stop</button>
-                </div>
-                <div class="control-row">
-                    <label style="font-size: 0.75rem; color: var(--text-secondary);">Volume</label>
-                    <input type="range" min="0" max="100" value="${Math.round(channel.default_volume * 100)}" id="volume-${channel.name}"
-                           onchange="window.dashboardSetVolume('${channel.name}', this.value)">
-                </div>
-                <div class="text-controls">
-                    <div class="control-row">
-                        <input type="text" placeholder="Text to display" id="text-${channel.name}">
-                        <select id="style-${channel.name}">
-                            <option value="typewriter" ${channel.default_text_style === 'typewriter' ? 'selected' : ''}>Typewriter</option>
-                            <option value="fade" ${channel.default_text_style === 'fade' ? 'selected' : ''}>Fade</option>
-                            <option value="slide" ${channel.default_text_style === 'slide' ? 'selected' : ''}>Slide</option>
-                            <option value="bounce" ${channel.default_text_style === 'bounce' ? 'selected' : ''}>Bounce</option>
-                            <option value="wave" ${channel.default_text_style === 'wave' ? 'selected' : ''}>Wave</option>
-                        </select>
-                    </div>
-                    <div class="control-row">
-                        <button onclick="window.dashboardShowText('${channel.name}')">Show Text</button>
-                        <button class="secondary" onclick="window.dashboardClearText('${channel.name}')">Clear</button>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        return `
-            <div class="channel-card ${connectedClass}" data-channel="${channel.name}" style="border-left-color: ${channel.color}">
-                <div class="channel-header">
-                    <div class="channel-name">
-                        <span class="channel-icon">${channel.icon}</span>
-                        ${channel.name}
-                        ${voiceIndicator}
-                    </div>
-                    <span class="channel-status ${statusClass}">${statusText}</span>
-                </div>
-                ${channel.description ? `<p class="channel-description">${channel.description}</p>` : ''}
-                ${channelControls}
-                <div class="channel-actions">
-                    <button onclick="window.editChannel('${channel.name}')">Edit</button>
-                    <button class="secondary" onclick="window.deleteChannel('${channel.name}')">Delete</button>
-                </div>
-            </div>
-        `;
-    }
-
-    function attachChannelEvents(channelName) {
-        // Audio file input - play on enter
-        const audioInput = document.getElementById(`audio-${channelName}`);
-        if (audioInput) {
-            audioInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    window.dashboardPlayAudio(channelName);
-                }
-            });
-        }
-
-        // Text input - show on enter
-        const textInput = document.getElementById(`text-${channelName}`);
-        if (textInput) {
-            textInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    window.dashboardShowText(channelName);
-                }
-            });
-        }
-
-        // TTS input - speak on enter
-        const ttsInput = document.getElementById(`tts-${channelName}`);
-        if (ttsInput) {
-            ttsInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    window.dashboardSendTTS(channelName);
-                }
-            });
-        }
-    }
 
     function renderHistory(history) {
         if (!history || history.length === 0) {
@@ -391,89 +601,176 @@
         }).join('');
     }
 
+    function renderCharacters() {
+        if (!charactersContainer) return;
+
+        if (characters.length === 0) {
+            charactersContainer.innerHTML = `
+                <div class="no-channels">
+                    <p>No characters configured yet.</p>
+                    <p>Click "Create Character" to add one.</p>
+                </div>
+            `;
+            return;
+        }
+
+        charactersContainer.innerHTML = characters.map(ch => renderCharacterCard(ch)).join('');
+    }
+
+    function renderCharacterCard(character) {
+        // Connection status
+        let statusClass = '';
+        let statusText = 'offline';
+        if (!character.connected) {
+            statusClass = '';
+            statusText = 'offline';
+        } else if (character.streaming) {
+            statusClass = 'streaming';
+            statusText = 'streaming';
+        } else if (character.playing) {
+            statusClass = 'playing';
+            statusText = 'playing';
+        } else {
+            statusText = 'ready';
+        }
+
+        const connectedClass = character.connected ? '' : 'disconnected';
+        const hasAI = character.system_prompt ? '<span class="voice-indicator">AI</span>' : '';
+
+        // Show description or system_prompt preview
+        const descriptionText = character.description ||
+            (character.system_prompt ? character.system_prompt.substring(0, 80) + '...' : 'No description');
+
+        return `
+            <div class="channel-card ${connectedClass}" data-character="${character.name}" style="border-left-color: ${character.color}">
+                <div class="channel-header">
+                    <div class="channel-name">
+                        <span class="channel-icon">${character.icon}</span>
+                        ${character.name}
+                        ${hasAI}
+                    </div>
+                    <span class="channel-status ${statusClass}">${statusText}</span>
+                </div>
+                <p class="channel-description">${descriptionText}</p>
+                <div class="channel-controls">
+                    <div class="control-row" style="font-size: 0.75rem; color: var(--text-secondary);">
+                        <span>Voice: ${character.elevenlabs_voice_id.substring(0, 12)}...</span>
+                        ${character.system_prompt ? `<span>Model: ${character.model.split('/').pop()}</span>` : ''}
+                    </div>
+                </div>
+                <div class="channel-actions">
+                    <button onclick="window.openSpeakModal('${character.name}')">Speak</button>
+                    ${character.system_prompt
+                        ? `<button onclick="window.openChatModal('${character.name}')">Chat</button>`
+                        : ''}
+                    <button onclick="window.openTextStyleModal('${character.name}')">Text Style</button>
+                    <button onclick="window.editCharacter('${character.name}')">Edit</button>
+                    <button class="secondary" onclick="window.deleteCharacter('${character.name}')">Delete</button>
+                </div>
+            </div>
+        `;
+    }
+
     // =========================================================================
     // Global Functions (for onclick handlers)
     // =========================================================================
 
-    window.openCreateChannelModal = openCreateChannelModal;
-    window.closeChannelModal = closeChannelModal;
+    window.openTextStyleModal = openTextStyleModal;
+    window.closeTextStyleModal = closeTextStyleModal;
+    window.playTextStylePreview = playTextStylePreview;
+    window.stopTextStylePreview = stopTextStylePreview;
+    window.saveTextStyle = saveTextStyle;
 
-    window.editChannel = function(channelName) {
-        const channel = channels.find(c => c.name === channelName);
-        if (channel) {
-            openEditChannelModal(channel);
+    // Character modal exports
+    window.openCreateCharacterModal = openCreateCharacterModal;
+    window.closeCharacterModal = closeCharacterModal;
+    window.editCharacter = function(characterName) {
+        const character = characters.find(c => c.name === characterName);
+        if (character) {
+            openEditCharacterModal(character);
         }
     };
+    window.deleteCharacter = deleteCharacterAPI;
 
-    window.deleteChannel = deleteChannel;
+    // Speak modal exports
+    window.openSpeakModal = openSpeakModal;
+    window.closeSpeakModal = closeSpeakModal;
+    window.sendSpeak = sendSpeak;
 
-    window.dashboardPlayAudio = async function(channel) {
-        const input = document.getElementById(`audio-${channel}`);
-        const volumeInput = document.getElementById(`volume-${channel}`);
-        if (input && input.value) {
-            const volume = volumeInput ? parseInt(volumeInput.value) / 100 : 1;
-            await playAudio(channel, input.value, volume);
-            loadHistory();
-        }
-    };
-
-    window.dashboardStopAudio = async function(channel) {
-        await stopAudio(channel);
-    };
-
-    window.dashboardSetVolume = async function(channel, value) {
-        const level = parseInt(value) / 100;
-        await setVolume(channel, level);
-    };
-
-    window.dashboardShowText = async function(channel) {
-        const textInput = document.getElementById(`text-${channel}`);
-        const styleSelect = document.getElementById(`style-${channel}`);
-        if (textInput && textInput.value) {
-            const style = styleSelect ? styleSelect.value : 'typewriter';
-            await showText(channel, textInput.value, style, 3000);
-            loadHistory();
-        }
-    };
-
-    window.dashboardClearText = async function(channel) {
-        await clearText(channel);
-    };
-
-    window.dashboardSendTTS = async function(channel) {
-        const ttsInput = document.getElementById(`tts-${channel}`);
-        if (ttsInput && ttsInput.value) {
-            try {
-                await sendTTS(channel, ttsInput.value, true);
-                loadHistory();
-                ttsInput.value = '';
-            } catch (error) {
-                console.error('TTS error:', error);
-                alert('TTS failed. Check if ELEVENLABS_API_KEY is set.');
-            }
-        }
-    };
+    // Chat modal exports
+    window.openChatModal = openChatModal;
+    window.closeChatModal = closeChatModal;
+    window.sendChat = sendChat;
 
     // =========================================================================
     // Initialize
     // =========================================================================
 
-    // Form submission
-    if (channelForm) {
-        channelForm.addEventListener('submit', handleChannelFormSubmit);
-    }
-
-    // Close modal on background click
-    if (channelModal) {
-        channelModal.addEventListener('click', (e) => {
-            if (e.target === channelModal) {
-                closeChannelModal();
+    // Close text style modal on background click
+    if (textStyleModal) {
+        textStyleModal.addEventListener('click', (e) => {
+            if (e.target === textStyleModal) {
+                closeTextStyleModal();
             }
         });
     }
 
+    // Character form submission
+    if (characterForm) {
+        characterForm.addEventListener('submit', handleCharacterFormSubmit);
+    }
+
+    // Close character modal on background click
+    if (characterModal) {
+        characterModal.addEventListener('click', (e) => {
+            if (e.target === characterModal) {
+                closeCharacterModal();
+            }
+        });
+    }
+
+    // Close speak modal on background click
+    if (speakModal) {
+        speakModal.addEventListener('click', (e) => {
+            if (e.target === speakModal) {
+                closeSpeakModal();
+            }
+        });
+    }
+
+    // Close chat modal on background click
+    if (chatModal) {
+        chatModal.addEventListener('click', (e) => {
+            if (e.target === chatModal) {
+                closeChatModal();
+            }
+        });
+    }
+
+    // Text style slider value display updates
+    const strokeWidthSlider = document.getElementById('ts-stroke-width');
+    if (strokeWidthSlider) {
+        strokeWidthSlider.addEventListener('input', function() {
+            document.getElementById('ts-stroke-width-value').textContent = this.value;
+        });
+    }
+
+    const posXSlider = document.getElementById('ts-position-x');
+    if (posXSlider) {
+        posXSlider.addEventListener('input', function() {
+            document.getElementById('ts-pos-x-value').textContent = this.value;
+        });
+    }
+
+    const posYSlider = document.getElementById('ts-position-y');
+    if (posYSlider) {
+        posYSlider.addEventListener('input', function() {
+            document.getElementById('ts-pos-y-value').textContent = this.value;
+        });
+    }
+
     connect();
-    getAllChannels();
+    getAllCharacters();
     loadPresets();
     loadHistory();
 

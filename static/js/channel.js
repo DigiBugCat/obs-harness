@@ -141,6 +141,15 @@
                 case 'clear_text':
                     clearText();
                     break;
+                case 'text_stream_start':
+                    startTextStream(msg);
+                    break;
+                case 'text_chunk':
+                    handleTextChunk(msg);
+                    break;
+                case 'text_stream_end':
+                    endTextStream();
+                    break;
                 default:
                     console.warn(`[${channelName}] Unknown action:`, msg.action);
             }
@@ -300,6 +309,43 @@
     }
 
     // =========================================================================
+    // Streaming Text Overlay
+    // =========================================================================
+
+    function startTextStream(msg) {
+        if (!textAnimator) {
+            console.warn(`[${channelName}] TextAnimator not available`);
+            return;
+        }
+
+        textAnimator.startStream({
+            fontFamily: msg.font_family || 'Arial',
+            fontSize: msg.font_size || 48,
+            color: msg.color || '#ffffff',
+            strokeColor: msg.stroke_color,
+            strokeWidth: msg.stroke_width || 0,
+            positionX: msg.position_x ?? 0.5,
+            positionY: msg.position_y ?? 0.5,
+        });
+
+        console.log(`[${channelName}] Text stream started`);
+    }
+
+    function handleTextChunk(msg) {
+        if (!textAnimator) return;
+
+        textAnimator.appendText(msg.text);
+    }
+
+    function endTextStream() {
+        if (!textAnimator) return;
+
+        textAnimator.endStream();
+        console.log(`[${channelName}] Text stream ended`);
+        sendEvent({ event: 'text_stream_complete' });
+    }
+
+    // =========================================================================
     // Error Display
     // =========================================================================
 
@@ -351,8 +397,15 @@
 
         // Update and draw text animator
         if (textAnimator) {
-            textAnimator.update();
-            textAnimator.draw();
+            // Handle streaming text
+            if (textAnimator.isStreaming || textAnimator.streamText) {
+                textAnimator.updateStream();
+                textAnimator.drawStream();
+            } else {
+                // Handle regular animated text
+                textAnimator.update();
+                textAnimator.draw();
+            }
         }
 
         requestAnimationFrame(animate);
