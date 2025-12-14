@@ -20,6 +20,7 @@
     let elevenlabsModels = [];  // Cached ElevenLabs models
     let activeGenerationCharacter = null;  // Track which character has active generation
     let activeGenerationModal = null;  // 'speak' or 'chat'
+    let sawStreamingStart = false;  // Track if we've seen streaming=true
 
     // DOM elements
     const wsStatus = document.getElementById('ws-status');
@@ -89,14 +90,22 @@
             // Check if active generation's streaming has ended
             if (activeGenerationCharacter && activeGenerationModal) {
                 const charStatus = statusMap.get(activeGenerationCharacter);
-                if (charStatus && !charStatus.streaming) {
-                    // Streaming ended - hide stop button and update status
-                    const stopBtn = document.getElementById(`${activeGenerationModal}-stop-btn`);
-                    const statusText = document.getElementById(`${activeGenerationModal}-status-text`);
-                    if (stopBtn) stopBtn.style.display = 'none';
-                    if (statusText) statusText.textContent = 'Complete!';
-                    activeGenerationCharacter = null;
-                    activeGenerationModal = null;
+                if (charStatus) {
+                    // Track when streaming starts
+                    if (charStatus.streaming) {
+                        sawStreamingStart = true;
+                    }
+                    // Only hide button when streaming transitions from true to false
+                    if (sawStreamingStart && !charStatus.streaming) {
+                        // Streaming ended - hide stop button and update status
+                        const stopBtn = document.getElementById(`${activeGenerationModal}-stop-btn`);
+                        const statusText = document.getElementById(`${activeGenerationModal}-status-text`);
+                        if (stopBtn) stopBtn.style.display = 'none';
+                        if (statusText) statusText.textContent = 'Complete!';
+                        activeGenerationCharacter = null;
+                        activeGenerationModal = null;
+                        sawStreamingStart = false;
+                    }
                 }
             }
         }
@@ -835,6 +844,7 @@
         // Track active generation so we can hide stop button when streaming ends
         activeGenerationCharacter = speakCharacter.name;
         activeGenerationModal = 'speak';
+        sawStreamingStart = false;
 
         try {
             const result = await sendCharacterSpeak(speakCharacter.name, text, showText);
@@ -906,6 +916,7 @@
             // Clear active generation tracking
             activeGenerationCharacter = null;
             activeGenerationModal = null;
+            sawStreamingStart = false;
             // Re-enable send button
             const sendBtn = document.getElementById(`${modalType}-send-btn`);
             if (sendBtn) sendBtn.disabled = false;
@@ -988,6 +999,7 @@
         // Track active generation so we can hide stop button when streaming ends
         activeGenerationCharacter = chatCharacter.name;
         activeGenerationModal = 'chat';
+        sawStreamingStart = false;
 
         try {
             // Add user message bubble immediately
