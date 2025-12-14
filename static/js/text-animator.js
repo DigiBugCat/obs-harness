@@ -26,7 +26,7 @@ class TextAnimator {
 
         // Display window for character cap
         this.displayStartIndex = 0;
-        this.maxDisplayChars = 250;
+        this.maxDisplayChars = 120;
     }
 
     resize(width, height) {
@@ -640,6 +640,33 @@ class TextAnimator {
     }
 
     /**
+     * Get the formatting state (bold/italic) at a given position in the text.
+     * Scans from the start to count formatting marker toggles.
+     * @param {string} text - The full text
+     * @param {number} position - Position to check state at
+     * @returns {Object} {bold: boolean, italic: boolean}
+     */
+    getFormattingStateAt(text, position) {
+        let bold = false;
+        let italic = false;
+        let i = 0;
+
+        while (i < position && i < text.length) {
+            if (text.substring(i, i + 2) === '**') {
+                bold = !bold;
+                i += 2;
+            } else if (text[i] === '*') {
+                italic = !italic;
+                i += 1;
+            } else {
+                i += 1;
+            }
+        }
+
+        return { bold, italic };
+    }
+
+    /**
      * Draw streaming text with word wrapping and formatting.
      */
     drawStream() {
@@ -671,9 +698,19 @@ class TextAnimator {
             }
         }
 
-        const visibleText = this.streamText.substring(this.displayStartIndex, this.revealIndex);
+        // Get the raw visible text
+        let visibleText = this.streamText.substring(this.displayStartIndex, this.revealIndex);
 
         if (!visibleText) return;
+
+        // If we're starting mid-stream, check formatting state and prepend markers
+        if (this.displayStartIndex > 0) {
+            const state = this.getFormattingStateAt(this.streamText, this.displayStartIndex);
+            let prefix = '';
+            if (state.bold) prefix += '**';
+            if (state.italic) prefix += '*';
+            visibleText = prefix + visibleText;
+        }
 
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
