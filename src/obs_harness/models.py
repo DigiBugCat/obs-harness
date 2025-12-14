@@ -456,6 +456,21 @@ class TextStreamEndCommand(BaseModel):
     action: Literal["text_stream_end"] = "text_stream_end"
 
 
+class WordTimingItem(BaseModel):
+    """A single word with timing information."""
+
+    word: str
+    start: float  # seconds from audio start
+    end: float
+
+
+class WordTimingCommand(BaseModel):
+    """WebSocket command to send word timing data for synced text reveal."""
+
+    action: Literal["word_timing"] = "word_timing"
+    words: list[WordTimingItem]
+
+
 class BrowserEvent(BaseModel):
     """Event message from browser to server."""
 

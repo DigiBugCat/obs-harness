@@ -46,6 +46,7 @@ from .models import (
     TwitchStatusResponse,
     TwitchTokenRequest,
     VolumeCommand,
+    WordTimingCommand,
 )
 from .twitch_chat import TwitchChatManager
 
@@ -258,6 +259,11 @@ class OBSHarness:
     async def text_stream_end(self, channel: str) -> bool:
         """End streaming text on a channel."""
         cmd = TextStreamEndCommand()
+        return await self._manager.send_to_channel(channel, cmd.model_dump())
+
+    async def word_timing(self, channel: str, words: list[dict]) -> bool:
+        """Send word timing data to a channel for synced text reveal."""
+        cmd = WordTimingCommand(words=words)
         return await self._manager.send_to_channel(channel, cmd.model_dump())
 
     def list_characters(self) -> list[CharacterStatus]:
@@ -874,6 +880,9 @@ def create_app(
         async def send_audio_end() -> bool:
             return await harness.stream_end(name)
 
+        async def send_word_timing(words: list[dict]) -> bool:
+            return await harness.word_timing(name, words)
+
         # Create and run pipeline
         pipeline = ChatPipeline(
             config=config,
@@ -883,6 +892,7 @@ def create_app(
             send_audio_start=send_audio_start,
             send_audio_chunk=send_audio_chunk,
             send_audio_end=send_audio_end,
+            send_word_timing=send_word_timing,
         )
 
         try:

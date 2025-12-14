@@ -1,6 +1,9 @@
 """ElevenLabs TTS integration for OBS Harness."""
 
+import base64
+import json
 import os
+from dataclasses import dataclass
 from typing import AsyncIterator
 
 import httpx
@@ -12,6 +15,73 @@ class ElevenLabsError(Exception):
     """Error from ElevenLabs API."""
 
     pass
+
+
+@dataclass
+class WordTiming:
+    """Timing information for a single word."""
+
+    word: str
+    start_time: float  # seconds from audio start
+    end_time: float
+
+
+@dataclass
+class TTSChunkWithTiming:
+    """A TTS audio chunk with optional word timing data."""
+
+    audio: bytes  # PCM audio data
+    words: list[WordTiming]  # Words in this chunk with timing
+
+
+def parse_alignment_to_words(
+    characters: list[str],
+    start_times: list[float],
+    end_times: list[float],
+) -> list[WordTiming]:
+    """Convert character-level alignment to word-level timing.
+
+    Args:
+        characters: List of individual characters
+        start_times: Start time for each character in seconds
+        end_times: End time for each character in seconds
+
+    Returns:
+        List of WordTiming objects, one per word
+    """
+    if not characters:
+        return []
+
+    words = []
+    current_word = ""
+    word_start = None
+
+    for i, char in enumerate(characters):
+        if char.isspace():
+            # End of word
+            if current_word:
+                words.append(WordTiming(
+                    word=current_word,
+                    start_time=word_start,
+                    end_time=end_times[i - 1] if i > 0 else start_times[i],
+                ))
+                current_word = ""
+                word_start = None
+        else:
+            # Part of a word
+            if word_start is None:
+                word_start = start_times[i]
+            current_word += char
+
+    # Don't forget the last word
+    if current_word:
+        words.append(WordTiming(
+            word=current_word,
+            start_time=word_start,
+            end_time=end_times[-1] if end_times else 0,
+        ))
+
+    return words
 
 
 class ElevenLabsClient:
@@ -78,6 +148,97 @@ class ElevenLabsClient:
                     )
                 async for chunk in response.aiter_bytes(chunk_size=4096):
                     yield chunk
+        except httpx.HTTPError as e:
+            raise ElevenLabsError(f"HTTP error during TTS streaming: {e}") from e
+
+    async def stream_tts_with_timestamps(
+        self,
+        voice_id: str,
+        text: str,
+        model_id: str = "eleven_multilingual_v2",
+        output_format: str = "pcm_24000",
+        stability: float = 0.5,
+        similarity_boost: float = 0.75,
+        style: float = 0.0,
+        speed: float = 1.0,
+    ) -> AsyncIterator[TTSChunkWithTiming]:
+        """Stream TTS audio with word-level timing data.
+
+        Uses the stream-with-timestamps endpoint to get alignment data.
+
+        Args:
+            voice_id: ElevenLabs voice ID to use.
+            text: Text to convert to speech.
+            model_id: ElevenLabs model to use.
+            output_format: Audio output format.
+            stability: Voice stability (0-1).
+            similarity_boost: Voice similarity boost (0-1).
+            style: Voice style (0-1).
+            speed: Speech speed (0.5-2.0).
+
+        Yields:
+            TTSChunkWithTiming objects containing audio and word timing.
+
+        Raises:
+            ElevenLabsError: If the API request fails.
+        """
+        try:
+            async with self._client.stream(
+                "POST",
+                f"/text-to-speech/{voice_id}/stream-with-timestamps",
+                json={
+                    "text": text,
+                    "model_id": model_id,
+                    "voice_settings": {
+                        "stability": stability,
+                        "similarity_boost": similarity_boost,
+                        "style": style,
+                        "speed": speed,
+                    },
+                },
+                params={
+                    "output_format": output_format,
+                },
+            ) as response:
+                if response.status_code != 200:
+                    error_text = await response.aread()
+                    raise ElevenLabsError(
+                        f"ElevenLabs API error {response.status_code}: {error_text.decode()}"
+                    )
+
+                # Response is newline-delimited JSON
+                buffer = ""
+                async for chunk in response.aiter_text():
+                    buffer += chunk
+
+                    # Process complete JSON objects
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
+                        line = line.strip()
+                        if not line:
+                            continue
+
+                        try:
+                            data = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+
+                        # Extract audio (base64 encoded)
+                        audio_b64 = data.get("audio_base64", "")
+                        audio_bytes = base64.b64decode(audio_b64) if audio_b64 else b""
+
+                        # Extract alignment and convert to word timing
+                        words = []
+                        alignment = data.get("alignment") or data.get("normalized_alignment")
+                        if alignment:
+                            chars = alignment.get("characters", [])
+                            starts = alignment.get("character_start_times_seconds", [])
+                            ends = alignment.get("character_end_times_seconds", [])
+                            words = parse_alignment_to_words(chars, starts, ends)
+
+                        if audio_bytes or words:
+                            yield TTSChunkWithTiming(audio=audio_bytes, words=words)
+
         except httpx.HTTPError as e:
             raise ElevenLabsError(f"HTTP error during TTS streaming: {e}") from e
 

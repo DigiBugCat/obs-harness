@@ -32,6 +32,12 @@
     let pendingTextSettings = null;
     let pendingTextChunks = [];
 
+    // Word timing for synced text reveal
+    let wordTimingEnabled = false;
+    let wordTimingData = [];  // Array of {word, start, end} - times in seconds from audio start
+    let audioStartContextTime = 0;  // audioContext.currentTime when audio started
+    let revealedWordCount = 0;  // How many words have been revealed
+
     // Canvas for text overlay
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
@@ -156,6 +162,9 @@
                 case 'text_stream_end':
                     endTextStream();
                     break;
+                case 'word_timing':
+                    handleWordTiming(msg);
+                    break;
                 default:
                     console.warn(`[${channelName}] Unknown action:`, msg.action);
             }
@@ -273,9 +282,10 @@
 
         source.start(nextPlayTime);
 
-        // On first audio chunk, trigger pending text display
+        // On first audio chunk, trigger pending text display and record start time
         if (!firstAudioChunkReceived) {
             firstAudioChunkReceived = true;
+            audioStartContextTime = nextPlayTime;  // When this first chunk will start playing
             flushPendingText();
         }
 
@@ -286,13 +296,20 @@
     function flushPendingText() {
         if (!textAnimator || !pendingTextSettings) return;
 
+        // When word timing is enabled, force instant reveal so words appear immediately
+        if (wordTimingEnabled) {
+            pendingTextSettings.instantReveal = true;
+        }
+
         // Start the text stream now that audio is playing
         textAnimator.startStream(pendingTextSettings);
-        console.log(`[${channelName}] Text stream activated (synced to audio)`);
+        console.log(`[${channelName}] Text stream activated (synced to audio, wordTiming=${wordTimingEnabled})`);
 
-        // Send any buffered text chunks
-        for (const chunk of pendingTextChunks) {
-            textAnimator.appendText(chunk);
+        // Send any buffered text chunks (only if not using word timing)
+        if (!wordTimingEnabled) {
+            for (const chunk of pendingTextChunks) {
+                textAnimator.appendText(chunk);
+            }
         }
         pendingTextChunks = [];
         pendingTextSettings = null;
@@ -373,6 +390,11 @@
             instantReveal: msg.instant_reveal || false,
         };
 
+        // Reset word timing state for new stream
+        wordTimingEnabled = false;
+        wordTimingData = [];
+        revealedWordCount = 0;
+
         // If audio hasn't started yet, buffer the text settings
         if (!firstAudioChunkReceived) {
             pendingTextSettings = settings;
@@ -388,12 +410,33 @@
     function handleTextChunk(msg) {
         if (!textAnimator) return;
 
+        // If word timing is enabled, we ignore text chunks (words come from timing data)
+        if (wordTimingEnabled) return;
+
         // If text stream hasn't started yet, buffer chunks
         if (pendingTextSettings) {
             pendingTextChunks.push(msg.text);
         } else {
             textAnimator.appendText(msg.text);
         }
+    }
+
+    function handleWordTiming(msg) {
+        if (!msg.words || msg.words.length === 0) return;
+
+        // Enable word timing mode
+        wordTimingEnabled = true;
+
+        // Append words to our timing data
+        for (const word of msg.words) {
+            wordTimingData.push({
+                word: word.word,
+                start: word.start,
+                end: word.end
+            });
+        }
+
+        console.log(`[${channelName}] Word timing received: ${msg.words.length} words (total: ${wordTimingData.length})`);
     }
 
     function endTextStream() {
@@ -410,6 +453,9 @@
         textAnimator.endStream(fadeDelay);
         console.log(`[${channelName}] Text stream ended, fade in ${fadeDelay.toFixed(0)}ms`);
         sendEvent({ event: 'text_stream_complete' });
+
+        // Reset word timing state
+        wordTimingEnabled = false;
     }
 
     // =========================================================================
@@ -453,6 +499,29 @@
     // Animation Loop
     // =========================================================================
 
+    function updateWordTimingReveal() {
+        // Check if we should reveal more words based on audio playback time
+        if (!wordTimingEnabled || !audioContext || wordTimingData.length === 0) {
+            return;
+        }
+
+        // Calculate current audio playback position (seconds since audio started)
+        const currentAudioTime = audioContext.currentTime - audioStartContextTime;
+
+        // Reveal words whose start time has passed
+        while (revealedWordCount < wordTimingData.length) {
+            const word = wordTimingData[revealedWordCount];
+            if (currentAudioTime >= word.start) {
+                // Reveal this word (append with space if not first word)
+                const prefix = revealedWordCount > 0 ? ' ' : '';
+                textAnimator.appendText(prefix + word.word);
+                revealedWordCount++;
+            } else {
+                break;  // Not time for this word yet
+            }
+        }
+    }
+
     function animate() {
         // Don't animate if in error state
         if (hasError) {
@@ -461,6 +530,9 @@
 
         // Clear canvas
         ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Update word timing reveal
+        updateWordTimingReveal();
 
         // Update and draw text animator
         if (textAnimator) {
