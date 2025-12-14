@@ -211,12 +211,13 @@ class OBSHarness:
         return await self._manager.send_bytes_to_channel(channel, audio_bytes)
 
     async def stream_end(self, channel: str) -> bool:
-        """End an audio stream on a channel."""
+        """End an audio stream on a channel.
+
+        Note: streaming state is NOT set to False here - it's set when browser
+        reports stream_ended event, so dashboard knows when playback finishes.
+        """
         cmd = StreamEndCommand()
-        success = await self._manager.send_to_channel(channel, cmd.model_dump())
-        if success:
-            self._manager.set_channel_state(channel, "streaming", False)
-        return success
+        return await self._manager.send_to_channel(channel, cmd.model_dump())
 
     async def stop_stream(self, channel: str) -> bool:
         """Forcefully stop audio stream and clear playback on a channel."""
