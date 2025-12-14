@@ -768,10 +768,12 @@
         const statusDiv = document.getElementById('speak-status');
         const statusText = document.getElementById('speak-status-text');
         const sendBtn = document.getElementById('speak-send-btn');
+        const stopBtn = document.getElementById('speak-stop-btn');
 
         statusDiv.style.display = 'block';
         statusText.textContent = 'Speaking...';
         sendBtn.disabled = true;
+        stopBtn.style.display = 'inline-block';
 
         try {
             const result = await sendCharacterSpeak(speakCharacter.name, text, showText);
@@ -787,6 +789,40 @@
             statusText.textContent = `Error: ${error.message || 'Unknown error'}`;
         } finally {
             sendBtn.disabled = false;
+            stopBtn.style.display = 'none';
+        }
+    }
+
+    async function stopGeneration(modalType) {
+        const characterName = modalType === 'speak' ? speakCharacter?.name : chatCharacter?.name;
+        if (!characterName) return;
+
+        const statusText = document.getElementById(`${modalType}-status-text`);
+        const stopBtn = document.getElementById(`${modalType}-stop-btn`);
+
+        if (statusText) statusText.textContent = 'Stopping...';
+        if (stopBtn) stopBtn.disabled = true;
+
+        try {
+            const result = await apiCall(`/api/characters/${characterName}/stop`, 'POST');
+            if (statusText) {
+                if (result.was_active) {
+                    statusText.textContent = 'Stopped';
+                } else {
+                    statusText.textContent = 'Nothing to stop';
+                }
+            }
+        } catch (error) {
+            console.error('Stop error:', error);
+            if (statusText) statusText.textContent = `Stop failed: ${error.message}`;
+        } finally {
+            if (stopBtn) {
+                stopBtn.disabled = false;
+                stopBtn.style.display = 'none';
+            }
+            // Re-enable send button
+            const sendBtn = document.getElementById(`${modalType}-send-btn`);
+            if (sendBtn) sendBtn.disabled = false;
         }
     }
 
@@ -856,10 +892,12 @@
         const statusDiv = document.getElementById('chat-status');
         const statusText = document.getElementById('chat-status-text');
         const sendBtn = document.getElementById('chat-send-btn');
+        const stopBtn = document.getElementById('chat-stop-btn');
 
         statusDiv.style.display = 'block';
-        statusText.textContent = 'Sending...';
+        statusText.textContent = 'Generating...';
         sendBtn.disabled = true;
+        stopBtn.style.display = 'inline-block';
 
         try {
             // Add user message bubble immediately
@@ -907,6 +945,7 @@
             statusText.textContent = `Error: ${error.message || 'Unknown error'}`;
         } finally {
             sendBtn.disabled = false;
+            stopBtn.style.display = 'none';
         }
     }
 
@@ -1043,6 +1082,7 @@
     window.openSpeakModal = openSpeakModal;
     window.closeSpeakModal = closeSpeakModal;
     window.sendSpeak = sendSpeak;
+    window.stopGeneration = stopGeneration;
 
     // Chat modal exports
     window.openChatModal = openChatModal;

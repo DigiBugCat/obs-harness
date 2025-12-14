@@ -802,6 +802,7 @@
             </div>
             <div class="button-row">
                 <button type="button" onclick="window.sendSpeak()" id="speak-send-btn">Speak</button>
+                <button type="button" onclick="window.stopGeneration('speak')" id="speak-stop-btn" style="display: none; background: var(--error-color);">Stop</button>
                 <button type="button" class="secondary" onclick="window.closeSpeakModal()">Close</button>
             </div>
         </div>
@@ -856,6 +857,7 @@
             </div>
             <div class="button-row">
                 <button type="button" onclick="window.sendChat()" id="chat-send-btn">Send</button>
+                <button type="button" onclick="window.stopGeneration('chat')" id="chat-stop-btn" style="display: none; background: var(--error-color);">Stop</button>
                 <button type="button" class="secondary" onclick="window.clearChatMemory()">Clear</button>
                 <button type="button" class="secondary" onclick="window.closeChatModal()">Close</button>
             </div>

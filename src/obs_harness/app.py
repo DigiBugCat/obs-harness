@@ -1,11 +1,12 @@
 """FastAPI application factory, routes, and OBSHarness class."""
 
+import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Union
 
 from dotenv import load_dotenv
 
@@ -58,21 +59,35 @@ class ConnectionManager:
     """Manages WebSocket connections for all channels."""
 
     def __init__(self) -> None:
-        self._connections: dict[str, WebSocket] = {}
+        self._connections: dict[str, list[WebSocket]] = {}  # Multiple connections per channel
         self._channel_state: dict[str, dict[str, Any]] = {}
         self._dashboard_connections: list[WebSocket] = []
 
     async def connect(self, channel: str, websocket: WebSocket) -> None:
-        """Register a channel connection."""
+        """Register a channel connection (supports multiple per channel)."""
         await websocket.accept()
-        self._connections[channel] = websocket
-        self._channel_state[channel] = {"playing": False, "streaming": False}
+        if channel not in self._connections:
+            self._connections[channel] = []
+            self._channel_state[channel] = {"playing": False, "streaming": False}
+        self._connections[channel].append(websocket)
         await self._notify_dashboard()
 
-    def disconnect(self, channel: str) -> None:
-        """Remove a channel connection."""
-        self._connections.pop(channel, None)
-        self._channel_state.pop(channel, None)
+    def disconnect(self, channel: str, websocket: WebSocket | None = None) -> None:
+        """Remove a channel connection. If websocket specified, only remove that one."""
+        if channel not in self._connections:
+            return
+        if websocket is not None:
+            # Remove specific websocket
+            if websocket in self._connections[channel]:
+                self._connections[channel].remove(websocket)
+            # Clean up if no more connections
+            if not self._connections[channel]:
+                del self._connections[channel]
+                self._channel_state.pop(channel, None)
+        else:
+            # Remove all connections for channel
+            del self._connections[channel]
+            self._channel_state.pop(channel, None)
 
     async def connect_dashboard(self, websocket: WebSocket) -> None:
         """Register a dashboard connection."""
@@ -87,26 +102,34 @@ class ConnectionManager:
             self._dashboard_connections.remove(websocket)
 
     async def send_to_channel(self, channel: str, message: dict) -> bool:
-        """Send a JSON message to a specific channel."""
-        if channel not in self._connections:
+        """Send a JSON message to all connections on a channel."""
+        if channel not in self._connections or not self._connections[channel]:
             return False
-        try:
-            await self._connections[channel].send_json(message)
-            return True
-        except Exception:
-            self.disconnect(channel)
-            return False
+        failed = []
+        for ws in self._connections[channel][:]:  # Copy list to allow removal
+            try:
+                await ws.send_json(message)
+            except Exception:
+                failed.append(ws)
+        # Clean up failed connections
+        for ws in failed:
+            self.disconnect(channel, ws)
+        return len(self._connections.get(channel, [])) > 0
 
     async def send_bytes_to_channel(self, channel: str, data: bytes) -> bool:
-        """Send binary data to a specific channel."""
-        if channel not in self._connections:
+        """Send binary data to all connections on a channel."""
+        if channel not in self._connections or not self._connections[channel]:
             return False
-        try:
-            await self._connections[channel].send_bytes(data)
-            return True
-        except Exception:
-            self.disconnect(channel)
-            return False
+        failed = []
+        for ws in self._connections[channel][:]:  # Copy list to allow removal
+            try:
+                await ws.send_bytes(data)
+            except Exception:
+                failed.append(ws)
+        # Clean up failed connections
+        for ws in failed:
+            self.disconnect(channel, ws)
+        return len(self._connections.get(channel, [])) > 0
 
     def get_characters(self) -> list[CharacterStatus]:
         """Get list of connected characters with status."""
@@ -117,12 +140,13 @@ class ConnectionManager:
                 playing=self._channel_state.get(name, {}).get("playing", False),
                 streaming=self._channel_state.get(name, {}).get("streaming", False),
             )
-            for name in self._connections
+            for name, conns in self._connections.items()
+            if conns  # Only include if there are active connections
         ]
 
     def is_connected(self, channel: str) -> bool:
-        """Check if a channel is connected."""
-        return channel in self._connections
+        """Check if a channel has any connections."""
+        return channel in self._connections and len(self._connections[channel]) > 0
 
     def set_channel_state(self, channel: str, key: str, value: Any) -> None:
         """Update channel state."""
@@ -304,6 +328,26 @@ def create_app(
     # In-memory conversation history per character (for memory_enabled characters)
     conversation_memory: dict[str, list[dict]] = {}
 
+    # Generation tracking - only one generation per character at a time
+    active_generations: dict[str, Union[ChatPipeline, TTSStreamer]] = {}
+    generation_locks: dict[str, asyncio.Lock] = {}
+
+    def get_generation_lock(name: str) -> asyncio.Lock:
+        """Get or create a lock for a character's generation."""
+        if name not in generation_locks:
+            generation_locks[name] = asyncio.Lock()
+        return generation_locks[name]
+
+    async def cancel_active_generation(name: str) -> str | None:
+        """Cancel any active generation for a character and return partial spoken text."""
+        if name not in active_generations:
+            return None
+        gen = active_generations[name]
+        gen.cancel()
+        spoken_text = gen.get_spoken_text()
+        del active_generations[name]
+        return spoken_text
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await init_db(db_url)
@@ -421,9 +465,11 @@ def create_app(
             await websocket.close(code=4000, reason="Database error")
             return
 
-        # Register connection with manager (don't call accept again)
-        manager._connections[character] = websocket
-        manager._channel_state[character] = {"playing": False, "streaming": False}
+        # Register connection with manager (websocket already accepted above)
+        if character not in manager._connections:
+            manager._connections[character] = []
+            manager._channel_state[character] = {"playing": False, "streaming": False}
+        manager._connections[character].append(websocket)
         await manager._notify_dashboard()
 
         try:
@@ -441,7 +487,7 @@ def create_app(
                 except json.JSONDecodeError:
                     pass
         except WebSocketDisconnect:
-            manager.disconnect(character)
+            manager.disconnect(character, websocket)
             await manager._notify_dashboard()
 
     # =========================================================================
@@ -871,6 +917,14 @@ def create_app(
         )
 
         try:
+            # Acquire lock and cancel any existing generation
+            async with get_generation_lock(name):
+                if name in active_generations:
+                    await cancel_active_generation(name)
+                    await harness.stream_end(name)
+                    await harness.text_stream_end(name)
+                active_generations[name] = streamer
+
             await streamer.stream(request.text)
 
             # Log the speak
@@ -882,6 +936,10 @@ def create_app(
             raise HTTPException(status_code=500, detail=str(e))
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"TTS error: {e}")
+        finally:
+            # Clear active generation
+            if name in active_generations and active_generations[name] is streamer:
+                del active_generations[name]
 
     @app.post("/api/characters/{name}/chat")
     async def character_chat(name: str, request: ChatRequest) -> ChatResponse:
@@ -1005,7 +1063,27 @@ def create_app(
             tts_streamer=tts_streamer,
         )
 
+        # Track if we saved partial memory from an interrupted generation
+        interrupted_prev = False
+
         try:
+            # Acquire lock and cancel any existing generation
+            async with get_generation_lock(name):
+                if name in active_generations:
+                    # Save partial memory from interrupted chat
+                    prev_gen = active_generations[name]
+                    spoken_text = prev_gen.get_spoken_text()
+                    if spoken_text:
+                        # Save the partial response that was actually spoken
+                        if name not in conversation_memory:
+                            conversation_memory[name] = []
+                        conversation_memory[name].append({"role": "assistant", "content": spoken_text})
+                        interrupted_prev = True
+                    await cancel_active_generation(name)
+                    await harness.stream_end(name)
+                    await harness.text_stream_end(name)
+                active_generations[name] = pipeline
+
             response_text = await pipeline.run(request.message)
 
             # Store conversation in memory (always store for UI, memory_enabled controls LLM context)
@@ -1032,6 +1110,31 @@ def create_app(
             await harness.stream_end(name)
             await harness.text_stream_end(name)
             raise HTTPException(status_code=500, detail=f"Chat error: {e}")
+        finally:
+            # Clear active generation
+            if name in active_generations and active_generations[name] is pipeline:
+                del active_generations[name]
+
+    @app.post("/api/characters/{name}/stop")
+    async def stop_character_generation(name: str) -> dict:
+        """Stop any active generation (speak/chat) for a character."""
+        async with get_generation_lock(name):
+            if name not in active_generations:
+                return {"success": True, "character": name, "was_active": False}
+
+            # Cancel and get partial text
+            spoken_text = await cancel_active_generation(name)
+
+            # Send stream end commands to browser
+            await harness.stream_end(name)
+            await harness.text_stream_end(name)
+
+            return {
+                "success": True,
+                "character": name,
+                "was_active": True,
+                "spoken_text": spoken_text,
+            }
 
     @app.delete("/api/characters/{name}/memory")
     async def clear_character_memory(name: str) -> dict:

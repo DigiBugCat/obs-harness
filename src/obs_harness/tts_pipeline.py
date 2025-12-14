@@ -85,6 +85,7 @@ class TTSStreamer:
         self._send_word_timing = send_word_timing
 
         self._cancelled = False
+        self._spoken_text = ""  # Text that was actually converted to audio
 
     async def stream(self, text_source: Union[str, AsyncIterator[str]]) -> str:
         """Stream TTS audio with word timing to browser.
@@ -100,6 +101,7 @@ class TTSStreamer:
         """
         text_started = False
         audio_started = False
+        self._spoken_text = ""  # Reset for new stream
 
         try:
             # 1. Start text stream FIRST (required order for browser)
@@ -180,16 +182,23 @@ class TTSStreamer:
                     break
 
                 # Send word timing BEFORE audio so browser can sync
-                if chunk.words and self._show_text:
-                    words_data = [
-                        {
-                            "word": w.word,
-                            "start": w.start_time,
-                            "end": w.end_time,
-                        }
-                        for w in chunk.words
-                    ]
-                    await self._send_word_timing(words_data)
+                if chunk.words:
+                    # Accumulate spoken text (what was actually converted to audio)
+                    for w in chunk.words:
+                        if self._spoken_text and not self._spoken_text.endswith(" "):
+                            self._spoken_text += " "
+                        self._spoken_text += w.word
+
+                    if self._show_text:
+                        words_data = [
+                            {
+                                "word": w.word,
+                                "start": w.start_time,
+                                "end": w.end_time,
+                            }
+                            for w in chunk.words
+                        ]
+                        await self._send_word_timing(words_data)
 
                 # Send audio to browser
                 if chunk.audio:
@@ -200,4 +209,8 @@ class TTSStreamer:
 
     def cancel(self) -> None:
         """Cancel the streaming gracefully."""
-        self._cancelled = False
+        self._cancelled = True
+
+    def get_spoken_text(self) -> str:
+        """Get the text that was actually spoken (converted to audio)."""
+        return self._spoken_text
