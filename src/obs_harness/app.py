@@ -1,19 +1,25 @@
 """FastAPI application factory, routes, and OBSHarness class."""
 
 import json
+import os
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import select
 
 from .database import close_db, get_session, init_db
+from .elevenlabs import ElevenLabsClient, ElevenLabsError, estimate_tts_duration_ms
 from .models import (
     Channel,
+    ChannelCreate,
+    ChannelResponse,
     ChannelStatus,
+    ChannelUpdate,
     ClearTextCommand,
     PlaybackLog,
     PlayCommand,
@@ -26,6 +32,7 @@ from .models import (
     TextCommand,
     TextPreset,
     TextRequest,
+    TTSRequest,
     VolumeCommand,
     VolumeRequest,
 )
@@ -56,7 +63,7 @@ class ConnectionManager:
         await websocket.accept()
         self._dashboard_connections.append(websocket)
         # Send current state immediately
-        await websocket.send_json({"type": "channels", "channels": self.get_channels()})
+        await websocket.send_json({"type": "channels", "channels": [ch.model_dump() for ch in self.get_channels()]})
 
     def disconnect_dashboard(self, websocket: WebSocket) -> None:
         """Remove a dashboard connection."""
@@ -290,20 +297,40 @@ def create_app(
     # WebSocket Routes
     # =========================================================================
 
+    # Dashboard WebSocket must be defined BEFORE the channel wildcard route
+    @app.websocket("/ws/dashboard")
+    async def dashboard_websocket(websocket: WebSocket):
+        """WebSocket endpoint for dashboard live updates."""
+        await manager.connect_dashboard(websocket)
+        try:
+            while True:
+                await websocket.receive_text()
+        except WebSocketDisconnect:
+            manager.disconnect_dashboard(websocket)
+
     @app.websocket("/ws/{channel}")
     async def channel_websocket(websocket: WebSocket, channel: str):
         """WebSocket endpoint for a browser source channel."""
-        await manager.connect(channel, websocket)
+        # Accept connection first (required for proper close codes)
+        await websocket.accept()
 
-        # Ensure channel exists in database
+        # Validate channel exists
         try:
             async with get_session() as session:
                 result = await session.execute(select(Channel).where(Channel.name == channel))
-                if not result.scalar_one_or_none():
-                    db_channel = Channel(name=channel)
-                    session.add(db_channel)
+                db_channel = result.scalar_one_or_none()
+
+                if not db_channel:
+                    await websocket.close(code=4004, reason="Channel not found. Create it first.")
+                    return
         except Exception:
-            pass
+            await websocket.close(code=4000, reason="Database error")
+            return
+
+        # Register connection with manager (don't call accept again)
+        manager._connections[channel] = websocket
+        manager._channel_state[channel] = {"playing": False, "streaming": False}
+        await manager._notify_dashboard()
 
         try:
             while True:
@@ -323,16 +350,6 @@ def create_app(
             manager.disconnect(channel)
             await manager._notify_dashboard()
 
-    @app.websocket("/ws/dashboard")
-    async def dashboard_websocket(websocket: WebSocket):
-        """WebSocket endpoint for dashboard live updates."""
-        await manager.connect_dashboard(websocket)
-        try:
-            while True:
-                await websocket.receive_text()
-        except WebSocketDisconnect:
-            manager.disconnect_dashboard(websocket)
-
     # =========================================================================
     # REST API Routes
     # =========================================================================
@@ -341,6 +358,109 @@ def create_app(
     async def get_channels() -> list[ChannelStatus]:
         """Get list of connected channels."""
         return harness.list_channels()
+
+    @app.get("/api/channels/all")
+    async def get_all_channels() -> list[ChannelResponse]:
+        """Get all configured channels with connection status."""
+        async with get_session() as session:
+            result = await session.execute(select(Channel))
+            channels = list(result.scalars().all())
+
+            return [
+                ChannelResponse(
+                    id=channel.id,
+                    name=channel.name,
+                    description=channel.description,
+                    default_volume=channel.default_volume,
+                    default_text_style=channel.default_text_style,
+                    elevenlabs_voice_id=channel.elevenlabs_voice_id,
+                    mute_state=channel.mute_state,
+                    color=channel.color,
+                    icon=channel.icon,
+                    connected=manager.is_connected(channel.name),
+                    playing=manager._channel_state.get(channel.name, {}).get("playing", False),
+                    streaming=manager._channel_state.get(channel.name, {}).get("streaming", False),
+                    created_at=channel.created_at,
+                )
+                for channel in channels
+            ]
+
+    @app.post("/api/channels", status_code=201)
+    async def create_channel(request: ChannelCreate) -> Channel:
+        """Create a new channel."""
+        async with get_session() as session:
+            # Check if channel already exists
+            result = await session.execute(select(Channel).where(Channel.name == request.name))
+            if result.scalar_one_or_none():
+                raise HTTPException(status_code=400, detail="Channel already exists")
+
+            channel = Channel(**request.model_dump())
+            session.add(channel)
+            await session.commit()
+            await session.refresh(channel)
+            await manager._notify_dashboard()
+            return channel
+
+    @app.get("/api/channels/{name}")
+    async def get_channel(name: str) -> ChannelResponse:
+        """Get a specific channel by name."""
+        async with get_session() as session:
+            result = await session.execute(select(Channel).where(Channel.name == name))
+            channel = result.scalar_one_or_none()
+            if not channel:
+                raise HTTPException(status_code=404, detail="Channel not found")
+            return ChannelResponse(
+                id=channel.id,
+                name=channel.name,
+                description=channel.description,
+                default_volume=channel.default_volume,
+                default_text_style=channel.default_text_style,
+                elevenlabs_voice_id=channel.elevenlabs_voice_id,
+                mute_state=channel.mute_state,
+                color=channel.color,
+                icon=channel.icon,
+                connected=manager.is_connected(name),
+                playing=manager._channel_state.get(name, {}).get("playing", False),
+                streaming=manager._channel_state.get(name, {}).get("streaming", False),
+                created_at=channel.created_at,
+            )
+
+    @app.put("/api/channels/{name}")
+    async def update_channel(name: str, request: ChannelUpdate) -> Channel:
+        """Update a channel configuration."""
+        async with get_session() as session:
+            result = await session.execute(select(Channel).where(Channel.name == name))
+            channel = result.scalar_one_or_none()
+            if not channel:
+                raise HTTPException(status_code=404, detail="Channel not found")
+
+            update_data = request.model_dump(exclude_unset=True)
+            for key, value in update_data.items():
+                setattr(channel, key, value)
+            channel.updated_at = datetime.utcnow()
+
+            await session.commit()
+            await session.refresh(channel)
+            await manager._notify_dashboard()
+            return channel
+
+    @app.delete("/api/channels/{name}")
+    async def delete_channel(name: str) -> dict:
+        """Delete a channel. Disconnects any active connection."""
+        async with get_session() as session:
+            result = await session.execute(select(Channel).where(Channel.name == name))
+            channel = result.scalar_one_or_none()
+            if not channel:
+                raise HTTPException(status_code=404, detail="Channel not found")
+
+            # Disconnect if connected
+            if manager.is_connected(name):
+                manager.disconnect(name)
+
+            await session.delete(channel)
+            await session.commit()
+            await manager._notify_dashboard()
+            return {"success": True, "deleted": name}
 
     @app.post("/api/channel/{name}/play")
     async def api_play(name: str, request: PlayRequest) -> dict:
@@ -395,6 +515,55 @@ def create_app(
         """Clear text overlay on a channel."""
         success = await harness.clear_text(name)
         return {"success": success, "channel": name}
+
+    @app.post("/api/channel/{name}/tts")
+    async def api_tts(name: str, request: TTSRequest) -> dict:
+        """Generate TTS and stream to channel."""
+        # Verify channel exists and has voice configured
+        async with get_session() as session:
+            result = await session.execute(select(Channel).where(Channel.name == name))
+            channel = result.scalar_one_or_none()
+            if not channel:
+                raise HTTPException(status_code=404, detail="Channel not found")
+            if not channel.elevenlabs_voice_id:
+                raise HTTPException(
+                    status_code=400, detail="Channel has no ElevenLabs voice configured"
+                )
+
+        # Check if ElevenLabs API key is configured
+        if not os.environ.get("ELEVENLABS_API_KEY"):
+            raise HTTPException(
+                status_code=500, detail="ELEVENLABS_API_KEY environment variable not set"
+            )
+
+        # Calculate estimated duration for text animation
+        duration = request.text_duration or estimate_tts_duration_ms(request.text)
+        style = request.text_style or channel.default_text_style
+
+        try:
+            # Start audio stream
+            await harness.stream_start(name, sample_rate=24000, channels=1)
+
+            # Show text animation (starts immediately, reveals over duration)
+            if request.show_text:
+                await harness.show_text(name, request.text, style, duration)
+
+            # Stream TTS audio from ElevenLabs
+            async with ElevenLabsClient() as client:
+                async for chunk in client.stream_tts(channel.elevenlabs_voice_id, request.text):
+                    await harness.stream_audio(name, chunk)
+
+            # End stream
+            await harness.stream_end(name)
+
+            return {"success": True, "channel": name, "duration_ms": duration}
+
+        except ElevenLabsError as e:
+            await harness.stream_end(name)
+            raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            await harness.stream_end(name)
+            raise HTTPException(status_code=500, detail=f"TTS error: {e}")
 
     @app.get("/api/presets")
     async def get_presets() -> list[TextPreset]:

@@ -19,9 +19,15 @@ class Channel(SQLModel, table=True):
 
     id: int | None = SQLField(default=None, primary_key=True)
     name: str = SQLField(unique=True, index=True)
+    description: str | None = SQLField(default=None)
     default_volume: float = SQLField(default=1.0)
     default_text_style: str = SQLField(default="typewriter")
+    elevenlabs_voice_id: str | None = SQLField(default=None)
+    mute_state: bool = SQLField(default=False)
+    color: str = SQLField(default="#e94560")
+    icon: str = SQLField(default="🔊")
     created_at: datetime = SQLField(default_factory=datetime.utcnow)
+    updated_at: datetime | None = SQLField(default=None)
 
 
 class TextPreset(SQLModel, table=True):
@@ -115,6 +121,58 @@ class ChannelStatus(BaseModel):
     connected: bool
     playing: bool = False
     streaming: bool = False
+
+
+class ChannelCreate(BaseModel):
+    """Request to create a channel."""
+
+    name: str
+    description: str | None = None
+    default_volume: float = Field(default=1.0, ge=0.0, le=1.0)
+    default_text_style: str = "typewriter"
+    elevenlabs_voice_id: str | None = None
+    mute_state: bool = False
+    color: str = "#e94560"
+    icon: str = "🔊"
+
+
+class ChannelUpdate(BaseModel):
+    """Request to update a channel."""
+
+    description: str | None = None
+    default_volume: float | None = Field(default=None, ge=0.0, le=1.0)
+    default_text_style: str | None = None
+    elevenlabs_voice_id: str | None = None
+    mute_state: bool | None = None
+    color: str | None = None
+    icon: str | None = None
+
+
+class ChannelResponse(BaseModel):
+    """Full channel information response."""
+
+    id: int
+    name: str
+    description: str | None
+    default_volume: float
+    default_text_style: str
+    elevenlabs_voice_id: str | None
+    mute_state: bool
+    color: str
+    icon: str
+    connected: bool = False
+    playing: bool = False
+    streaming: bool = False
+    created_at: datetime
+
+
+class TTSRequest(BaseModel):
+    """Request to generate and play TTS on a channel."""
+
+    text: str
+    show_text: bool = True
+    text_style: str | None = None
+    text_duration: int | None = None  # Auto-calculated if not provided
 
 
 # =============================================================================

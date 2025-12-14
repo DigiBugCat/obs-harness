@@ -264,6 +264,167 @@
         .quick-actions a:hover {
             text-decoration: underline;
         }
+
+        /* Modal styles */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--bg-card);
+            padding: 2rem;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-content h2 {
+            margin-bottom: 1.5rem;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+
+        .form-group input[type="text"],
+        .form-group input[type="number"],
+        .form-group select {
+            width: 100%;
+            padding: 0.5rem;
+            border: none;
+            border-radius: 4px;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            font-size: 0.875rem;
+        }
+
+        .form-group input[type="color"] {
+            width: 100%;
+            height: 40px;
+            border: none;
+            border-radius: 4px;
+            background: var(--bg-secondary);
+            cursor: pointer;
+        }
+
+        .form-group input[type="range"] {
+            width: 100%;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        .form-group.checkbox {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .form-group.checkbox label {
+            margin-bottom: 0;
+            text-transform: none;
+            font-size: 0.875rem;
+            color: var(--text-primary);
+        }
+
+        .form-group.checkbox input {
+            width: auto;
+        }
+
+        .button-row {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 1.5rem;
+        }
+
+        .button-row button {
+            flex: 1;
+        }
+
+        /* Channel management header */
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        /* Enhanced channel card */
+        .channel-card {
+            border-left: 4px solid var(--accent);
+        }
+
+        .channel-card.disconnected {
+            opacity: 0.7;
+        }
+
+        .channel-icon {
+            font-size: 1.25rem;
+        }
+
+        .channel-description {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.75rem;
+        }
+
+        .voice-indicator {
+            font-size: 0.625rem;
+            padding: 0.125rem 0.375rem;
+            background: var(--success);
+            color: var(--bg-primary);
+            border-radius: 2px;
+            margin-left: 0.5rem;
+        }
+
+        .channel-actions {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--bg-secondary);
+        }
+
+        .channel-actions button {
+            padding: 0.375rem 0.75rem;
+            font-size: 0.75rem;
+        }
+
+        .tts-controls {
+            margin-top: 0.75rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--bg-secondary);
+        }
+
+        .tts-controls .control-row {
+            margin-bottom: 0.5rem;
+        }
     </style>
 </head>
 <body>
@@ -281,12 +442,14 @@
         </div>
 
         <div class="section">
-            <div class="section-title">Connected Channels</div>
-            <div id="channels-container">
+            <div class="section-header">
+                <div class="section-title" style="margin-bottom: 0;">Audio Channels</div>
+                <button onclick="window.openCreateChannelModal()">+ Create Channel</button>
+            </div>
+            <div id="channels-container" class="channels-grid">
                 <div class="no-channels">
-                    <p>No channels connected yet.</p>
-                    <p>Add a Browser Source in OBS with URL:</p>
-                    <code id="channel-url">http://localhost:8000/channel/your-channel-name</code>
+                    <p>No channels configured yet.</p>
+                    <p>Click "Create Channel" to add one.</p>
                 </div>
             </div>
         </div>
@@ -300,6 +463,62 @@
                     </div>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Channel Create/Edit Modal -->
+    <div id="channel-modal" class="modal">
+        <div class="modal-content">
+            <h2 id="modal-title">Create Channel</h2>
+            <form id="channel-form">
+                <div class="form-group">
+                    <label>Name *</label>
+                    <input type="text" id="channel-name" required placeholder="e.g., music, alerts, voice">
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <input type="text" id="channel-description" placeholder="Optional description">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Default Volume (<span id="volume-value">100</span>%)</label>
+                        <input type="range" id="channel-volume" min="0" max="100" value="100"
+                               oninput="document.getElementById('volume-value').textContent = this.value">
+                    </div>
+                    <div class="form-group">
+                        <label>Text Style</label>
+                        <select id="channel-text-style">
+                            <option value="typewriter">Typewriter</option>
+                            <option value="fade">Fade</option>
+                            <option value="slide">Slide</option>
+                            <option value="bounce">Bounce</option>
+                            <option value="wave">Wave</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>ElevenLabs Voice ID</label>
+                    <input type="text" id="channel-voice-id" placeholder="Optional: e.g., 21m00Tcm4TlvDq8ikWAM">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Color</label>
+                        <input type="color" id="channel-color" value="#e94560">
+                    </div>
+                    <div class="form-group">
+                        <label>Icon (emoji)</label>
+                        <input type="text" id="channel-icon" value="🔊" maxlength="4">
+                    </div>
+                </div>
+                <div class="form-group checkbox">
+                    <input type="checkbox" id="channel-muted">
+                    <label for="channel-muted">Muted</label>
+                </div>
+                <div class="button-row">
+                    <button type="submit">Save</button>
+                    <button type="button" class="secondary" onclick="window.closeChannelModal()">Cancel</button>
+                </div>
+            </form>
         </div>
     </div>
 

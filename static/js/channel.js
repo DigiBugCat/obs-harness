@@ -32,6 +32,7 @@
 
     // Text animator instance
     let textAnimator = null;
+    let hasError = false;
 
     // Resize canvas to match window
     function resizeCanvas() {
@@ -69,7 +70,14 @@
             }
         };
 
-        ws.onclose = () => {
+        ws.onclose = (event) => {
+            // Handle channel not found error (don't reconnect)
+            if (event.code === 4004) {
+                console.error(`[${channelName}] Channel not found. Create it in the dashboard first.`);
+                showErrorMessage('Channel not configured', 'Create it in the dashboard first');
+                return; // Don't reconnect for unknown channels
+            }
+
             console.log(`[${channelName}] Disconnected from server`);
             scheduleReconnect();
         };
@@ -292,10 +300,52 @@
     }
 
     // =========================================================================
+    // Error Display
+    // =========================================================================
+
+    function showErrorMessage(title, subtitle) {
+        // Mark as error state to stop animation loop
+        hasError = true;
+
+        // Stop any animations
+        if (textAnimator) {
+            textAnimator.clear();
+        }
+
+        // Draw error message on canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Semi-transparent background
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Error icon
+        ctx.font = '48px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ff4444';
+        ctx.fillText('\u26A0', canvas.width / 2, canvas.height / 2 - 40);
+
+        // Title
+        ctx.font = 'bold 24px sans-serif';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(title, canvas.width / 2, canvas.height / 2 + 10);
+
+        // Subtitle
+        ctx.font = '16px sans-serif';
+        ctx.fillStyle = '#aaaaaa';
+        ctx.fillText(subtitle, canvas.width / 2, canvas.height / 2 + 40);
+    }
+
+    // =========================================================================
     // Animation Loop
     // =========================================================================
 
     function animate() {
+        // Don't animate if in error state
+        if (hasError) {
+            return;
+        }
+
         // Clear canvas
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
