@@ -544,13 +544,15 @@ def create_app(
             # Start audio stream
             await harness.stream_start(name, sample_rate=24000, channels=1)
 
-            # Show text animation (starts immediately, reveals over duration)
-            if request.show_text:
-                await harness.show_text(name, request.text, style, duration)
-
             # Stream TTS audio from ElevenLabs
+            # Text animation starts when first audio byte arrives for better sync
+            text_shown = False
             async with ElevenLabsClient() as client:
                 async for chunk in client.stream_tts(channel.elevenlabs_voice_id, request.text):
+                    # Show text on first audio chunk (syncs text with audio start)
+                    if not text_shown and request.show_text:
+                        await harness.show_text(name, request.text, style, duration)
+                        text_shown = True
                     await harness.stream_audio(name, chunk)
 
             # End stream
