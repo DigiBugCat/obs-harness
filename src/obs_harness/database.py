@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
@@ -30,6 +31,16 @@ async def init_db(db_url: str = "sqlite+aiosqlite:///obs_harness.db") -> None:
 
     async with _engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+
+        # Run migrations for existing tables (SQLite doesn't support IF NOT EXISTS for columns)
+        migrations = [
+            "ALTER TABLE character ADD COLUMN persist_memory BOOLEAN DEFAULT 0",
+        ]
+        for migration in migrations:
+            try:
+                await conn.execute(text(migration))
+            except Exception:
+                pass  # Column already exists
 
 
 async def close_db() -> None:

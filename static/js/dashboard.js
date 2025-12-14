@@ -637,6 +637,7 @@
 
         // Memory & Twitch settings
         document.getElementById('character-memory-enabled').checked = false;
+        document.getElementById('character-persist-memory').checked = false;
         document.getElementById('character-twitch-chat-enabled').checked = false;
         document.getElementById('character-twitch-chat-seconds').value = 60;
         document.getElementById('character-twitch-chat-max').value = 20;
@@ -704,6 +705,7 @@
 
         // Memory & Twitch settings
         document.getElementById('character-memory-enabled').checked = character.memory_enabled || false;
+        document.getElementById('character-persist-memory').checked = character.persist_memory || false;
         document.getElementById('character-twitch-chat-enabled').checked = character.twitch_chat_enabled || false;
         document.getElementById('character-twitch-chat-seconds').value = character.twitch_chat_window_seconds || 60;
         document.getElementById('character-twitch-chat-max').value = character.twitch_chat_max_messages || 20;
@@ -749,6 +751,7 @@
             temperature: parseInt(document.getElementById('character-temperature').value) / 100,
             max_tokens: parseInt(document.getElementById('character-max-tokens').value),
             memory_enabled: document.getElementById('character-memory-enabled').checked,
+            persist_memory: document.getElementById('character-persist-memory').checked,
             twitch_chat_enabled: document.getElementById('character-twitch-chat-enabled').checked,
             twitch_chat_window_seconds: parseInt(document.getElementById('character-twitch-chat-seconds').value),
             twitch_chat_max_messages: parseInt(document.getElementById('character-twitch-chat-max').value),

@@ -50,6 +50,18 @@ class TwitchConfig(SQLModel, table=True):
     updated_at: datetime = SQLField(default_factory=datetime.utcnow)
 
 
+class ConversationMessage(SQLModel, table=True):
+    """A message in a character's conversation history."""
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    character_name: str = SQLField(index=True)  # Foreign key to Character.name
+    role: str  # "user", "assistant", or "context"
+    content: str  # The message content
+    interrupted: bool = SQLField(default=False)  # Was this message interrupted?
+    generated_text: str | None = SQLField(default=None)  # Full text if interrupted
+    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+
+
 class Character(SQLModel, table=True):
     """A character with voice settings and optional AI personality."""
 
@@ -98,6 +110,7 @@ class Character(SQLModel, table=True):
 
     # Conversation memory settings
     memory_enabled: bool = SQLField(default=False)
+    persist_memory: bool = SQLField(default=False)  # Save memory through restarts
 
     created_at: datetime = SQLField(default_factory=datetime.utcnow)
     updated_at: datetime | None = SQLField(default=None)
@@ -225,6 +238,7 @@ class CharacterCreate(BaseModel):
 
     # Conversation memory settings
     memory_enabled: bool = False
+    persist_memory: bool = False
 
 
 class CharacterUpdate(BaseModel):
@@ -273,6 +287,7 @@ class CharacterUpdate(BaseModel):
 
     # Conversation memory settings
     memory_enabled: bool | None = None
+    persist_memory: bool | None = None
 
 
 class CharacterResponse(BaseModel):
@@ -323,6 +338,7 @@ class CharacterResponse(BaseModel):
 
     # Conversation memory settings
     memory_enabled: bool
+    persist_memory: bool
 
     # Status
     connected: bool = False

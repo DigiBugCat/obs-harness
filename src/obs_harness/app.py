@@ -33,6 +33,7 @@ from .models import (
     ChatRequest,
     ChatResponse,
     ClearTextCommand,
+    ConversationMessage,
     PlaybackLog,
     PlayCommand,
     PresetCreate,
@@ -334,16 +335,152 @@ def create_app(
     harness = OBSHarness(manager)
     twitch_manager = TwitchChatManager()
 
-    # In-memory conversation history per character (for memory_enabled characters)
+    # In-memory conversation history per character (for non-persistent memory)
     conversation_memory: dict[str, list[dict]] = {}
 
     # Track pending interrupted messages that need actual spoken text from browser
-    # Maps character name -> index of the interrupted message in conversation_memory
-    pending_interrupted: dict[str, int] = {}
+    # Maps character name -> (msg_idx, persist_memory, db_msg_id)
+    pending_interrupted: dict[str, tuple[int, bool, int | None]] = {}
 
     # Generation tracking - only one generation per character at a time
     active_generations: dict[str, Union[ChatPipeline, TTSStreamer]] = {}
     generation_locks: dict[str, asyncio.Lock] = {}
+
+    # =========================================================================
+    # Conversation Memory Helpers
+    # =========================================================================
+
+    async def get_conversation_messages(character_name: str, persist: bool) -> list[dict]:
+        """Get conversation messages for a character."""
+        if persist:
+            async with get_session() as session:
+                result = await session.execute(
+                    select(ConversationMessage)
+                    .where(ConversationMessage.character_name == character_name)
+                    .order_by(ConversationMessage.created_at)
+                )
+                messages = list(result.scalars().all())
+                return [
+                    {
+                        "role": m.role,
+                        "content": m.content,
+                        "interrupted": m.interrupted,
+                        "generated_text": m.generated_text,
+                    }
+                    for m in messages
+                ]
+        else:
+            return conversation_memory.get(character_name, [])
+
+    async def save_conversation_message(
+        character_name: str,
+        role: str,
+        content: str,
+        persist: bool,
+        interrupted: bool = False,
+        generated_text: str | None = None,
+    ) -> tuple[int, int | None]:
+        """Save a conversation message. Returns (in-memory index, db_id or None)."""
+        msg = {
+            "role": role,
+            "content": content,
+            "interrupted": interrupted,
+            "generated_text": generated_text,
+        }
+
+        if persist:
+            async with get_session() as session:
+                db_msg = ConversationMessage(
+                    character_name=character_name,
+                    role=role,
+                    content=content,
+                    interrupted=interrupted,
+                    generated_text=generated_text,
+                )
+                session.add(db_msg)
+                await session.commit()
+                await session.refresh(db_msg)
+                # Also keep in memory for current session
+                if character_name not in conversation_memory:
+                    conversation_memory[character_name] = []
+                conversation_memory[character_name].append(msg)
+                return len(conversation_memory[character_name]) - 1, db_msg.id
+        else:
+            if character_name not in conversation_memory:
+                conversation_memory[character_name] = []
+            conversation_memory[character_name].append(msg)
+            return len(conversation_memory[character_name]) - 1, None
+
+    async def update_interrupted_message(
+        character_name: str,
+        msg_idx: int,
+        actual_content: str,
+        persist: bool,
+        db_msg_id: int | None,
+    ) -> None:
+        """Update an interrupted message with the actual spoken content."""
+        # Update in-memory
+        if character_name in conversation_memory and msg_idx < len(conversation_memory[character_name]):
+            conversation_memory[character_name][msg_idx]["content"] = actual_content
+
+        # Update in database if persisted
+        if persist and db_msg_id is not None:
+            async with get_session() as session:
+                result = await session.execute(
+                    select(ConversationMessage).where(ConversationMessage.id == db_msg_id)
+                )
+                db_msg = result.scalar_one_or_none()
+                if db_msg:
+                    db_msg.content = actual_content
+                    await session.commit()
+
+    async def clear_conversation_messages(character_name: str, persist: bool) -> None:
+        """Clear all conversation messages for a character."""
+        # Clear in-memory
+        if character_name in conversation_memory:
+            del conversation_memory[character_name]
+
+        # Clear from database if persisted
+        if persist:
+            async with get_session() as session:
+                result = await session.execute(
+                    select(ConversationMessage).where(
+                        ConversationMessage.character_name == character_name
+                    )
+                )
+                messages = list(result.scalars().all())
+                for msg in messages:
+                    await session.delete(msg)
+                await session.commit()
+
+    async def load_persisted_memory_on_startup() -> None:
+        """Load persisted memory into in-memory cache on startup."""
+        async with get_session() as session:
+            # Get all characters with persist_memory enabled
+            result = await session.execute(
+                select(Character).where(Character.persist_memory == True)
+            )
+            characters = list(result.scalars().all())
+
+            for char in characters:
+                # Load their messages into memory
+                msg_result = await session.execute(
+                    select(ConversationMessage)
+                    .where(ConversationMessage.character_name == char.name)
+                    .order_by(ConversationMessage.created_at)
+                )
+                messages = list(msg_result.scalars().all())
+                if messages:
+                    conversation_memory[char.name] = [
+                        {
+                            "role": m.role,
+                            "content": m.content,
+                            "interrupted": m.interrupted,
+                            "generated_text": m.generated_text,
+                        }
+                        for m in messages
+                    ]
+                    print(f"Loaded {len(messages)} persisted messages for {char.name}")
 
     def get_generation_lock(name: str) -> asyncio.Lock:
         """Get or create a lock for a character's generation."""
@@ -378,6 +515,12 @@ def create_app(
                     print(f"Twitch chat auto-connected to #{twitch_config.channel}")
         except Exception as e:
             print(f"Failed to auto-connect Twitch chat: {e}")
+
+        # Load persisted conversation memory
+        try:
+            await load_persisted_memory_on_startup()
+        except Exception as e:
+            print(f"Failed to load persisted memory: {e}")
 
         yield
 
@@ -506,11 +649,11 @@ def create_app(
 
                         # Update interrupted message with actual spoken text
                         if character in pending_interrupted:
-                            msg_idx = pending_interrupted[character]
-                            if character in conversation_memory and msg_idx < len(conversation_memory[character]):
-                                msg = conversation_memory[character][msg_idx]
-                                msg["content"] = actual_text  # What was actually played
-                                print(f"[{character}] Updated memory[{msg_idx}] with actual spoken text")
+                            msg_idx, persist, db_id = pending_interrupted[character]
+                            await update_interrupted_message(
+                                character, msg_idx, actual_text, persist, db_id
+                            )
+                            print(f"[{character}] Updated memory[{msg_idx}] with actual spoken text (persist={persist})")
                             del pending_interrupted[character]
 
                 except json.JSONDecodeError:
@@ -708,6 +851,7 @@ def create_app(
             twitch_chat_window_seconds=c.twitch_chat_window_seconds,
             twitch_chat_max_messages=c.twitch_chat_max_messages,
             memory_enabled=c.memory_enabled,
+            persist_memory=c.persist_memory,
             connected=manager.is_connected(c.name),
             playing=manager._channel_state.get(c.name, {}).get("playing", False),
             streaming=manager._channel_state.get(c.name, {}).get("streaming", False),
@@ -1103,17 +1247,16 @@ def create_app(
                     generated_text = prev_gen.get_spoken_text()  # Text converted to audio
                     if generated_text:
                         # Save as interrupted - browser will update with actual spoken text
-                        if name not in conversation_memory:
-                            conversation_memory[name] = []
-                        interrupted_msg = {
-                            "role": "assistant",
-                            "content": generated_text,  # Will be updated to actual spoken
-                            "interrupted": True,
-                            "generated_text": generated_text,  # What was converted to audio
-                        }
-                        conversation_memory[name].append(interrupted_msg)
-                        # Track index so we can update when browser reports actual spoken text
-                        pending_interrupted[name] = len(conversation_memory[name]) - 1
+                        msg_idx, db_id = await save_conversation_message(
+                            character_name=name,
+                            role="assistant",
+                            content=generated_text,
+                            persist=character.persist_memory,
+                            interrupted=True,
+                            generated_text=generated_text,
+                        )
+                        # Track for browser update
+                        pending_interrupted[name] = (msg_idx, character.persist_memory, db_id)
                         interrupted_prev = True
                     await cancel_active_generation(name)
                     await harness.stop_stream(name)
@@ -1122,13 +1265,17 @@ def create_app(
             response_text = await pipeline.run(request.message)
 
             # Store conversation in memory (always store for UI, memory_enabled controls LLM context)
-            if name not in conversation_memory:
-                conversation_memory[name] = []
             # Store twitch context if present
             if twitch_chat_context:
-                conversation_memory[name].append({"role": "context", "content": twitch_chat_context})
-            conversation_memory[name].append({"role": "user", "content": request.message})
-            conversation_memory[name].append({"role": "assistant", "content": response_text})
+                await save_conversation_message(
+                    name, "context", twitch_chat_context, character.persist_memory
+                )
+            await save_conversation_message(
+                name, "user", request.message, character.persist_memory
+            )
+            await save_conversation_message(
+                name, "assistant", response_text, character.persist_memory
+            )
 
             # Log the chat
             await harness._log_playback(name, f"chat:{name}", "stream")
@@ -1166,16 +1313,23 @@ def create_app(
 
             # Save interrupted message to memory for chat generations
             if is_chat and generated_text:
-                if name not in conversation_memory:
-                    conversation_memory[name] = []
-                interrupted_msg = {
-                    "role": "assistant",
-                    "content": generated_text,  # Will be updated by browser
-                    "interrupted": True,
-                    "generated_text": generated_text,
-                }
-                conversation_memory[name].append(interrupted_msg)
-                pending_interrupted[name] = len(conversation_memory[name]) - 1
+                # Look up character to get persist_memory setting
+                async with get_session() as session:
+                    result = await session.execute(
+                        select(Character).where(Character.name == name)
+                    )
+                    character = result.scalar_one_or_none()
+                    persist = character.persist_memory if character else False
+
+                msg_idx, db_id = await save_conversation_message(
+                    character_name=name,
+                    role="assistant",
+                    content=generated_text,
+                    persist=persist,
+                    interrupted=True,
+                    generated_text=generated_text,
+                )
+                pending_interrupted[name] = (msg_idx, persist, db_id)
 
             # Forcefully stop audio playback and clear text in browser
             await harness.stop_stream(name)
@@ -1190,14 +1344,29 @@ def create_app(
     @app.delete("/api/characters/{name}/memory")
     async def clear_character_memory(name: str) -> dict:
         """Clear conversation memory for a character."""
-        if name in conversation_memory:
-            del conversation_memory[name]
+        # Look up character to get persist_memory setting
+        async with get_session() as session:
+            result = await session.execute(
+                select(Character).where(Character.name == name)
+            )
+            character = result.scalar_one_or_none()
+            persist = character.persist_memory if character else False
+
+        await clear_conversation_messages(name, persist)
         return {"success": True, "character": name, "message": "Memory cleared"}
 
     @app.get("/api/characters/{name}/memory")
     async def get_character_memory(name: str) -> dict:
         """Get conversation memory for a character."""
-        history = conversation_memory.get(name, [])
+        # Look up character to get persist_memory setting
+        async with get_session() as session:
+            result = await session.execute(
+                select(Character).where(Character.name == name)
+            )
+            character = result.scalar_one_or_none()
+            persist = character.persist_memory if character else False
+
+        history = await get_conversation_messages(name, persist)
         return {"character": name, "message_count": len(history), "messages": history}
 
     return app
