@@ -19,7 +19,7 @@ class TextAnimator {
         this.revealIndex = 0;
         this.streamSettings = null;
         this.lastRevealTime = 0;
-        this.revealRate = 23; // chars per second (~230 WPM, 1.5x faster)
+        this.revealRate = 42; // chars per second (~420 WPM, fast reader speed)
         this.streamFadeStart = null;
         this.streamFadeDuration = 1000;
         this.streamOpacity = 1;
