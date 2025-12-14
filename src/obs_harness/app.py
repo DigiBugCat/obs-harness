@@ -490,12 +490,11 @@ def create_app(
 
     async def cancel_active_generation(name: str) -> str | None:
         """Cancel any active generation for a character and return partial spoken text."""
-        if name not in active_generations:
+        gen = active_generations.pop(name, None)
+        if gen is None:
             return None
-        gen = active_generations[name]
         await gen.cancel()  # Now async - closes WebSocket immediately
         spoken_text = gen.get_spoken_text()
-        del active_generations[name]
         return spoken_text
 
     @asynccontextmanager
@@ -1109,9 +1108,9 @@ def create_app(
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"TTS error: {e}")
         finally:
-            # Clear active generation
-            if name in active_generations and active_generations[name] is streamer:
-                del active_generations[name]
+            # Clear active generation (use get to avoid race with stop endpoint)
+            if active_generations.get(name) is streamer:
+                active_generations.pop(name, None)
 
     @app.post("/api/characters/{name}/chat")
     async def character_chat(name: str, request: ChatRequest) -> ChatResponse:
@@ -1296,9 +1295,9 @@ def create_app(
             await harness.text_stream_end(name)
             raise HTTPException(status_code=500, detail=f"Chat error: {e}")
         finally:
-            # Clear active generation
-            if name in active_generations and active_generations[name] is pipeline:
-                del active_generations[name]
+            # Clear active generation (use get to avoid race with stop endpoint)
+            if active_generations.get(name) is pipeline:
+                active_generations.pop(name, None)
 
     @app.post("/api/characters/{name}/stop")
     async def stop_character_generation(name: str) -> dict:
