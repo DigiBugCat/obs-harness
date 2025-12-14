@@ -23,6 +23,10 @@ class TextAnimator {
         this.streamFadeStart = null;
         this.streamFadeDuration = 1000;
         this.streamOpacity = 1;
+
+        // Display window for character cap
+        this.displayStartIndex = 0;
+        this.maxDisplayChars = 250;
     }
 
     resize(width, height) {
@@ -406,6 +410,7 @@ class TextAnimator {
         this.isStreaming = true;
         this.streamText = '';
         this.revealIndex = 0;
+        this.displayStartIndex = 0;
         this.streamSettings = {
             fontFamily: settings.fontFamily || 'Arial',
             fontSize: settings.fontSize || 48,
@@ -454,6 +459,7 @@ class TextAnimator {
         this.isStreaming = false;
         this.streamText = '';
         this.revealIndex = 0;
+        this.displayStartIndex = 0;
         this.streamFadeStart = null;
         this.streamSettings = null;
     }
@@ -581,6 +587,59 @@ class TextAnimator {
     }
 
     /**
+     * Wrap a paragraph into lines while preserving formatting across line breaks.
+     * @param {string} paraText - Paragraph text with formatting markers
+     * @param {number} maxWidth - Maximum line width in pixels
+     * @param {Object} settings - Font settings
+     * @param {boolean} isQuote - Whether this is a quote line
+     * @returns {Array} Array of lines, each with segments array and isQuote flag
+     */
+    wrapFormattedParagraph(paraText, maxWidth, settings, isQuote = false) {
+        const segments = this.parseFormattedText(paraText);
+        const lines = [];
+        let currentLine = [];
+        let currentLineWidth = 0;
+
+        for (const seg of segments) {
+            if (seg.newline) continue;
+
+            // Set font for accurate measurement
+            const fontStyle = (seg.bold ? 'bold ' : '') + (seg.italic ? 'italic ' : '');
+            this.ctx.font = `${fontStyle}${settings.fontSize}px ${settings.fontFamily}`;
+
+            // Split segment text by word boundaries (keeping whitespace)
+            const parts = seg.text.split(/(\s+)/);
+
+            for (const part of parts) {
+                if (part === '') continue;
+
+                const partWidth = this.ctx.measureText(part).width;
+
+                // Check if adding this part would exceed maxWidth
+                if (currentLineWidth + partWidth > maxWidth && currentLine.length > 0) {
+                    // Push current line and start new one
+                    lines.push({ segments: currentLine, isQuote });
+                    currentLine = [];
+                    currentLineWidth = 0;
+                }
+
+                // Add part to current line (preserving formatting from original segment)
+                if (part.trim() || currentLine.length > 0) {
+                    currentLine.push({ text: part, bold: seg.bold, italic: seg.italic, newline: false });
+                    currentLineWidth += partWidth;
+                }
+            }
+        }
+
+        // Push final line if non-empty
+        if (currentLine.length > 0) {
+            lines.push({ segments: currentLine, isQuote });
+        }
+
+        return lines;
+    }
+
+    /**
      * Draw streaming text with word wrapping and formatting.
      */
     drawStream() {
@@ -588,7 +647,31 @@ class TextAnimator {
 
         const settings = this.streamSettings;
         const ctx = this.ctx;
-        const visibleText = this.streamText.substring(0, this.revealIndex);
+
+        // Apply character cap - advance displayStartIndex if we've exceeded max chars
+        const visibleLength = this.revealIndex - this.displayStartIndex;
+        if (visibleLength > this.maxDisplayChars) {
+            // Find sentence boundary to clear to (look for ". ", "! ", "? ")
+            const searchText = this.streamText.substring(this.displayStartIndex, this.revealIndex);
+            const sentenceEndings = [
+                searchText.lastIndexOf('. '),
+                searchText.lastIndexOf('! '),
+                searchText.lastIndexOf('? '),
+                searchText.lastIndexOf('.\n'),
+                searchText.lastIndexOf('!\n'),
+                searchText.lastIndexOf('?\n')
+            ].filter(i => i > 0);
+
+            if (sentenceEndings.length > 0) {
+                const sentenceEnd = Math.max(...sentenceEndings);
+                this.displayStartIndex += sentenceEnd + 2; // Move past sentence ending
+            } else {
+                // No sentence boundary found, advance by half
+                this.displayStartIndex += Math.floor(this.maxDisplayChars / 2);
+            }
+        }
+
+        const visibleText = this.streamText.substring(this.displayStartIndex, this.revealIndex);
 
         if (!visibleText) return;
 
@@ -613,37 +696,9 @@ class TextAnimator {
             const isQuote = para.trimStart().startsWith('>');
             const paraText = isQuote ? para.trimStart().substring(1).trimStart() : para;
 
-            // Parse formatting
-            const segments = this.parseFormattedText(paraText);
-
-            // Word wrap this paragraph
-            ctx.font = `${settings.fontSize}px ${settings.fontFamily}`;
-
-            // Simple word wrapping - split into words and rebuild lines
-            const words = paraText.split(' ');
-            let currentLineText = '';
-
-            for (const word of words) {
-                const testLine = currentLineText ? currentLineText + ' ' + word : word;
-                const testSegments = this.parseFormattedText(testLine);
-                const testWidth = this.measureFormattedText(testSegments, settings);
-
-                if (testWidth > maxWidth && currentLineText) {
-                    lines.push({
-                        segments: this.parseFormattedText(currentLineText),
-                        isQuote
-                    });
-                    currentLineText = word;
-                } else {
-                    currentLineText = testLine;
-                }
-            }
-            if (currentLineText) {
-                lines.push({
-                    segments: this.parseFormattedText(currentLineText),
-                    isQuote
-                });
-            }
+            // Use format-aware wrapping that preserves bold/italic across line breaks
+            const wrappedLines = this.wrapFormattedParagraph(paraText, maxWidth, settings, isQuote);
+            lines.push(...wrappedLines);
         }
 
         // Calculate position
