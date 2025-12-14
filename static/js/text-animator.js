@@ -36,6 +36,9 @@ class TextAnimator {
             progress: 0,
             chars: options.text.split(''),
             charStates: [],
+            // Text wrapping - will be calculated in next()
+            lines: [],
+            lineHeight: (options.fontSize || 48) * 1.3,
         };
 
         // Initialize character states for per-character animations
@@ -64,9 +67,54 @@ class TextAnimator {
         if (this.queue.length > 0) {
             this.current = this.queue.shift();
             this.startTime = performance.now();
+            // Calculate wrapped lines for the new item
+            this.current.lines = this.wrapText(this.current);
         } else {
             this.current = null;
         }
+    }
+
+    wrapText(item) {
+        // Set up font for measurement
+        this.ctx.font = `${item.fontSize}px ${item.fontFamily}`;
+
+        // Use 90% of canvas width as max width, with padding
+        const maxWidth = this.width * 0.9;
+        const words = item.text.split(' ');
+        const lines = [];
+        let currentLine = '';
+        let charIndex = 0;
+
+        for (let i = 0; i < words.length; i++) {
+            const word = words[i];
+            const testLine = currentLine ? currentLine + ' ' + word : word;
+            const metrics = this.ctx.measureText(testLine);
+
+            if (metrics.width > maxWidth && currentLine) {
+                // Push current line and start new one
+                const lineChars = currentLine.split('');
+                lines.push({
+                    text: currentLine,
+                    startIndex: charIndex,
+                    endIndex: charIndex + lineChars.length,
+                });
+                charIndex += lineChars.length + 1; // +1 for space
+                currentLine = word;
+            } else {
+                currentLine = testLine;
+            }
+        }
+
+        // Push the last line
+        if (currentLine) {
+            lines.push({
+                text: currentLine,
+                startIndex: charIndex,
+                endIndex: charIndex + currentLine.length,
+            });
+        }
+
+        return lines;
     }
 
     update() {
@@ -250,49 +298,61 @@ class TextAnimator {
         const item = this.current;
         const ctx = this.ctx;
 
-        // Calculate position
-        const x = item.x * this.width;
-        const y = item.y * this.height;
+        // Calculate base position
+        const centerX = item.x * this.width;
+        const centerY = item.y * this.height;
 
         // Set font
         ctx.font = `${item.fontSize}px ${item.fontFamily}`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
 
-        // Measure total text width for character positioning
-        const metrics = ctx.measureText(item.text);
-        let startX = x - metrics.width / 2;
+        // Calculate total height of all lines for vertical centering
+        const totalHeight = item.lines.length * item.lineHeight;
+        const startY = centerY - totalHeight / 2 + item.lineHeight / 2;
 
-        // Draw each character
-        for (let i = 0; i < item.chars.length; i++) {
-            const state = item.charStates[i];
-            if (!state.visible || state.opacity <= 0) {
-                startX += ctx.measureText(item.chars[i]).width;
-                continue;
+        // Draw each line
+        for (let lineIdx = 0; lineIdx < item.lines.length; lineIdx++) {
+            const line = item.lines[lineIdx];
+            const lineY = startY + lineIdx * item.lineHeight;
+
+            // Measure this line's width for horizontal centering
+            const lineWidth = ctx.measureText(line.text).width;
+            let startX = centerX - lineWidth / 2;
+
+            // Draw each character in this line
+            for (let i = line.startIndex; i < line.endIndex && i < item.chars.length; i++) {
+                const localIdx = i - line.startIndex;
+                const state = item.charStates[i];
+
+                if (!state.visible || state.opacity <= 0) {
+                    startX += ctx.measureText(item.chars[i]).width;
+                    continue;
+                }
+
+                const char = item.chars[i];
+                const charWidth = ctx.measureText(char).width;
+                const charX = startX + charWidth / 2 + (state.offset || 0);
+                const charY = lineY + (item.style === 'wave' || item.style === 'bounce' ? state.offset : 0);
+
+                ctx.save();
+                ctx.globalAlpha = state.opacity;
+
+                // Draw stroke if configured
+                if (item.strokeColor && item.strokeWidth > 0) {
+                    ctx.strokeStyle = item.strokeColor;
+                    ctx.lineWidth = item.strokeWidth;
+                    ctx.strokeText(char, charX, charY);
+                }
+
+                // Draw fill
+                ctx.fillStyle = item.color;
+                ctx.fillText(char, charX, charY);
+
+                ctx.restore();
+
+                startX += charWidth;
             }
-
-            const char = item.chars[i];
-            const charWidth = ctx.measureText(char).width;
-            const charX = startX + charWidth / 2 + (state.offset || 0);
-            const charY = y + (item.style === 'wave' || item.style === 'bounce' ? state.offset : 0);
-
-            ctx.save();
-            ctx.globalAlpha = state.opacity;
-
-            // Draw stroke if configured
-            if (item.strokeColor && item.strokeWidth > 0) {
-                ctx.strokeStyle = item.strokeColor;
-                ctx.lineWidth = item.strokeWidth;
-                ctx.strokeText(char, charX, charY);
-            }
-
-            // Draw fill
-            ctx.fillStyle = item.color;
-            ctx.fillText(char, charX, charY);
-
-            ctx.restore();
-
-            startX += charWidth;
         }
     }
 
