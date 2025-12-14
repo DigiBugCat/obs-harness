@@ -25,6 +25,12 @@
     let streamSampleRate = 24000;
     let streamChannels = 1;
     let nextPlayTime = 0;
+    let audioStreamEndTime = 0;  // When all scheduled audio will finish
+    let firstAudioChunkReceived = false;  // Track if first audio chunk arrived
+
+    // Pending text (waits for audio to start)
+    let pendingTextSettings = null;
+    let pendingTextChunks = [];
 
     // Canvas for text overlay
     const canvas = document.getElementById('canvas');
@@ -222,6 +228,7 @@
         streamBuffer = [];
         isStreaming = true;
         nextPlayTime = audioContext.currentTime;
+        firstAudioChunkReceived = false;
 
         console.log(`[${channelName}] Stream started: ${streamSampleRate}Hz, ${streamChannels}ch`);
     }
@@ -265,13 +272,50 @@
         }
 
         source.start(nextPlayTime);
+
+        // On first audio chunk, trigger pending text display
+        if (!firstAudioChunkReceived) {
+            firstAudioChunkReceived = true;
+            flushPendingText();
+        }
+
         nextPlayTime += audioBuffer.duration;
+    }
+
+    // Flush pending text to animator when audio starts
+    function flushPendingText() {
+        if (!textAnimator || !pendingTextSettings) return;
+
+        // Start the text stream now that audio is playing
+        textAnimator.startStream(pendingTextSettings);
+        console.log(`[${channelName}] Text stream activated (synced to audio)`);
+
+        // Send any buffered text chunks
+        for (const chunk of pendingTextChunks) {
+            textAnimator.appendText(chunk);
+        }
+        pendingTextChunks = [];
+        pendingTextSettings = null;
     }
 
     function endStream() {
         isStreaming = false;
         streamBuffer = [];
-        console.log(`[${channelName}] Stream ended`);
+
+        // Calculate when all scheduled audio will finish playing
+        if (audioContext && nextPlayTime > audioContext.currentTime) {
+            audioStreamEndTime = nextPlayTime;
+            const remainingMs = (nextPlayTime - audioContext.currentTime) * 1000;
+            console.log(`[${channelName}] Stream ended, audio finishes in ${remainingMs.toFixed(0)}ms`);
+        } else {
+            audioStreamEndTime = 0;
+            console.log(`[${channelName}] Stream ended, no pending audio`);
+        }
+
+        // Clear pending text state (it should have been flushed by now)
+        pendingTextSettings = null;
+        pendingTextChunks = [];
+
         sendEvent({ event: 'stream_ended' });
     }
 
@@ -318,7 +362,7 @@
             return;
         }
 
-        textAnimator.startStream({
+        const settings = {
             fontFamily: msg.font_family || 'Arial',
             fontSize: msg.font_size || 48,
             color: msg.color || '#ffffff',
@@ -326,22 +370,44 @@
             strokeWidth: msg.stroke_width || 0,
             positionX: msg.position_x ?? 0.5,
             positionY: msg.position_y ?? 0.5,
-        });
+            instantReveal: msg.instant_reveal || false,
+        };
 
-        console.log(`[${channelName}] Text stream started`);
+        // If audio hasn't started yet, buffer the text settings
+        if (!firstAudioChunkReceived) {
+            pendingTextSettings = settings;
+            pendingTextChunks = [];
+            console.log(`[${channelName}] Text stream pending (waiting for audio)`);
+        } else {
+            // Audio already playing, start text immediately
+            textAnimator.startStream(settings);
+            console.log(`[${channelName}] Text stream started (instant=${msg.instant_reveal || false})`);
+        }
     }
 
     function handleTextChunk(msg) {
         if (!textAnimator) return;
 
-        textAnimator.appendText(msg.text);
+        // If text stream hasn't started yet, buffer chunks
+        if (pendingTextSettings) {
+            pendingTextChunks.push(msg.text);
+        } else {
+            textAnimator.appendText(msg.text);
+        }
     }
 
     function endTextStream() {
         if (!textAnimator) return;
 
-        textAnimator.endStream();
-        console.log(`[${channelName}] Text stream ended`);
+        // Calculate delay until audio finishes
+        let fadeDelay = 500;  // Default short delay
+        if (audioContext && audioStreamEndTime > audioContext.currentTime) {
+            // Wait until audio finishes, plus a small buffer
+            fadeDelay = (audioStreamEndTime - audioContext.currentTime) * 1000 + 300;
+        }
+
+        textAnimator.endStream(fadeDelay);
+        console.log(`[${channelName}] Text stream ended, fade in ${fadeDelay.toFixed(0)}ms`);
         sendEvent({ event: 'text_stream_complete' });
     }
 

@@ -19,7 +19,7 @@ from sqlmodel import select
 
 from .chat_pipeline import ChatPipeline, ChatPipelineConfig
 from .database import close_db, get_session, init_db
-from .elevenlabs import ElevenLabsClient, ElevenLabsError, estimate_tts_duration_ms
+from .elevenlabs import ElevenLabsClient, ElevenLabsError
 from .models import (
     Character,
     CharacterCreate,
@@ -230,6 +230,7 @@ class OBSHarness:
         stroke_width: int = 0,
         position_x: float = 0.5,
         position_y: float = 0.5,
+        instant_reveal: bool = False,
     ) -> bool:
         """Start streaming text on a channel."""
         cmd = TextStreamStartCommand(
@@ -240,6 +241,7 @@ class OBSHarness:
             stroke_width=stroke_width,
             position_x=position_x,
             position_y=position_y,
+            instant_reveal=instant_reveal,
         )
         return await self._manager.send_to_channel(channel, cmd.model_dump())
 
@@ -578,43 +580,46 @@ def create_app(
                 status_code=400, detail=f"Character '{name}' is not connected"
             )
 
-        # Calculate estimated duration for text animation
-        duration = request.text_duration or character.text_duration or estimate_tts_duration_ms(request.text)
-        style = request.text_style or character.default_text_style
-
         try:
             # Start audio stream
             await harness.stream_start(name, sample_rate=24000, channels=1)
+
+            # Start text stream (syncs with audio via streaming text system)
+            # Use instant_reveal=True since we send full text at once for speak
+            text_started = False
+            if request.show_text:
+                await harness.text_stream_start(
+                    name,
+                    font_family=character.text_font_family,
+                    font_size=character.text_font_size,
+                    color=character.text_color,
+                    stroke_color=character.text_stroke_color,
+                    stroke_width=character.text_stroke_width,
+                    position_x=character.text_position_x,
+                    position_y=character.text_position_y,
+                    instant_reveal=True,
+                )
+                text_started = True
 
             # Stream TTS audio from ElevenLabs
             text_shown = False
             async with ElevenLabsClient() as client:
                 async for chunk in client.stream_tts(character.elevenlabs_voice_id, request.text):
-                    # Show text on first audio chunk (syncs text with audio start)
-                    if not text_shown and request.show_text:
-                        await harness.show_text(
-                            name,
-                            request.text,
-                            style=style,
-                            duration=duration,
-                            position_x=character.text_position_x,
-                            position_y=character.text_position_y,
-                            font_family=character.text_font_family,
-                            font_size=character.text_font_size,
-                            color=character.text_color,
-                            stroke_color=character.text_stroke_color,
-                            stroke_width=character.text_stroke_width,
-                        )
+                    # Send full text on first audio chunk (syncs text with audio start)
+                    if not text_shown and text_started:
+                        await harness.text_chunk(name, request.text)
                         text_shown = True
                     await harness.stream_audio(name, chunk)
 
-            # End stream
+            # End streams - audio first, then text (so text syncs to audio end)
             await harness.stream_end(name)
+            if text_started:
+                await harness.text_stream_end(name)
 
             # Log the speak
             await harness._log_playback(name, request.text, "stream")
 
-            return {"success": True, "character": name, "duration_ms": duration}
+            return {"success": True, "character": name}
 
         except ElevenLabsError as e:
             await harness.stream_end(name)

@@ -397,6 +397,7 @@ class TextStreamStartCommand(BaseModel):
     stroke_width: int = 0
     position_x: float = 0.5
     position_y: float = 0.5
+    instant_reveal: bool = False  # If True, show all text immediately
 
 
 class TextChunkCommand(BaseModel):

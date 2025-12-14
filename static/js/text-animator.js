@@ -19,7 +19,7 @@ class TextAnimator {
         this.revealIndex = 0;
         this.streamSettings = null;
         this.lastRevealTime = 0;
-        this.revealRate = 15; // chars per second (~150 WPM)
+        this.revealRate = 23; // chars per second (~230 WPM, 1.5x faster)
         this.streamFadeStart = null;
         this.streamFadeDuration = 1000;
         this.streamOpacity = 1;
@@ -414,6 +414,7 @@ class TextAnimator {
             strokeWidth: settings.strokeWidth || 0,
             positionX: settings.positionX ?? 0.5,
             positionY: settings.positionY ?? 0.5,
+            instantReveal: settings.instantReveal || false,
         };
         this.lastRevealTime = performance.now();
         this.streamFadeStart = null;
@@ -435,16 +436,17 @@ class TextAnimator {
 
     /**
      * End streaming mode and schedule fade-out.
+     * @param {number} fadeDelay - Delay in ms before starting fade (default 500ms)
      */
-    endStream() {
+    endStream(fadeDelay = 500) {
         this.isStreaming = false;
 
-        // Schedule fade-out after a short delay to allow reading
+        // Schedule fade-out after the specified delay
         setTimeout(() => {
             if (!this.isStreaming) {
                 this.streamFadeStart = performance.now();
             }
-        }, 2000);
+        }, fadeDelay);
     }
 
     /**
@@ -474,6 +476,12 @@ class TextAnimator {
                 this.streamSettings = null;
                 return;
             }
+        }
+
+        // Instant reveal mode - show all text immediately
+        if (this.streamSettings && this.streamSettings.instantReveal) {
+            this.revealIndex = this.streamText.length;
+            return;
         }
 
         // Progressive reveal while streaming
