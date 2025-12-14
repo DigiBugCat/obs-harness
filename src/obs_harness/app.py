@@ -1242,29 +1242,15 @@ def create_app(
             # Acquire lock and cancel any existing generation
             async with get_generation_lock(name):
                 if name in active_generations:
-                    # Save partial memory from interrupted chat
-                    prev_gen = active_generations[name]
-                    generated_text = prev_gen.get_spoken_text()  # Text converted to audio
-                    if generated_text:
-                        # Save as interrupted - browser will update with actual spoken text
-                        msg_idx, db_id = await save_conversation_message(
-                            character_name=name,
-                            role="assistant",
-                            content=generated_text,
-                            persist=character.persist_memory,
-                            interrupted=True,
-                            generated_text=generated_text,
-                        )
-                        # Track for browser update
-                        pending_interrupted[name] = (msg_idx, character.persist_memory, db_id)
-                        interrupted_prev = True
+                    # Cancel the previous generation - it will save its own interrupted state
                     await cancel_active_generation(name)
                     await harness.stop_stream(name)
+                    interrupted_prev = True
                 active_generations[name] = pipeline
 
             response_text = await pipeline.run(request.message)
 
-            # Store conversation in memory (always store for UI, memory_enabled controls LLM context)
+            # Store conversation in memory
             # Store twitch context if present
             if twitch_chat_context:
                 await save_conversation_message(
@@ -1273,12 +1259,29 @@ def create_app(
             await save_conversation_message(
                 name, "user", request.message, character.persist_memory
             )
-            await save_conversation_message(
-                name, "assistant", response_text, character.persist_memory
-            )
 
-            # Log the chat
-            await harness._log_playback(name, f"chat:{name}", "stream")
+            # Check if we were cancelled (interrupted by stop button or new chat)
+            if pipeline._cancelled:
+                # Save as interrupted - browser will update with actual spoken text
+                spoken_text = pipeline.get_spoken_text()
+                if spoken_text:
+                    msg_idx, db_id = await save_conversation_message(
+                        character_name=name,
+                        role="assistant",
+                        content=spoken_text,
+                        persist=character.persist_memory,
+                        interrupted=True,
+                        generated_text=spoken_text,
+                    )
+                    # Track for browser update
+                    pending_interrupted[name] = (msg_idx, character.persist_memory, db_id)
+            else:
+                # Normal completion - save full response
+                await save_conversation_message(
+                    name, "assistant", response_text, character.persist_memory
+                )
+                # Log the chat
+                await harness._log_playback(name, f"chat:{name}", "stream")
 
             return ChatResponse(
                 success=True,
@@ -1299,37 +1302,17 @@ def create_app(
 
     @app.post("/api/characters/{name}/stop")
     async def stop_character_generation(name: str) -> dict:
-        """Stop any active generation (speak/chat) for a character."""
+        """Stop any active generation (speak/chat) for a character.
+
+        Note: The interrupted message is saved by the original chat endpoint
+        when it detects it was cancelled, not here.
+        """
         async with get_generation_lock(name):
             if name not in active_generations:
                 return {"success": True, "character": name, "was_active": False}
 
-            # Get the generation before cancelling
-            gen = active_generations[name]
-            is_chat = isinstance(gen, ChatPipeline)
-
-            # Cancel and get partial text (text converted to audio)
-            generated_text = await cancel_active_generation(name)
-
-            # Save interrupted message to memory for chat generations
-            if is_chat and generated_text:
-                # Look up character to get persist_memory setting
-                async with get_session() as session:
-                    result = await session.execute(
-                        select(Character).where(Character.name == name)
-                    )
-                    character = result.scalar_one_or_none()
-                    persist = character.persist_memory if character else False
-
-                msg_idx, db_id = await save_conversation_message(
-                    character_name=name,
-                    role="assistant",
-                    content=generated_text,
-                    persist=persist,
-                    interrupted=True,
-                    generated_text=generated_text,
-                )
-                pending_interrupted[name] = (msg_idx, persist, db_id)
+            # Cancel the generation (sets _cancelled=True)
+            spoken_text = await cancel_active_generation(name)
 
             # Forcefully stop audio playback and clear text in browser
             await harness.stop_stream(name)
@@ -1338,7 +1321,7 @@ def create_app(
                 "success": True,
                 "character": name,
                 "was_active": True,
-                "spoken_text": generated_text,
+                "spoken_text": spoken_text,
             }
 
     @app.delete("/api/characters/{name}/memory")
