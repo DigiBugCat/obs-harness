@@ -1,14 +1,13 @@
-# Image Placeholders
+# Documentation Images
 
-Add the following images to this directory:
+## Available
+- dashboard-overview.jpg - Main dashboard view
+- create-character.jpg - Character creation dialog
+- chat-test.jpg - Chat modal with response
+- voice-settings.jpg - Voice settings panel
 
-- demo.gif - Animated demo of the full workflow
-- dashboard-overview.png - Main dashboard view
-- create-character.png - Character creation dialog
+## Optional (can add later)
+- demo.gif - Animated demo of full workflow
 - obs-browser-source.png - OBS browser source settings
-- chat-test.png - Chat modal with response
 - twitch-setup.png - Twitch integration page
 - text-settings.png - Text customization panel
-- voice-settings.png - Voice settings panel
-
-Recommended dimensions: 800-1200px wide, PNG or GIF format.

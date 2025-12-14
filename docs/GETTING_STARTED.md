@@ -2,8 +2,6 @@
 
 This guide will walk you through setting up OBS Harness to add AI-powered characters with voice and text overlays to your stream.
 
-<!-- ![OBS Harness Demo](images/demo.gif) -->
-
 ## What You'll Need
 
 - **OBS Studio** (or compatible streaming software)
@@ -68,7 +66,7 @@ INFO:     Uvicorn running on http://127.0.0.1:8080
 
 Open **http://localhost:8080** in your browser to access the dashboard.
 
-<!-- ![Dashboard Overview](images/dashboard-overview.png) -->
+![Dashboard Overview](images/dashboard-overview.jpg)
 
 ---
 
@@ -85,7 +83,7 @@ Open **http://localhost:8080** in your browser to access the dashboard.
      ```
 3. Click **Create**
 
-<!-- ![Create Character Dialog](images/create-character.png) -->
+![Create Character Dialog](images/create-character.jpg)
 
 ---
 
@@ -99,8 +97,6 @@ Open **http://localhost:8080** in your browser to access the dashboard.
    (Replace `MyCharacter` with your character's name)
 3. Set dimensions: **1920 x 1080** (or match your canvas)
 4. Check **"Shutdown source when not visible"** (optional, saves resources)
-
-<!-- ![OBS Browser Source Settings](images/obs-browser-source.png) -->
 
 ---
 
@@ -118,7 +114,7 @@ You should see:
 - Audio playing through OBS
 - The AI response in the chat window
 
-<!-- ![Chat Test Example](images/chat-test.png) -->
+![Chat Test Example](images/chat-test.jpg)
 
 ---
 
@@ -136,8 +132,6 @@ Then in your character settings:
 - Set the time window (how many seconds of chat to include)
 
 Now when you chat with your character, it will see recent Twitch messages!
-
-<!-- ![Twitch Integration](images/twitch-setup.png) -->
 
 ---
 
@@ -177,8 +171,6 @@ Each character gets its own browser source URL.
 
 ### Text Appearance
 
-<!-- ![Text Customization Options](images/text-settings.png) -->
-
 In character settings, customize:
 - Font family and size
 - Color and stroke (outline)
@@ -187,7 +179,7 @@ In character settings, customize:
 
 ### Voice Settings
 
-<!-- ![Voice Settings Panel](images/voice-settings.png) -->
+![Voice Settings Panel](images/voice-settings.jpg)
 
 Fine-tune the voice:
 - **Stability** - Higher = more consistent, Lower = more expressive
