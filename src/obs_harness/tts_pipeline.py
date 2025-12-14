@@ -1,10 +1,13 @@
 """Unified TTS streaming pipeline for browser audio + text synchronization."""
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import AsyncIterator, Awaitable, Callable, Union
 
 from .elevenlabs_ws import ElevenLabsWSClient, ElevenLabsWSError
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -210,7 +213,7 @@ class TTSStreamer:
                     await self._send_audio_chunk(chunk.audio)
 
         except Exception as e:
-            print(f"TTS receive error: {e}")
+            logger.error(f"TTS receive error: {e}")
 
     async def cancel(self) -> None:
         """Cancel the streaming - closes WebSocket immediately."""

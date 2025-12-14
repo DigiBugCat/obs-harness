@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -9,6 +10,8 @@ from pathlib import Path
 from typing import Any, Union
 
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -482,7 +485,7 @@ def create_app(
                         }
                         for m in messages
                     ]
-                    print(f"Loaded {len(messages)} persisted messages for {char.name}")
+                    logger.info(f"Loaded {len(messages)} persisted messages for {char.name}")
 
     def get_generation_lock(name: str) -> asyncio.Lock:
         """Get or create a lock for a character's generation."""
@@ -513,15 +516,15 @@ def create_app(
                         access_token=twitch_config.access_token,
                         channel=twitch_config.channel,
                     )
-                    print(f"Twitch chat auto-connected to #{twitch_config.channel}")
+                    logger.info(f"Twitch chat auto-connected to #{twitch_config.channel}")
         except Exception as e:
-            print(f"Failed to auto-connect Twitch chat: {e}")
+            logger.warning(f"Failed to auto-connect Twitch chat: {e}")
 
         # Load persisted conversation memory
         try:
             await load_persisted_memory_on_startup()
         except Exception as e:
-            print(f"Failed to load persisted memory: {e}")
+            logger.warning(f"Failed to load persisted memory: {e}")
 
         yield
 
@@ -646,7 +649,7 @@ def create_app(
                         actual_text = event.get("spoken_text", "")
                         playback_time = event.get("playback_time", 0)
                         word_count = event.get("word_count", 0)
-                        print(f"[{character}] Stream stopped at {playback_time:.2f}s - {word_count} words actually played: \"{actual_text[:100]}...\"")
+                        logger.debug(f"[{character}] Stream stopped at {playback_time:.2f}s - {word_count} words actually played: \"{actual_text[:100]}...\"")
 
                         # Update interrupted message with actual spoken text
                         if character in pending_interrupted:
@@ -654,7 +657,7 @@ def create_app(
                             await update_interrupted_message(
                                 character, msg_idx, actual_text, persist, db_id
                             )
-                            print(f"[{character}] Updated memory[{msg_idx}] with actual spoken text (persist={persist})")
+                            logger.debug(f"[{character}] Updated memory[{msg_idx}] with actual spoken text (persist={persist})")
                             del pending_interrupted[character]
 
                 except json.JSONDecodeError:

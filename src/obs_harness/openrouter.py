@@ -2,11 +2,14 @@
 
 import asyncio
 import json
+import logging
 import os
 from typing import AsyncIterator
 
 import httpx
 from httpx_sse import aconnect_sse
+
+logger = logging.getLogger(__name__)
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1"
 
@@ -90,7 +93,7 @@ class OpenRouterClient:
                     raise
 
                 delay = self.retry_delay * (2 ** attempt)  # Exponential backoff
-                print(f"OpenRouter error (attempt {attempt + 1}): {e}, retrying in {delay}s...")
+                logger.warning(f"OpenRouter error (attempt {attempt + 1}): {e}, retrying in {delay}s...")
                 await asyncio.sleep(delay)
 
             except httpx.HTTPError as e:
@@ -99,7 +102,7 @@ class OpenRouterClient:
                     raise last_error
 
                 delay = self.retry_delay * (2 ** attempt)
-                print(f"OpenRouter HTTP error (attempt {attempt + 1}): {e}, retrying in {delay}s...")
+                logger.warning(f"OpenRouter HTTP error (attempt {attempt + 1}): {e}, retrying in {delay}s...")
                 await asyncio.sleep(delay)
 
         if last_error:

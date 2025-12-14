@@ -3,11 +3,14 @@
 import asyncio
 import base64
 import json
+import logging
 import os
 from dataclasses import dataclass
 from typing import AsyncIterator
 
 import websockets
+
+logger = logging.getLogger(__name__)
 
 ELEVENLABS_WS_URL = "wss://api.elevenlabs.io/v1/text-to-speech"
 
@@ -249,7 +252,7 @@ class ElevenLabsWSClient:
 
                 if attempt < max_retries - 1:
                     delay = 1.0 * (2 ** attempt)  # Exponential backoff
-                    print(f"ElevenLabs WS connection failed (attempt {attempt + 1}): {e}, retrying in {delay}s...")
+                    logger.warning(f"ElevenLabs WS connection failed (attempt {attempt + 1}): {e}, retrying in {delay}s...")
                     await asyncio.sleep(delay)
 
         raise ElevenLabsWSError(f"Failed to connect after {max_retries} attempts: {last_error}")
@@ -274,7 +277,7 @@ class ElevenLabsWSClient:
                         )
                         # Only emit if it has alphanumeric content
                         if any(c.isalnum() for c in final_word.word):
-                            print(f"[ElevenLabs WS] Final pending word: {final_word.word}")
+                            logger.debug(f"Final pending word: {final_word.word}")
                             await self._chunk_queue.put(AudioChunkWithTiming(
                                 audio=b"",
                                 words=[final_word],
@@ -294,14 +297,14 @@ class ElevenLabsWSClient:
                     chars = alignment.get("chars", [])
                     start_times = alignment.get("charStartTimesMs", [])
                     durations = alignment.get("charDurationsMs", [])
-                    print(f"[ElevenLabs WS] Alignment: chars={''.join(chars)}, start_times={start_times[:5]}...")
+                    logger.debug(f"Alignment: chars={''.join(chars)}, start_times={start_times[:5]}...")
                     if chars and start_times:
                         result = parse_alignment_to_words(chars, start_times, durations, self._pending_word)
                         words = result.words
                         self._pending_word = result.pending
                         if result.pending:
-                            print(f"[ElevenLabs WS] Pending word buffered: '{result.pending['word']}'")
-                        print(f"[ElevenLabs WS] Parsed words: {[(w.word, w.start_time) for w in words]}")
+                            logger.debug(f"Pending word buffered: '{result.pending['word']}'")
+                        logger.debug(f"Parsed words: {[(w.word, w.start_time) for w in words]}")
 
                 if audio_bytes or words:
                     await self._chunk_queue.put(AudioChunkWithTiming(

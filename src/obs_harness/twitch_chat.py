@@ -1,12 +1,15 @@
 """Twitch chat integration using raw IRC over WebSocket."""
 
 import asyncio
+import logging
 import re
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 import websockets
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -90,12 +93,12 @@ class TwitchIRCClient:
                 await self._ws.send(f"JOIN #{self._channel}")
 
             self._running = True
-            print(f"Twitch IRC connected to #{self._channel}")
+            logger.info(f"Twitch IRC connected to #{self._channel}")
 
         except Exception as e:
             self._running = False
             self._ws = None
-            print(f"Twitch IRC connection failed: {e}")
+            logger.error(f"Twitch IRC connection failed: {e}")
             raise
 
     async def disconnect(self) -> None:
@@ -233,7 +236,7 @@ class TwitchChatManager:
                 if attempt == max_retries - 1:
                     self._client = None
                     raise Exception(f"Failed to connect to Twitch after {max_retries} attempts: {e}")
-                print(f"Twitch connection attempt {attempt + 1} failed: {e}, retrying...")
+                logger.warning(f"Twitch connection attempt {attempt + 1} failed: {e}, retrying...")
                 await asyncio.sleep(2)
 
         self._task = asyncio.create_task(self._run_with_reconnect())
@@ -247,19 +250,19 @@ class TwitchChatManager:
             try:
                 await self._client.run()
             except Exception as e:
-                print(f"Twitch chat error: {e}")
+                logger.error(f"Twitch chat error: {e}")
 
             # If still supposed to be running, attempt reconnection
             if self._client and self._client._running:
-                print(f"Twitch disconnected, reconnecting in {reconnect_delay}s...")
+                logger.info(f"Twitch disconnected, reconnecting in {reconnect_delay}s...")
                 await asyncio.sleep(reconnect_delay)
 
                 try:
                     await self._client.connect()
                     reconnect_delay = 5  # Reset delay on successful reconnect
-                    print("Twitch reconnected successfully")
+                    logger.info("Twitch reconnected successfully")
                 except Exception as e:
-                    print(f"Twitch reconnection failed: {e}")
+                    logger.warning(f"Twitch reconnection failed: {e}")
                     # Exponential backoff
                     reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
 
