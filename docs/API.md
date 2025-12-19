@@ -30,6 +30,8 @@ This document describes the REST API endpoints for controlling audio and text ov
 - [External Services](#external-services)
   - [ElevenLabs Voices](#elevenlabs-voices)
   - [ElevenLabs Models](#elevenlabs-models)
+  - [Cartesia Voices](#cartesia-voices)
+  - [Cartesia Models](#cartesia-models)
   - [OpenRouter Providers](#openrouter-providers)
 - [Text Presets](#text-presets)
 - [History](#history)
@@ -72,40 +74,75 @@ Returns all characters with their connection status.
 POST /api/characters
 ```
 
-**Request Body:**
+**Request Body (ElevenLabs):**
 ```json
 {
   "name": "Timmy",
-  "elevenlabs_voice_id": "pqHfZKP75CvOlQylNhV4",
+  "tts_provider": "elevenlabs",
+  "tts_settings": {
+    "voice_id": "pqHfZKP75CvOlQylNhV4",
+    "model_id": "eleven_multilingual_v2",
+    "stability": 0.5,
+    "similarity_boost": 0.75,
+    "style": 0.0,
+    "speed": 1.0
+  },
   "description": "A friendly AI assistant",
   "system_prompt": "You are Timmy, a cheerful assistant...",
   "model": "anthropic/claude-sonnet-4.5",
-  "voice_stability": 0.5,
-  "voice_similarity_boost": 0.75,
-  "voice_style": 0.0,
-  "voice_speed": 1.0,
-  "memory_enabled": true,
-  "twitch_chat_enabled": false
+  "memory_enabled": true
+}
+```
+
+**Request Body (Cartesia):**
+```json
+{
+  "name": "Luna",
+  "tts_provider": "cartesia",
+  "tts_settings": {
+    "voice_id": "a0e99841-438c-4a64-b679-ae501e7d6091",
+    "model_id": "sonic-2024-12-12",
+    "language": "en",
+    "speed": 1.0
+  },
+  "description": "A calm narrator",
+  "system_prompt": "You are Luna, a soothing narrator...",
+  "model": "anthropic/claude-sonnet-4.5"
 }
 ```
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `name` | string | **required** | Unique character name |
-| `elevenlabs_voice_id` | string | **required** | ElevenLabs voice ID |
+| `tts_provider` | string | `elevenlabs` | TTS provider: `elevenlabs` or `cartesia` |
+| `tts_settings` | object | null | Provider-specific voice settings (see below) |
 | `description` | string | null | Character description |
 | `system_prompt` | string | null | AI personality prompt (required for chat) |
 | `model` | string | `anthropic/claude-sonnet-4.5` | OpenRouter model ID |
 | `provider` | string | null | OpenRouter provider routing |
 | `temperature` | float | 0.7 | LLM temperature (0-2) |
 | `max_tokens` | int | 1024 | Max response tokens |
-| `voice_stability` | float | 0.5 | Voice stability (0-1) |
-| `voice_similarity_boost` | float | 0.75 | Voice clarity (0-1) |
-| `voice_style` | float | 0.0 | Voice style exaggeration (0-1) |
-| `voice_speed` | float | 1.0 | Speech speed (0.7-1.2) |
 | `memory_enabled` | bool | false | Enable conversation memory |
 | `persist_memory` | bool | false | Save memory to database |
 | `twitch_chat_enabled` | bool | false | Inject Twitch chat into AI context |
+
+**ElevenLabs `tts_settings`:**
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `voice_id` | string | **required** | ElevenLabs voice ID |
+| `model_id` | string | `eleven_multilingual_v2` | TTS model |
+| `stability` | float | 0.5 | Voice stability (0-1) |
+| `similarity_boost` | float | 0.75 | Voice clarity (0-1) |
+| `style` | float | 0.0 | Style exaggeration (0-1) |
+| `speed` | float | 1.0 | Speech speed (0.7-1.2) |
+
+**Cartesia `tts_settings`:**
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `voice_id` | string | **required** | Cartesia voice ID |
+| `model_id` | string | `sonic-2024-12-12` | TTS model |
+| `language` | string | `en` | Language code |
+| `speed` | float | 1.0 | Speech speed (0.6-1.5) |
 
 ### Get Character
 
@@ -332,6 +369,57 @@ Returns available TTS models.
 
 ```
 GET /api/elevenlabs/voices/{voice_id}
+```
+
+### Cartesia Voices
+
+```
+GET /api/cartesia/voices
+```
+
+Returns available voices from Cartesia.
+
+**Response:**
+```json
+[
+  {
+    "voice_id": "a0e99841-438c-4a64-b679-ae501e7d6091",
+    "name": "Sarah",
+    "description": "A warm, friendly voice",
+    "language": "en",
+    "is_public": true
+  }
+]
+```
+
+### Cartesia Models
+
+```
+GET /api/cartesia/models
+```
+
+Returns available Cartesia TTS models.
+
+**Response:**
+```json
+[
+  {
+    "model_id": "sonic-2024-12-12",
+    "name": "Sonic (Latest)",
+    "description": "Latest Sonic model with best quality"
+  },
+  {
+    "model_id": "sonic-english",
+    "name": "Sonic English",
+    "description": "Optimized for English"
+  }
+]
+```
+
+### Get Cartesia Voice Details
+
+```
+GET /api/cartesia/voices/{voice_id}
 ```
 
 ### OpenRouter Providers

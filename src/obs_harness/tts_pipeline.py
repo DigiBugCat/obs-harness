@@ -2,24 +2,55 @@
 
 import asyncio
 import logging
-from dataclasses import dataclass
-from typing import AsyncIterator, Awaitable, Callable, Union
+from dataclasses import dataclass, field
+from typing import Any, AsyncIterator, Awaitable, Callable, Union
 
-from .elevenlabs_ws import ElevenLabsWSClient, ElevenLabsWSError
+from .tts import (
+    TTSProviderType,
+    TTSProviderClient,
+    create_tts_client,
+    get_connect_kwargs,
+)
+from .tts.elevenlabs_ws import ElevenLabsWSError
+from .tts.cartesia_ws import CartesiaWSError
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class TTSStreamConfig:
-    """Voice configuration for TTS streaming."""
+    """Voice configuration for TTS streaming.
 
-    voice_id: str
+    Supports both the new provider abstraction (provider + settings)
+    and legacy ElevenLabs fields for backwards compatibility.
+    """
+
+    # Provider selection (new abstraction)
+    provider: TTSProviderType = TTSProviderType.ELEVENLABS
+    settings: dict[str, Any] = field(default_factory=dict)
+
+    # Legacy ElevenLabs fields (used if settings is empty)
+    voice_id: str = ""
     model_id: str = "eleven_multilingual_v2"
     stability: float = 0.5
     similarity_boost: float = 0.75
     style: float = 0.0
     speed: float = 1.0
+
+    def get_settings(self) -> dict[str, Any]:
+        """Get provider settings, falling back to legacy fields if needed."""
+        if self.settings:
+            return self.settings
+
+        # Backwards compatibility: construct from legacy ElevenLabs fields
+        return {
+            "voice_id": self.voice_id,
+            "model_id": self.model_id,
+            "stability": self.stability,
+            "similarity_boost": self.similarity_boost,
+            "style": self.style,
+            "speed": self.speed,
+        }
 
 
 @dataclass
@@ -89,7 +120,7 @@ class TTSStreamer:
 
         self._cancelled = False
         self._spoken_text = ""  # Text that was actually converted to audio
-        self._tts_client: ElevenLabsWSClient | None = None  # For cancellation
+        self._tts_client: TTSProviderClient | None = None  # For cancellation
         self._receive_task: asyncio.Task | None = None
 
     async def stream(self, text_source: Union[str, AsyncIterator[str]]) -> str:
@@ -114,20 +145,17 @@ class TTSStreamer:
                 await self._send_text_start()
                 text_started = True
 
-            # 2. Create and connect TTS client
-            self._tts_client = ElevenLabsWSClient(
-                voice_id=self._tts_config.voice_id,
-                model_id=self._tts_config.model_id,
-                sync_alignment=True,
+            # 2. Create and connect TTS client using factory
+            settings = self._tts_config.get_settings()
+            self._tts_client = create_tts_client(
+                provider=self._tts_config.provider,
+                settings=settings,
             )
 
             try:
-                await self._tts_client.connect(
-                    stability=self._tts_config.stability,
-                    similarity_boost=self._tts_config.similarity_boost,
-                    style=self._tts_config.style,
-                    speed=self._tts_config.speed,
-                )
+                # Connect with provider-specific settings
+                connect_kwargs = get_connect_kwargs(self._tts_config.provider, settings)
+                await self._tts_client.connect(**connect_kwargs)
 
                 # 3. Start audio stream
                 await self._send_audio_start()
@@ -178,11 +206,11 @@ class TTSStreamer:
                 await self._send_text_end()
             raise
 
-    async def _receive_audio(self, tts_client: ElevenLabsWSClient) -> None:
+    async def _receive_audio(self, tts_client: TTSProviderClient) -> None:
         """Receive audio and word timing from TTS WebSocket.
 
         Args:
-            tts_client: The ElevenLabs WebSocket client
+            tts_client: The TTS provider WebSocket client
         """
         try:
             async for chunk in tts_client.iter_audio_with_timing():

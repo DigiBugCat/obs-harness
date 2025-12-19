@@ -35,6 +35,9 @@ async def init_db(db_url: str = "sqlite+aiosqlite:///obs_harness.db") -> None:
         # Run migrations for existing tables (SQLite doesn't support IF NOT EXISTS for columns)
         migrations = [
             "ALTER TABLE character ADD COLUMN persist_memory BOOLEAN DEFAULT 0",
+            # TTS provider abstraction migrations
+            "ALTER TABLE character ADD COLUMN tts_provider TEXT DEFAULT 'elevenlabs'",
+            "ALTER TABLE character ADD COLUMN tts_settings TEXT DEFAULT NULL",
         ]
         for migration in migrations:
             try:

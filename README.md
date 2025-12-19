@@ -12,6 +12,7 @@ Push audio and animated text to OBS via browser sources. Features AI-powered cha
 - **Audio Playback** - Play audio files or stream live audio to browser sources
 - **Text Overlays** - Animated text with typewriter, fade, slide, bounce, and wave effects
 - **AI Characters** - Persistent characters with LLM chat and TTS voice responses
+- **Multiple TTS Providers** - Choose between ElevenLabs and Cartesia for text-to-speech
 - **Twitch Integration** - Characters can read and respond to live Twitch chat
 - **Web Dashboard** - Monitor channels, manage characters, and test controls
 - **Text Editor** - Visual editor for creating text animation presets
@@ -46,7 +47,8 @@ Push audio and animated text to OBS via browser sources. Features AI-powered cha
    ```
 
 4. **Get API keys**
-   - [ElevenLabs](https://elevenlabs.io/) - For text-to-speech (required for voice features)
+   - [ElevenLabs](https://elevenlabs.io/) - For ElevenLabs TTS (optional if using Cartesia)
+   - [Cartesia](https://cartesia.ai/) - For Cartesia TTS (optional if using ElevenLabs)
    - [OpenRouter](https://openrouter.ai/) - For LLM chat completions (required for AI chat)
 
 ## Environment Variables
@@ -54,8 +56,9 @@ Push audio and animated text to OBS via browser sources. Features AI-powered cha
 Create a `.env` file in the project root:
 
 ```env
-# Required for TTS
-ELEVENLABS_API_KEY=sk_...
+# TTS Providers (at least one required for voice features)
+ELEVENLABS_API_KEY=sk_...     # For ElevenLabs TTS
+CARTESIA_API_KEY=sk_car_...   # For Cartesia TTS
 
 # Required for AI chat
 OPENROUTER_API_KEY=sk-or-...
@@ -79,7 +82,8 @@ TWITCH_CLIENT_ID=your_twitch_client_id
 
    Use the dashboard to create a character with:
    - Name (used as channel identifier)
-   - ElevenLabs voice ID
+   - TTS provider (ElevenLabs or Cartesia)
+   - Voice ID for your chosen provider
    - OpenRouter model (e.g., `anthropic/claude-3.5-sonnet`)
    - System prompt for AI personality
 
@@ -156,7 +160,8 @@ Characters are persistent entities that combine voice, text styling, and AI conf
 
 Use the dashboard or API to create characters with:
 - **name** - Unique identifier (used in channel URLs)
-- **voice_id** - ElevenLabs voice ID
+- **tts_provider** - `elevenlabs` or `cartesia`
+- **tts_settings** - Provider-specific voice configuration (voice ID, model, speed, etc.)
 - **model** - OpenRouter model ID (e.g., `anthropic/claude-3.5-sonnet`)
 - **system_prompt** - AI personality and instructions
 - **twitch_chat_enabled** - Whether to include Twitch chat in AI context

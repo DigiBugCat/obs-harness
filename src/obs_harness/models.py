@@ -1,12 +1,18 @@
 """Database schemas and API models for OBS Harness."""
 
+from __future__ import annotations
+
+import json
 from datetime import datetime
 from enum import Enum
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
 from sqlmodel import Field as SQLField
 from sqlmodel import SQLModel
+
+if TYPE_CHECKING:
+    from .tts.provider import TTSProviderType
 
 
 # =============================================================================
@@ -88,7 +94,11 @@ class Character(SQLModel, table=True):
     text_position_y: float = SQLField(default=0.5)
     text_duration: int = SQLField(default=3000)
 
-    # Voice settings (required for TTS)
+    # TTS Provider settings
+    tts_provider: str = SQLField(default="elevenlabs")  # "elevenlabs" | "cartesia"
+    tts_settings: str | None = SQLField(default=None)  # JSON blob for provider-specific settings
+
+    # Voice settings (legacy - kept for backwards compatibility with ElevenLabs)
     elevenlabs_voice_id: str = SQLField()
     elevenlabs_model_id: str = SQLField(default="eleven_multilingual_v2")
     voice_stability: float = SQLField(default=0.5)
@@ -217,12 +227,16 @@ class CharacterCreate(BaseModel):
     text_position_y: float = Field(default=0.5, ge=0.0, le=1.0)
     text_duration: int = Field(default=3000, ge=500, le=30000)
 
-    # Voice settings
+    # TTS Provider settings
+    tts_provider: str = "elevenlabs"  # "elevenlabs" | "cartesia"
+    tts_settings: dict | None = None  # Provider-specific settings JSON
+
+    # Voice settings (legacy ElevenLabs fields - used if tts_settings is None)
     elevenlabs_model_id: str = "eleven_multilingual_v2"
     voice_stability: float = Field(default=0.5, ge=0.0, le=1.0)
     voice_similarity_boost: float = Field(default=0.75, ge=0.0, le=1.0)
     voice_style: float = Field(default=0.0, ge=0.0, le=1.0)
-    voice_speed: float = Field(default=1.0, ge=0.7, le=1.2)  # ElevenLabs WS limit
+    voice_speed: float = Field(default=1.0, ge=0.5, le=2.0)  # Expanded range for Cartesia
 
     # AI settings (optional)
     system_prompt: str | None = None
@@ -265,13 +279,17 @@ class CharacterUpdate(BaseModel):
     text_position_y: float | None = Field(default=None, ge=0.0, le=1.0)
     text_duration: int | None = Field(default=None, ge=500, le=30000)
 
-    # Voice settings
+    # TTS Provider settings
+    tts_provider: str | None = None  # "elevenlabs" | "cartesia"
+    tts_settings: dict | None = None  # Provider-specific settings JSON
+
+    # Voice settings (legacy ElevenLabs fields)
     elevenlabs_voice_id: str | None = None
     elevenlabs_model_id: str | None = None
     voice_stability: float | None = Field(default=None, ge=0.0, le=1.0)
     voice_similarity_boost: float | None = Field(default=None, ge=0.0, le=1.0)
     voice_style: float | None = Field(default=None, ge=0.0, le=1.0)
-    voice_speed: float | None = Field(default=None, ge=0.7, le=1.2)  # ElevenLabs WS limit
+    voice_speed: float | None = Field(default=None, ge=0.5, le=2.0)  # Expanded range
 
     # AI settings
     system_prompt: str | None = None
@@ -316,7 +334,11 @@ class CharacterResponse(BaseModel):
     text_position_y: float
     text_duration: int
 
-    # Voice settings
+    # TTS Provider settings
+    tts_provider: str
+    tts_settings: dict | None
+
+    # Voice settings (legacy ElevenLabs fields)
     elevenlabs_voice_id: str
     elevenlabs_model_id: str
     voice_stability: float
@@ -507,6 +529,60 @@ class BrowserEvent(BaseModel):
     event: str
     file: str | None = None
     message: str | None = None
+
+
+# =============================================================================
+# TTS Provider Helper Functions
+# =============================================================================
+
+
+def get_character_tts_config(character: Character) -> tuple[TTSProviderType, dict]:
+    """Get TTS provider and settings for a character.
+
+    Handles backwards compatibility by falling back to legacy ElevenLabs fields
+    if tts_settings is not set.
+
+    Args:
+        character: The character to get TTS config for
+
+    Returns:
+        Tuple of (provider_type, settings_dict)
+
+    Raises:
+        ValueError: If provider is Cartesia but tts_settings is not set,
+                    or if tts_settings contains invalid JSON
+    """
+    from .tts.provider import TTSProviderType
+
+    provider = TTSProviderType(character.tts_provider or "elevenlabs")
+
+    # If tts_settings is set, use it
+    if character.tts_settings:
+        try:
+            settings = json.loads(character.tts_settings)
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"Character '{character.name}' has invalid tts_settings JSON: {e}"
+            )
+        return provider, settings
+
+    # Backwards compatibility: construct from legacy ElevenLabs fields
+    if provider == TTSProviderType.ELEVENLABS:
+        return provider, {
+            "voice_id": character.elevenlabs_voice_id,
+            "model_id": character.elevenlabs_model_id,
+            "stability": character.voice_stability,
+            "similarity_boost": character.voice_similarity_boost,
+            "style": character.voice_style,
+            "speed": character.voice_speed,
+        }
+    elif provider == TTSProviderType.CARTESIA:
+        # Cartesia requires tts_settings to be set
+        raise ValueError(
+            f"Character '{character.name}' uses Cartesia but has no tts_settings configured"
+        )
+
+    raise ValueError(f"Unknown TTS provider: {provider}")
 
 
 # =============================================================================

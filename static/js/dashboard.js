@@ -381,6 +381,94 @@
         }
     }
 
+    // =========================================================================
+    // Cartesia TTS Functions
+    // =========================================================================
+
+    let cartesiaVoices = [];
+
+    async function loadCartesiaVoices() {
+        try {
+            cartesiaVoices = await apiCall('/api/cartesia/voices', 'GET', null, false);
+            const select = document.getElementById('cartesia-voice-select');
+            if (!select) return;
+
+            select.innerHTML = '<option value="">-- Select a voice --</option>';
+            cartesiaVoices.forEach(voice => {
+                const option = document.createElement('option');
+                option.value = voice.voice_id;
+                option.textContent = `${voice.name} (${voice.language})`;
+                select.appendChild(option);
+            });
+        } catch (e) {
+            console.error('Error loading Cartesia voices:', e);
+            const select = document.getElementById('cartesia-voice-select');
+            if (select) {
+                select.innerHTML = '<option value="">Failed to load voices</option>';
+            }
+        }
+    }
+
+    function selectCartesiaVoice(voiceId) {
+        // When a voice is selected from dropdown, update the manual ID field
+        const manualInput = document.getElementById('cartesia-voice-id');
+        if (manualInput && voiceId) {
+            manualInput.value = voiceId;
+        }
+        updateCartesiaVoiceInfo(voiceId);
+    }
+
+    function onCartesiaManualIdChange(voiceId) {
+        // When manual ID is entered, try to find and select in dropdown
+        const select = document.getElementById('cartesia-voice-select');
+        if (select && voiceId) {
+            // Check if this ID exists in the dropdown
+            const option = Array.from(select.options).find(o => o.value === voiceId);
+            if (option) {
+                select.value = voiceId;
+                updateCartesiaVoiceInfo(voiceId);
+            } else {
+                // Custom ID - clear dropdown selection
+                select.value = '';
+                document.getElementById('cartesia-voice-info').textContent = 'Custom voice ID';
+            }
+        }
+    }
+
+    function updateCartesiaVoiceInfo(voiceId) {
+        const infoEl = document.getElementById('cartesia-voice-info');
+        if (!infoEl) return;
+
+        if (!voiceId) {
+            infoEl.textContent = '';
+            return;
+        }
+
+        const voice = cartesiaVoices.find(v => v.voice_id === voiceId);
+        if (voice && voice.description) {
+            infoEl.textContent = voice.description;
+        } else {
+            infoEl.textContent = '';
+        }
+    }
+
+    function toggleTTSProvider(provider) {
+        const elevenlabsSettings = document.getElementById('elevenlabs-settings');
+        const cartesiaSettings = document.getElementById('cartesia-settings');
+
+        if (provider === 'cartesia') {
+            elevenlabsSettings.style.display = 'none';
+            cartesiaSettings.style.display = 'block';
+            // Load voices on first switch
+            if (cartesiaVoices.length === 0) {
+                loadCartesiaVoices();
+            }
+        } else {
+            elevenlabsSettings.style.display = 'block';
+            cartesiaSettings.style.display = 'none';
+        }
+    }
+
     // Character actions
     async function sendCharacterSpeak(characterName, text, showText) {
         return apiCall(`/api/characters/${characterName}/speak`, 'POST', {
@@ -681,22 +769,63 @@
         document.getElementById('character-color').value = character.color;
         document.getElementById('character-icon').value = character.icon;
 
-        // Voice settings
-        document.getElementById('character-voice-id').value = character.elevenlabs_voice_id;
-        const modelId = character.elevenlabs_model_id || 'eleven_multilingual_v2';
-        document.getElementById('character-tts-model').value = modelId;
-        // Update settings visibility based on model capabilities
-        updateModelInfo(modelId);
-        // Load voice info to show compatible models
-        loadVoiceModels(character.elevenlabs_voice_id);
-        document.getElementById('character-stability').value = Math.round(character.voice_stability * 100);
-        document.getElementById('character-stability-value').textContent = character.voice_stability.toFixed(2);
-        document.getElementById('character-similarity').value = Math.round(character.voice_similarity_boost * 100);
-        document.getElementById('character-similarity-value').textContent = character.voice_similarity_boost.toFixed(2);
-        document.getElementById('character-voice-style').value = Math.round(character.voice_style * 100);
-        document.getElementById('character-style-value').textContent = character.voice_style.toFixed(2);
-        document.getElementById('character-voice-speed').value = Math.round(character.voice_speed * 100);
-        document.getElementById('character-speed-value').textContent = character.voice_speed.toFixed(1);
+        // TTS Provider settings
+        const ttsProvider = character.tts_provider || 'elevenlabs';
+        document.getElementById('character-tts-provider').value = ttsProvider;
+        toggleTTSProvider(ttsProvider);
+
+        if (ttsProvider === 'cartesia' && character.tts_settings) {
+            // Cartesia settings - need to load voices first, then select
+            loadCartesiaVoices().then(() => {
+                const settings = character.tts_settings;
+                const voiceId = settings.voice_id || '';
+                // Set the manual voice ID field
+                document.getElementById('cartesia-voice-id').value = voiceId;
+                // Try to select in dropdown if it exists
+                const select = document.getElementById('cartesia-voice-select');
+                if (select && voiceId) {
+                    const option = Array.from(select.options).find(o => o.value === voiceId);
+                    if (option) {
+                        select.value = voiceId;
+                    }
+                }
+                document.getElementById('cartesia-model-id').value = settings.model_id || 'sonic-2024-12-12';
+                document.getElementById('cartesia-language').value = settings.language || 'en';
+                // Clamp speed to valid Cartesia range (0.6-1.5)
+                const rawSpeed = settings.speed || 1.0;
+                const speed = Math.max(0.6, Math.min(1.5, rawSpeed));
+                document.getElementById('cartesia-speed').value = Math.round(speed * 100);
+                document.getElementById('cartesia-speed-value').textContent = speed.toFixed(1);
+                if (rawSpeed !== speed) {
+                    console.warn(`Cartesia speed ${rawSpeed} was clamped to ${speed} (valid: 0.6-1.5)`);
+                }
+                updateCartesiaVoiceInfo(voiceId);
+            });
+        } else {
+            // ElevenLabs settings (legacy or from tts_settings)
+            const settings = character.tts_settings || {};
+            document.getElementById('character-voice-id').value = settings.voice_id || character.elevenlabs_voice_id;
+            const modelId = settings.model_id || character.elevenlabs_model_id || 'eleven_multilingual_v2';
+            document.getElementById('character-tts-model').value = modelId;
+            updateModelInfo(modelId);
+            loadVoiceModels(settings.voice_id || character.elevenlabs_voice_id);
+
+            const stability = settings.stability ?? character.voice_stability;
+            document.getElementById('character-stability').value = Math.round(stability * 100);
+            document.getElementById('character-stability-value').textContent = stability.toFixed(2);
+
+            const similarity = settings.similarity_boost ?? character.voice_similarity_boost;
+            document.getElementById('character-similarity').value = Math.round(similarity * 100);
+            document.getElementById('character-similarity-value').textContent = similarity.toFixed(2);
+
+            const style = settings.style ?? character.voice_style;
+            document.getElementById('character-voice-style').value = Math.round(style * 100);
+            document.getElementById('character-style-value').textContent = style.toFixed(2);
+
+            const speed = settings.speed ?? character.voice_speed;
+            document.getElementById('character-voice-speed').value = Math.round(speed * 100);
+            document.getElementById('character-speed-value').textContent = speed.toFixed(1);
+        }
 
         // Audio settings
         document.getElementById('character-volume').value = Math.round(character.default_volume * 100);
@@ -747,11 +876,38 @@
     async function handleCharacterFormSubmit(e) {
         e.preventDefault();
 
+        const ttsProvider = document.getElementById('character-tts-provider').value;
+
+        // Build TTS settings based on provider
+        let ttsSettings = null;
+        if (ttsProvider === 'cartesia') {
+            ttsSettings = {
+                voice_id: document.getElementById('cartesia-voice-id').value,
+                model_id: document.getElementById('cartesia-model-id').value,
+                language: document.getElementById('cartesia-language').value,
+                speed: parseInt(document.getElementById('cartesia-speed').value) / 100,
+            };
+        } else {
+            // ElevenLabs - store in tts_settings for new abstraction
+            ttsSettings = {
+                voice_id: document.getElementById('character-voice-id').value,
+                model_id: document.getElementById('character-tts-model').value,
+                stability: parseInt(document.getElementById('character-stability').value) / 100,
+                similarity_boost: parseInt(document.getElementById('character-similarity').value) / 100,
+                style: parseInt(document.getElementById('character-voice-style').value) / 100,
+                speed: parseInt(document.getElementById('character-voice-speed').value) / 100,
+            };
+        }
+
         const data = {
             name: document.getElementById('character-name').value,
             description: document.getElementById('character-description').value || null,
             color: document.getElementById('character-color').value,
             icon: document.getElementById('character-icon').value,
+            // TTS provider abstraction
+            tts_provider: ttsProvider,
+            tts_settings: ttsSettings,
+            // Legacy ElevenLabs fields (for backwards compatibility)
             elevenlabs_voice_id: document.getElementById('character-voice-id').value,
             elevenlabs_model_id: document.getElementById('character-tts-model').value,
             voice_stability: parseInt(document.getElementById('character-stability').value) / 100,
@@ -1155,8 +1311,10 @@
                 <p class="channel-description">${descriptionText}</p>
                 <div class="channel-controls">
                     <div class="control-row" style="font-size: 0.75rem; color: var(--text-secondary);">
-                        <span>Voice: ${character.elevenlabs_voice_id.substring(0, 12)}...</span>
-                        <span>TTS: ${(character.elevenlabs_model_id || 'eleven_multilingual_v2').replace('eleven_', '').replace('_', ' ')}</span>
+                        <span>TTS: ${character.tts_provider === 'cartesia' ? 'Cartesia' : 'ElevenLabs'}</span>
+                        <span>${character.tts_provider === 'cartesia'
+                            ? (character.tts_settings?.model_id || 'sonic').replace('sonic-', '')
+                            : (character.elevenlabs_model_id || 'multilingual_v2').replace('eleven_', '').replace('_', ' ')}</span>
                     </div>
                     ${character.system_prompt ? `<div class="control-row" style="font-size: 0.75rem; color: var(--text-secondary);"><span>AI: ${character.model.split('/').pop()}</span></div>` : ''}
                 </div>
@@ -1210,6 +1368,13 @@
     // ElevenLabs models
     window.loadVoiceModels = loadVoiceModels;
     window.updateModelInfo = updateModelInfo;
+
+    // Cartesia TTS
+    window.toggleTTSProvider = toggleTTSProvider;
+    window.updateCartesiaVoiceInfo = updateCartesiaVoiceInfo;
+    window.loadCartesiaVoices = loadCartesiaVoices;
+    window.selectCartesiaVoice = selectCartesiaVoice;
+    window.onCartesiaManualIdChange = onCartesiaManualIdChange;
 
     // Copy URL function
     window.copyCharacterUrl = async function(characterName) {

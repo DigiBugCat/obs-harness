@@ -590,42 +590,99 @@
                     <div class="section-title" style="font-size: 0.75rem; margin-bottom: 0.75rem;">Voice Settings</div>
                 </div>
                 <div class="form-group">
-                    <label>ElevenLabs Voice ID *</label>
-                    <input type="text" id="character-voice-id" required placeholder="e.g., 21m00Tcm4TlvDq8ikWAM"
-                           onchange="window.loadVoiceModels(this.value)">
-                </div>
-                <div class="form-group">
-                    <label>TTS Model</label>
-                    <select id="character-tts-model" style="width: 100%;"
-                            onchange="if(window.updateModelInfo) window.updateModelInfo(this.value)">
-                        <option value="eleven_multilingual_v2">Eleven Multilingual v2</option>
-                        <option value="eleven_flash_v2_5">Eleven Flash v2.5 (Fast)</option>
-                        <option value="eleven_turbo_v2_5">Eleven Turbo v2.5</option>
+                    <label>TTS Provider</label>
+                    <select id="character-tts-provider" style="width: 100%;" onchange="window.toggleTTSProvider(this.value)">
+                        <option value="elevenlabs">ElevenLabs</option>
+                        <option value="cartesia">Cartesia</option>
                     </select>
-                    <small id="tts-model-info" style="color: var(--text-secondary); font-size: 0.7rem; display: block; margin-top: 0.25rem;"></small>
                 </div>
-                <div class="form-row">
+
+                <!-- ElevenLabs Settings -->
+                <div id="elevenlabs-settings">
                     <div class="form-group">
-                        <label>Stability (<span id="character-stability-value">0.50</span>)</label>
-                        <input type="range" id="character-stability" min="0" max="100" value="50"
-                               oninput="document.getElementById('character-stability-value').textContent = (this.value / 100).toFixed(2)">
-                    </div>
-                    <div class="form-group" id="voice-similarity-row">
-                        <label>Similarity (<span id="character-similarity-value">0.75</span>)</label>
-                        <input type="range" id="character-similarity" min="0" max="100" value="75"
-                               oninput="document.getElementById('character-similarity-value').textContent = (this.value / 100).toFixed(2)">
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group" id="voice-style-row">
-                        <label>Style (<span id="character-style-value">0.00</span>)</label>
-                        <input type="range" id="character-voice-style" min="0" max="100" value="0"
-                               oninput="document.getElementById('character-style-value').textContent = (this.value / 100).toFixed(2)">
+                        <label>ElevenLabs Voice ID *</label>
+                        <input type="text" id="character-voice-id" placeholder="e.g., 21m00Tcm4TlvDq8ikWAM"
+                               onchange="window.loadVoiceModels(this.value)">
                     </div>
                     <div class="form-group">
-                        <label>Speed (<span id="character-speed-value">1.0</span>x)</label>
-                        <input type="range" id="character-voice-speed" min="70" max="120" value="100"
-                               oninput="document.getElementById('character-speed-value').textContent = (this.value / 100).toFixed(1)">
+                        <label>TTS Model</label>
+                        <select id="character-tts-model" style="width: 100%;"
+                                onchange="if(window.updateModelInfo) window.updateModelInfo(this.value)">
+                            <option value="eleven_multilingual_v2">Eleven Multilingual v2</option>
+                            <option value="eleven_flash_v2_5">Eleven Flash v2.5 (Fast)</option>
+                            <option value="eleven_turbo_v2_5">Eleven Turbo v2.5</option>
+                        </select>
+                        <small id="tts-model-info" style="color: var(--text-secondary); font-size: 0.7rem; display: block; margin-top: 0.25rem;"></small>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Stability (<span id="character-stability-value">0.50</span>)</label>
+                            <input type="range" id="character-stability" min="0" max="100" value="50"
+                                   oninput="document.getElementById('character-stability-value').textContent = (this.value / 100).toFixed(2)">
+                        </div>
+                        <div class="form-group" id="voice-similarity-row">
+                            <label>Similarity (<span id="character-similarity-value">0.75</span>)</label>
+                            <input type="range" id="character-similarity" min="0" max="100" value="75"
+                                   oninput="document.getElementById('character-similarity-value').textContent = (this.value / 100).toFixed(2)">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" id="voice-style-row">
+                            <label>Style (<span id="character-style-value">0.00</span>)</label>
+                            <input type="range" id="character-voice-style" min="0" max="100" value="0"
+                                   oninput="document.getElementById('character-style-value').textContent = (this.value / 100).toFixed(2)">
+                        </div>
+                        <div class="form-group">
+                            <label>Speed (<span id="character-speed-value">1.0</span>x)</label>
+                            <input type="range" id="character-voice-speed" min="70" max="120" value="100"
+                                   oninput="document.getElementById('character-speed-value').textContent = (this.value / 100).toFixed(1)">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Cartesia Settings -->
+                <div id="cartesia-settings" style="display: none;">
+                    <div class="form-group">
+                        <label>Cartesia Voice *</label>
+                        <select id="cartesia-voice-select" style="width: 100%;" onchange="window.selectCartesiaVoice(this.value)">
+                            <option value="">Loading voices...</option>
+                        </select>
+                        <small id="cartesia-voice-info" style="color: var(--text-secondary); font-size: 0.7rem; display: block; margin-top: 0.25rem;"></small>
+                    </div>
+                    <div class="form-group">
+                        <label>Or Enter Voice ID Manually</label>
+                        <input type="text" id="cartesia-voice-id" placeholder="e.g., a0e99841-438c-4a64-b679-ae501e7d6091"
+                               onchange="window.onCartesiaManualIdChange(this.value)">
+                    </div>
+                    <div class="form-group">
+                        <label>Model</label>
+                        <select id="cartesia-model-id" style="width: 100%;">
+                            <option value="sonic-2024-12-12">Sonic (Latest)</option>
+                            <option value="sonic-english">Sonic English</option>
+                            <option value="sonic-multilingual">Sonic Multilingual</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Language</label>
+                            <select id="cartesia-language" style="width: 100%;">
+                                <option value="en">English</option>
+                                <option value="es">Spanish</option>
+                                <option value="fr">French</option>
+                                <option value="de">German</option>
+                                <option value="it">Italian</option>
+                                <option value="pt">Portuguese</option>
+                                <option value="ja">Japanese</option>
+                                <option value="ko">Korean</option>
+                                <option value="zh">Chinese</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Speed (<span id="cartesia-speed-value">1.0</span>x)</label>
+                            <input type="range" id="cartesia-speed" min="60" max="150" value="100"
+                                   oninput="document.getElementById('cartesia-speed-value').textContent = (this.value / 100).toFixed(1)">
+                            <small style="color: var(--text-secondary); font-size: 0.65rem;">Range: 0.6x - 1.5x</small>
+                        </div>
                     </div>
                 </div>
 

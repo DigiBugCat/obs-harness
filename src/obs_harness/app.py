@@ -25,7 +25,7 @@ from sqlmodel import select
 from .chat_pipeline import ChatPipeline, ChatPipelineConfig
 from .database import close_db, get_session, init_db
 from .elevenlabs import ElevenLabsClient, ElevenLabsError
-from .elevenlabs_ws import ElevenLabsWSError
+from .tts import TTSProviderType, ElevenLabsWSError, CartesiaWSError, ElevenLabsSettings, CartesiaSettings
 from .tts_pipeline import TTSStreamer, TTSStreamConfig, TextDisplayConfig
 from .openrouter import OpenRouterClient
 from .models import (
@@ -57,6 +57,7 @@ from .models import (
     TwitchTokenRequest,
     VolumeCommand,
     WordTimingCommand,
+    get_character_tts_config,
 )
 from .twitch_chat import TwitchChatManager
 
@@ -852,6 +853,8 @@ def create_app(
             twitch_chat_max_messages=c.twitch_chat_max_messages,
             memory_enabled=c.memory_enabled,
             persist_memory=c.persist_memory,
+            tts_provider=c.tts_provider,
+            tts_settings=json.loads(c.tts_settings) if c.tts_settings else None,
             connected=manager.is_connected(c.name),
             playing=manager._channel_state.get(c.name, {}).get("playing", False),
             streaming=manager._channel_state.get(c.name, {}).get("streaming", False),
@@ -936,12 +939,103 @@ def create_app(
             raise HTTPException(status_code=502, detail=str(e))
 
     # -------------------------------------------------------------------------
+    # Cartesia API endpoints
+    # -------------------------------------------------------------------------
+
+    @app.get("/api/cartesia/models")
+    async def list_cartesia_models() -> list[dict]:
+        """Get list of available Cartesia TTS models."""
+        from .tts.cartesia import CartesiaClient, CartesiaError
+
+        try:
+            async with CartesiaClient() as client:
+                return await client.get_models()
+        except CartesiaError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+        except ValueError as e:
+            # API key not configured
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get("/api/cartesia/voices")
+    async def list_cartesia_voices() -> list[dict]:
+        """Get list of available Cartesia voices."""
+        from .tts.cartesia import CartesiaClient, CartesiaError
+
+        try:
+            async with CartesiaClient() as client:
+                voices = await client.get_voices()
+                return [
+                    {
+                        "voice_id": v.get("id"),
+                        "name": v.get("name"),
+                        "description": v.get("description"),
+                        "language": v.get("language"),
+                        "is_public": v.get("is_public"),
+                    }
+                    for v in voices
+                ]
+        except CartesiaError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+        except ValueError as e:
+            # API key not configured
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get("/api/cartesia/voices/{voice_id}")
+    async def get_cartesia_voice(voice_id: str) -> dict:
+        """Get details for a specific Cartesia voice."""
+        from .tts.cartesia import CartesiaClient, CartesiaError
+
+        try:
+            async with CartesiaClient() as client:
+                voice = await client.get_voice(voice_id)
+                return {
+                    "voice_id": voice.get("id"),
+                    "name": voice.get("name"),
+                    "description": voice.get("description"),
+                    "language": voice.get("language"),
+                    "is_public": voice.get("is_public"),
+                    "created_at": voice.get("created_at"),
+                }
+        except CartesiaError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+        except ValueError as e:
+            # API key not configured
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # -------------------------------------------------------------------------
     # Character CRUD and interaction endpoints
     # -------------------------------------------------------------------------
+
+    def _validate_tts_settings(provider: str | None, settings: dict | None) -> None:
+        """Validate TTS settings match the provider schema.
+
+        Raises:
+            HTTPException: If settings are invalid for the provider
+        """
+        from pydantic import ValidationError
+
+        if not settings:
+            return  # No settings to validate
+
+        provider_type = TTSProviderType(provider or "elevenlabs")
+
+        try:
+            if provider_type == TTSProviderType.ELEVENLABS:
+                ElevenLabsSettings(**settings)
+            elif provider_type == TTSProviderType.CARTESIA:
+                CartesiaSettings(**settings)
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid TTS settings for {provider_type.value}: {e.errors()}"
+            )
 
     @app.post("/api/characters", status_code=201)
     async def create_character(request: CharacterCreate) -> Character:
         """Create a new character."""
+        # Validate TTS settings before saving
+        _validate_tts_settings(request.tts_provider, request.tts_settings)
+
         async with get_session() as session:
             # Check if character already exists
             result = await session.execute(
@@ -950,7 +1044,12 @@ def create_app(
             if result.scalar_one_or_none():
                 raise HTTPException(status_code=400, detail="Character already exists")
 
-            character = Character(**request.model_dump())
+            # Serialize tts_settings dict to JSON string for storage
+            data = request.model_dump()
+            if data.get("tts_settings") is not None:
+                data["tts_settings"] = json.dumps(data["tts_settings"])
+
+            character = Character(**data)
             session.add(character)
             await session.commit()
             await session.refresh(character)
@@ -989,7 +1088,16 @@ def create_app(
             if not character:
                 raise HTTPException(status_code=404, detail="Character not found")
 
+            # Validate TTS settings if being updated
+            # Use new provider if specified, otherwise use character's current provider
+            provider_for_validation = request.tts_provider if request.tts_provider is not None else character.tts_provider
+            if request.tts_settings is not None:
+                _validate_tts_settings(provider_for_validation, request.tts_settings)
+
             update_data = request.model_dump(exclude_unset=True)
+            # Serialize tts_settings dict to JSON string for storage
+            if "tts_settings" in update_data and update_data["tts_settings"] is not None:
+                update_data["tts_settings"] = json.dumps(update_data["tts_settings"])
             for key, value in update_data.items():
                 setattr(character, key, value)
             character.updated_at = datetime.utcnow()
@@ -1027,12 +1135,6 @@ def create_app(
         1. Looks up the character configuration
         2. Streams TTS audio to the connected browser
         """
-        # Check ElevenLabs API key
-        if not os.environ.get("ELEVENLABS_API_KEY"):
-            raise HTTPException(
-                status_code=500, detail="ELEVENLABS_API_KEY environment variable not set"
-            )
-
         # Look up character
         async with get_session() as session:
             result = await session.execute(
@@ -1042,6 +1144,24 @@ def create_app(
             if not character:
                 raise HTTPException(status_code=404, detail="Character not found")
 
+        # Get TTS provider and settings
+        try:
+            provider, settings = get_character_tts_config(character)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        # Check appropriate API key
+        if provider == TTSProviderType.ELEVENLABS:
+            if not os.environ.get("ELEVENLABS_API_KEY"):
+                raise HTTPException(
+                    status_code=500, detail="ELEVENLABS_API_KEY environment variable not set"
+                )
+        elif provider == TTSProviderType.CARTESIA:
+            if not os.environ.get("CARTESIA_API_KEY"):
+                raise HTTPException(
+                    status_code=500, detail="CARTESIA_API_KEY environment variable not set"
+                )
+
         # Verify character is connected
         if not manager.is_connected(name):
             raise HTTPException(
@@ -1050,12 +1170,8 @@ def create_app(
 
         # Create TTS and text display configs
         tts_config = TTSStreamConfig(
-            voice_id=character.elevenlabs_voice_id,
-            model_id=character.elevenlabs_model_id,
-            stability=character.voice_stability,
-            similarity_boost=character.voice_similarity_boost,
-            style=character.voice_style,
-            speed=character.voice_speed,
+            provider=provider,
+            settings=settings,
         )
         text_config = TextDisplayConfig(
             font_family=character.text_font_family,
@@ -1100,7 +1216,7 @@ def create_app(
                 await streamer.stream(request.text)
                 await harness._log_playback(name, request.text, "stream")
                 return {"success": True, "character": name}
-            except ElevenLabsWSError as e:
+            except (ElevenLabsWSError, CartesiaWSError) as e:
                 await harness.stop_stream(name)
                 raise HTTPException(status_code=500, detail=str(e))
             except Exception as e:
@@ -1116,17 +1232,13 @@ def create_app(
         This endpoint:
         1. Looks up the character configuration
         2. Validates system_prompt is set (required for AI chat)
-        3. Streams LLM response tokens through ElevenLabs TTS
+        3. Streams LLM response tokens through TTS (ElevenLabs or Cartesia)
         4. Sends audio and text to the browser in real-time
         """
-        # Check environment variables
+        # Check OpenRouter API key (required for LLM)
         if not os.environ.get("OPENROUTER_API_KEY"):
             raise HTTPException(
                 status_code=500, detail="OPENROUTER_API_KEY environment variable not set"
-            )
-        if not os.environ.get("ELEVENLABS_API_KEY"):
-            raise HTTPException(
-                status_code=500, detail="ELEVENLABS_API_KEY environment variable not set"
             )
 
         # Look up character
@@ -1144,6 +1256,24 @@ def create_app(
                 status_code=400,
                 detail="Character has no system_prompt configured. Use /speak endpoint for direct TTS.",
             )
+
+        # Get TTS provider and settings
+        try:
+            provider, settings = get_character_tts_config(character)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        # Check appropriate TTS API key
+        if provider == TTSProviderType.ELEVENLABS:
+            if not os.environ.get("ELEVENLABS_API_KEY"):
+                raise HTTPException(
+                    status_code=500, detail="ELEVENLABS_API_KEY environment variable not set"
+                )
+        elif provider == TTSProviderType.CARTESIA:
+            if not os.environ.get("CARTESIA_API_KEY"):
+                raise HTTPException(
+                    status_code=500, detail="CARTESIA_API_KEY environment variable not set"
+                )
 
         # Verify character is connected
         if not manager.is_connected(name):
@@ -1182,12 +1312,8 @@ def create_app(
 
         # Create TTS and text display configs
         tts_config = TTSStreamConfig(
-            voice_id=character.elevenlabs_voice_id,
-            model_id=character.elevenlabs_model_id,
-            stability=character.voice_stability,
-            similarity_boost=character.voice_similarity_boost,
-            style=character.voice_style,
-            speed=character.voice_speed,
+            provider=provider,
+            settings=settings,
         )
         text_config = TextDisplayConfig(
             font_family=character.text_font_family,
