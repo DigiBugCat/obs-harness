@@ -358,6 +358,15 @@ def create_app(
     # Conversation Memory Helpers
     # =========================================================================
 
+    def _parse_message_content(content: str) -> str | list:
+        """Parse message content, deserializing JSON if it's multimodal."""
+        if content.startswith("["):
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError:
+                pass
+        return content
+
     async def get_conversation_messages(character_name: str, persist: bool) -> list[dict]:
         """Get conversation messages for a character."""
         if persist:
@@ -371,7 +380,7 @@ def create_app(
                 return [
                     {
                         "role": m.role,
-                        "content": m.content,
+                        "content": _parse_message_content(m.content),
                         "interrupted": m.interrupted,
                         "generated_text": m.generated_text,
                     }
@@ -383,15 +392,22 @@ def create_app(
     async def save_conversation_message(
         character_name: str,
         role: str,
-        content: str,
+        content: str | list,
         persist: bool,
         interrupted: bool = False,
         generated_text: str | None = None,
     ) -> tuple[int, int | None]:
-        """Save a conversation message. Returns (in-memory index, db_id or None)."""
+        """Save a conversation message. Returns (in-memory index, db_id or None).
+
+        Content can be a string or a list (for multimodal messages with images).
+        Lists are JSON-serialized for database storage.
+        """
+        # For database storage, serialize list content to JSON
+        db_content = json.dumps(content) if isinstance(content, list) else content
+
         msg = {
             "role": role,
-            "content": content,
+            "content": content,  # Keep as list in memory for API format
             "interrupted": interrupted,
             "generated_text": generated_text,
         }
@@ -401,7 +417,7 @@ def create_app(
                 db_msg = ConversationMessage(
                     character_name=character_name,
                     role=role,
-                    content=content,
+                    content=db_content,  # JSON string for lists
                     interrupted=interrupted,
                     generated_text=generated_text,
                 )
@@ -1348,6 +1364,10 @@ def create_app(
         )
 
         # Create LLM pipeline configuration
+        images = None
+        if request.images:
+            images = [{"data": img.data, "media_type": img.media_type} for img in request.images]
+
         pipeline_config = ChatPipelineConfig(
             system_prompt=character.system_prompt,
             model=character.model,
@@ -1356,6 +1376,7 @@ def create_app(
             max_tokens=character.max_tokens,
             twitch_chat_context=twitch_chat_context,
             conversation_history=history,
+            images=images,
         )
 
         # Create and run pipeline
@@ -1381,8 +1402,18 @@ def create_app(
                     await save_conversation_message(
                         name, "context", twitch_chat_context, character.persist_memory
                     )
+                # Build user content - multimodal if images present
+                if images:
+                    user_content: str | list = [{"type": "text", "text": request.message}]
+                    for img in images:
+                        user_content.append({
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{img['media_type']};base64,{img['data']}"}
+                        })
+                else:
+                    user_content = request.message
                 await save_conversation_message(
-                    name, "user", request.message, character.persist_memory
+                    name, "user", user_content, character.persist_memory
                 )
 
                 # Check if we were cancelled (interrupted by stop button or new chat)

@@ -370,12 +370,20 @@ class CharacterResponse(BaseModel):
     created_at: datetime
 
 
+class ImageData(BaseModel):
+    """Image data for multimodal chat requests."""
+
+    data: str  # Base64-encoded image data
+    media_type: str = "image/png"  # MIME type (image/png, image/jpeg, image/webp, image/gif)
+
+
 class ChatRequest(BaseModel):
     """Request to chat with a character."""
 
     message: str
     show_text: bool = True
     twitch_chat_seconds: int | None = Field(default=None, ge=0, le=300)  # Override character default, 0 = disabled
+    images: list[ImageData] | None = None  # Optional images for vision models
 
 
 class ChatResponse(BaseModel):

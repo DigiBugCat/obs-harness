@@ -21,6 +21,7 @@
     let activeGenerationCharacter = null;  // Track which character has active generation
     let activeGenerationModal = null;  // 'speak' or 'chat'
     let sawStreamingStart = false;  // Track if we've seen streaming=true
+    let pendingImages = [];  // Images to attach to next chat message: [{data, mediaType}]
 
     // DOM elements
     const wsStatus = document.getElementById('ws-status');
@@ -477,13 +478,19 @@
         });
     }
 
-    async function sendCharacterChat(characterName, message, showText, twitchChatSeconds = null) {
+    async function sendCharacterChat(characterName, message, showText, twitchChatSeconds = null, images = null) {
         const body = {
             message,
             show_text: showText,
         };
         if (twitchChatSeconds !== null && twitchChatSeconds !== '') {
             body.twitch_chat_seconds = parseInt(twitchChatSeconds);
+        }
+        if (images && images.length > 0) {
+            body.images = images.map(img => ({
+                data: img.data,
+                media_type: img.mediaType
+            }));
         }
         return apiCall(`/api/characters/${characterName}/chat`, 'POST', body);
     }
@@ -1085,6 +1092,163 @@
 
     const chatModal = document.getElementById('chat-modal');
 
+    // -------------------------------------------------------------------------
+    // Image Handling for Chat
+    // -------------------------------------------------------------------------
+
+    const MAX_IMAGE_SIZE_MB = 20;  // OpenRouter limit
+    const MAX_IMAGES = 5;  // Reasonable limit per message
+
+    function clearPendingImages() {
+        pendingImages = [];
+        const previewsDiv = document.getElementById('chat-image-previews');
+        if (previewsDiv) {
+            while (previewsDiv.firstChild) {
+                previewsDiv.removeChild(previewsDiv.firstChild);
+            }
+        }
+    }
+
+    function addImagePreview(data, mediaType) {
+        if (pendingImages.length >= MAX_IMAGES) {
+            showToast(`Maximum ${MAX_IMAGES} images allowed`, 'warning');
+            return;
+        }
+
+        pendingImages.push({ data, mediaType });
+
+        const previewsDiv = document.getElementById('chat-image-previews');
+        const thumb = document.createElement('div');
+        thumb.className = 'image-preview-thumb';
+        thumb.dataset.index = pendingImages.length - 1;
+
+        const img = document.createElement('img');
+        img.src = `data:${mediaType};base64,${data}`;
+
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'remove-btn';
+        removeBtn.textContent = '×';
+        removeBtn.onclick = function() {
+            const idx = parseInt(thumb.dataset.index);
+            pendingImages.splice(idx, 1);
+            thumb.remove();
+            // Re-index remaining thumbs
+            document.querySelectorAll('#chat-image-previews .image-preview-thumb').forEach((t, i) => {
+                t.dataset.index = i;
+            });
+        };
+
+        thumb.appendChild(img);
+        thumb.appendChild(removeBtn);
+        previewsDiv.appendChild(thumb);
+    }
+
+    async function processImageFile(file) {
+        // Validate file type
+        if (!file.type.startsWith('image/')) {
+            showToast('Only image files are supported', 'error');
+            return;
+        }
+
+        // Validate size
+        if (file.size > MAX_IMAGE_SIZE_MB * 1024 * 1024) {
+            showToast(`Image too large (max ${MAX_IMAGE_SIZE_MB}MB)`, 'error');
+            return;
+        }
+
+        // Convert to base64
+        return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const result = e.target.result;
+                // Extract base64 data (remove data:image/xxx;base64, prefix)
+                const base64 = result.split(',')[1];
+                const mediaType = file.type || 'image/png';
+                addImagePreview(base64, mediaType);
+                resolve();
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+
+    // Attach Image button handler
+    function attachImage() {
+        document.getElementById('chat-image-input').click();
+    }
+
+    // File input change handler
+    async function handleImageSelect(event) {
+        const files = event.target.files;
+        for (const file of files) {
+            await processImageFile(file);
+        }
+        event.target.value = '';  // Reset input for re-selection
+    }
+
+    // Screen capture handler
+    async function captureScreen() {
+        try {
+            // Request screen capture permission
+            const stream = await navigator.mediaDevices.getDisplayMedia({
+                video: { mediaSource: 'screen' }
+            });
+
+            // Create video element to capture frame
+            const video = document.createElement('video');
+            video.srcObject = stream;
+            await video.play();
+
+            // Wait for video to be ready
+            await new Promise(resolve => {
+                if (video.readyState >= 2) {
+                    resolve();
+                } else {
+                    video.onloadeddata = resolve;
+                }
+            });
+
+            // Capture frame to canvas
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0);
+
+            // Stop stream (important!)
+            stream.getTracks().forEach(track => track.stop());
+
+            // Convert to base64
+            const dataUrl = canvas.toDataURL('image/png');
+            const base64 = dataUrl.split(',')[1];
+            addImagePreview(base64, 'image/png');
+
+            showToast('Screen captured!', 'success');
+        } catch (err) {
+            if (err.name === 'NotAllowedError') {
+                showToast('Screen capture permission denied', 'warning');
+            } else {
+                console.error('Screen capture error:', err);
+                showToast('Screen capture failed', 'error');
+            }
+        }
+    }
+
+    // Paste handler for chat textarea
+    function handleChatPaste(event) {
+        const items = event.clipboardData?.items;
+        if (!items) return;
+
+        for (const item of items) {
+            if (item.type.startsWith('image/')) {
+                event.preventDefault();  // Prevent pasting image as text
+                const file = item.getAsFile();
+                if (file) {
+                    processImageFile(file);
+                }
+            }
+        }
+    }
+
     async function openChatModal(characterName) {
         const character = characters.find(c => c.name === characterName);
         if (!character) return;
@@ -1105,6 +1269,14 @@
         document.getElementById('chat-twitch-details').style.display = 'none';
         document.getElementById('chat-send-btn').disabled = false;
 
+        // Clear pending images from previous chat
+        clearPendingImages();
+
+        // Add paste listener for images
+        const chatMessage = document.getElementById('chat-message');
+        chatMessage.removeEventListener('paste', handleChatPaste);  // Remove if exists
+        chatMessage.addEventListener('paste', handleChatPaste);
+
         // Load and display memory/history
         try {
             const memoryInfo = await getCharacterMemory(characterName);
@@ -1122,6 +1294,7 @@
     function closeChatModal() {
         chatModal.classList.remove('active');
         chatCharacter = null;
+        clearPendingImages();
     }
 
     async function sendChat() {
@@ -1158,11 +1331,17 @@
         sawStreamingStart = false;
 
         try {
-            // Add user message bubble immediately
-            addChatBubble('user', message, chatCharacter.name);
+            // Add user message bubble immediately (with image indicator if images attached)
+            const hasImages = pendingImages.length > 0;
+            const displayMessage = hasImages ? `[${pendingImages.length} image(s)] ${message}` : message;
+            addChatBubble('user', displayMessage, chatCharacter.name);
             document.getElementById('chat-message').value = '';
 
-            const result = await sendCharacterChat(chatCharacter.name, message, showText, twitchSeconds);
+            // Capture images before clearing
+            const imagesToSend = hasImages ? [...pendingImages] : null;
+            clearPendingImages();
+
+            const result = await sendCharacterChat(chatCharacter.name, message, showText, twitchSeconds, imagesToSend);
             if (result.error || result.detail) {
                 statusText.textContent = `Error: ${result.error || result.detail}`;
                 // Error - hide stop button immediately
@@ -1357,6 +1536,11 @@
     window.closeChatModal = closeChatModal;
     window.sendChat = sendChat;
     window.clearChatMemory = clearChatMemory;
+
+    // Image handling exports
+    window.attachImage = attachImage;
+    window.handleImageSelect = handleImageSelect;
+    window.captureScreen = captureScreen;
 
     // Preview exports
     window.previewCharacterTextStyle = previewCharacterTextStyle;
