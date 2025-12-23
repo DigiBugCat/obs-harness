@@ -170,6 +170,18 @@ class ConnectionManager:
             except Exception:
                 self.disconnect_dashboard(ws)
 
+    async def broadcast_character_sync(self, characters: list[dict]) -> None:
+        """Broadcast full character data to all dashboard connections.
+
+        Used when character settings are changed to sync across all clients.
+        """
+        message = {"type": "character_sync", "characters": characters}
+        for ws in self._dashboard_connections[:]:
+            try:
+                await ws.send_json(message)
+            except Exception:
+                self.disconnect_dashboard(ws)
+
 
 class OBSHarness:
     """API for controlling audio and text on OBS browser sources."""
@@ -1046,6 +1058,14 @@ def create_app(
                 detail=f"Invalid TTS settings for {provider_type.value}: {e.errors()}"
             )
 
+    async def _broadcast_all_characters() -> None:
+        """Fetch all characters from DB and broadcast to all dashboard clients."""
+        async with get_session() as session:
+            result = await session.execute(select(Character))
+            characters = list(result.scalars().all())
+            char_dicts = [_character_to_response(c).model_dump() for c in characters]
+            await manager.broadcast_character_sync(char_dicts)
+
     @app.post("/api/characters", status_code=201)
     async def create_character(request: CharacterCreate) -> Character:
         """Create a new character."""
@@ -1070,6 +1090,7 @@ def create_app(
             await session.commit()
             await session.refresh(character)
             await manager._notify_dashboard()
+            await _broadcast_all_characters()
             return character
 
     @app.get("/api/characters")
@@ -1121,6 +1142,7 @@ def create_app(
             await session.commit()
             await session.refresh(character)
             await manager._notify_dashboard()
+            await _broadcast_all_characters()
             return character
 
     @app.delete("/api/characters/{name}")
@@ -1141,6 +1163,7 @@ def create_app(
             await session.delete(character)
             await session.commit()
             await manager._notify_dashboard()
+            await _broadcast_all_characters()
             return {"success": True, "deleted": name}
 
     @app.post("/api/characters/{name}/speak")

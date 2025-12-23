@@ -109,8 +109,23 @@
                     }
                 }
             }
+        } else if (msg.type === 'character_sync') {
+            // Full character data sync from another client's changes
+            // Replace the entire character list with fresh data
+            characters = msg.characters;
+            renderCharacters();
+
+            // Show a subtle notification that data was synced (optional)
+            // Only show if we didn't just make the change ourselves
+            if (!recentLocalUpdate) {
+                console.log('Character data synced from server');
+            }
+            recentLocalUpdate = false;
         }
     }
+
+    // Track if we recently made a local update (to avoid showing sync notification)
+    let recentLocalUpdate = false;
 
     // =========================================================================
     // Toast Notifications
@@ -234,14 +249,16 @@
     }
 
     async function createCharacter(data) {
+        recentLocalUpdate = true;
         const result = await apiCall('/api/characters', 'POST', data);
-        await getAllCharacters();
+        // Don't call getAllCharacters - WebSocket sync will handle it
         return result;
     }
 
     async function updateCharacter(name, data) {
+        recentLocalUpdate = true;
         const result = await apiCall(`/api/characters/${name}`, 'PUT', data);
-        await getAllCharacters();
+        // Don't call getAllCharacters - WebSocket sync will handle it
         return result;
     }
 
@@ -249,8 +266,9 @@
         if (!confirm(`Delete character "${name}"? This cannot be undone.`)) {
             return;
         }
+        recentLocalUpdate = true;
         const result = await apiCall(`/api/characters/${name}`, 'DELETE');
-        await getAllCharacters();
+        // Don't call getAllCharacters - WebSocket sync will handle it
         return result;
     }
 
