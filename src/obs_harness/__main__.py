@@ -1,6 +1,7 @@
 """CLI entry point for OBS Audio Harness."""
 
 import argparse
+import asyncio
 from pathlib import Path
 
 
@@ -21,6 +22,12 @@ def main() -> None:
         help="Port to bind to (default: 8080)",
     )
     parser.add_argument(
+        "--https-port",
+        type=int,
+        default=None,
+        help="HTTPS port when using --https (default: port + 363, e.g., 8080 -> 8443)",
+    )
+    parser.add_argument(
         "--db",
         default="sqlite+aiosqlite:///obs_harness.db",
         help="Database URL (default: sqlite+aiosqlite:///obs_harness.db)",
@@ -39,7 +46,7 @@ def main() -> None:
     parser.add_argument(
         "--https",
         action="store_true",
-        help="Enable HTTPS with auto-generated self-signed certificate",
+        help="Enable HTTPS with auto-generated self-signed certificate (runs both HTTP and HTTPS)",
     )
     parser.add_argument(
         "--ssl-cert",
@@ -62,6 +69,7 @@ def main() -> None:
     # Handle SSL configuration
     ssl_certfile: str | None = None
     ssl_keyfile: str | None = None
+    https_port = args.https_port or (args.port + 363)  # 8080 -> 8443
 
     if args.ssl_cert and args.ssl_key:
         # Use provided certificates
@@ -98,40 +106,82 @@ def main() -> None:
         print(f"\n  SSL certificates generated in {cert_dir}/")
         print(f"  Hostnames: {', '.join(hostnames)}")
 
-    protocol = "https" if ssl_certfile else "http"
-
     print(f"\n  OBS Audio Harness")
     print(f"  ─────────────────")
-    print(f"  Dashboard:    {protocol}://{args.host}:{args.port}/")
-    print(f"  Browser URL:  {protocol}://{args.host}:{args.port}/channel/{{name}}")
-    print(f"  Editor:       {protocol}://{args.host}:{args.port}/editor")
-    print(f"  API Docs:     {protocol}://{args.host}:{args.port}/docs")
+    print(f"  Dashboard:    http://{args.host}:{args.port}/")
+    if ssl_certfile:
+        print(f"  Dashboard:    https://{args.host}:{https_port}/")
+    print(f"  Browser URL:  http://{args.host}:{args.port}/channel/{{name}}")
+    if ssl_certfile:
+        print(f"  Browser URL:  https://{args.host}:{https_port}/channel/{{name}}")
+    print(f"  Editor:       http://{args.host}:{args.port}/editor")
+    print(f"  API Docs:     http://{args.host}:{args.port}/docs")
     if ssl_certfile:
         print(f"\n  Note: Browser will show security warning for self-signed cert.")
         print(f"        Click 'Advanced' -> 'Proceed' to continue.")
     print()
 
     if args.reload:
-        # Use import string for reload support
+        if ssl_certfile:
+            print("  Warning: --reload with --https only runs HTTPS server.")
+            print("           Run without --reload for both HTTP and HTTPS.\n")
+        # Use import string for reload support (single server only)
         uvicorn.run(
             "obs_harness.app:create_app",
             factory=True,
             host=args.host,
-            port=args.port,
+            port=https_port if ssl_certfile else args.port,
             reload=True,
             ssl_certfile=ssl_certfile,
             ssl_keyfile=ssl_keyfile,
         )
+    elif ssl_certfile:
+        # Run both HTTP and HTTPS servers
+        asyncio.run(_run_dual_servers(args, ssl_certfile, ssl_keyfile, https_port))
     else:
+        # HTTP only
         from .app import create_app
         app = create_app(db_url=args.db, static_dir=args.static_dir)
         uvicorn.run(
             app,
             host=args.host,
             port=args.port,
-            ssl_certfile=ssl_certfile,
-            ssl_keyfile=ssl_keyfile,
         )
+
+
+async def _run_dual_servers(args, ssl_certfile: str, ssl_keyfile: str, https_port: int) -> None:
+    """Run both HTTP and HTTPS servers concurrently."""
+    import uvicorn
+    from .app import create_app
+
+    # Create a single app instance shared by both servers
+    app = create_app(db_url=args.db, static_dir=args.static_dir)
+
+    # Configure HTTP server
+    http_config = uvicorn.Config(
+        app,
+        host=args.host,
+        port=args.port,
+        log_level="info",
+    )
+    http_server = uvicorn.Server(http_config)
+
+    # Configure HTTPS server
+    https_config = uvicorn.Config(
+        app,
+        host=args.host,
+        port=https_port,
+        ssl_certfile=ssl_certfile,
+        ssl_keyfile=ssl_keyfile,
+        log_level="info",
+    )
+    https_server = uvicorn.Server(https_config)
+
+    # Run both servers concurrently
+    await asyncio.gather(
+        http_server.serve(),
+        https_server.serve(),
+    )
 
 
 if __name__ == "__main__":
