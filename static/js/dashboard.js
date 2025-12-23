@@ -251,14 +251,14 @@
     async function createCharacter(data) {
         recentLocalUpdate = true;
         const result = await apiCall('/api/characters', 'POST', data);
-        // Don't call getAllCharacters - WebSocket sync will handle it
+        await getAllCharacters();  // Update local UI immediately
         return result;
     }
 
     async function updateCharacter(name, data) {
         recentLocalUpdate = true;
         const result = await apiCall(`/api/characters/${name}`, 'PUT', data);
-        // Don't call getAllCharacters - WebSocket sync will handle it
+        await getAllCharacters();  // Update local UI immediately
         return result;
     }
 
@@ -268,7 +268,7 @@
         }
         recentLocalUpdate = true;
         const result = await apiCall(`/api/characters/${name}`, 'DELETE');
-        // Don't call getAllCharacters - WebSocket sync will handle it
+        await getAllCharacters();  // Update local UI immediately
         return result;
     }
 
