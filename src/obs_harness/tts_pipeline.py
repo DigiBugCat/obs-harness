@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Union
 
@@ -135,9 +136,16 @@ class TTSStreamer:
         Raises:
             ElevenLabsWSError: If TTS connection or streaming fails
         """
+        start_time = time.time()
+        settings = self._tts_config.get_settings()
+        voice_id = settings.get("voice_id", "unknown")
+        logger.debug(f"TTS stream starting - provider={self._tts_config.provider.value}, voice={voice_id}")
+
         text_started = False
         audio_started = False
         self._spoken_text = ""  # Reset for new stream
+        self._chunk_count = 0
+        self._total_bytes = 0
 
         try:
             # 1. Start text stream FIRST (required order for browser)
@@ -196,10 +204,18 @@ class TTSStreamer:
                 await self._send_text_end()
                 text_started = False
 
+            elapsed = time.time() - start_time
+            char_count = len(full_text)
+            provider_name = self._tts_config.provider.value
+
+            # Report credits (1 credit = 1 character for both providers)
+            logger.info(f"TTS complete - {provider_name} - {char_count} credits in {elapsed:.2f}s")
+
             return full_text
 
-        except Exception:
+        except Exception as e:
             # Cleanup on error
+            logger.error(f"TTS stream error: {e}")
             if audio_started:
                 await self._send_audio_end()
             if text_started:
@@ -238,6 +254,8 @@ class TTSStreamer:
 
                 # Send audio to browser
                 if chunk.audio:
+                    self._chunk_count += 1
+                    self._total_bytes += len(chunk.audio)
                     await self._send_audio_chunk(chunk.audio)
 
         except asyncio.CancelledError:

@@ -356,9 +356,9 @@
         return result;
     }
 
-    async function updateCharacter(name, data) {
+    async function updateCharacter(name, data, showErrors = true) {
         recentLocalUpdate = true;
-        const result = await apiCall(`/api/characters/${name}`, 'PUT', data);
+        const result = await apiCall(`/api/characters/${name}`, 'PUT', data, showErrors);
         await getAllCharacters();  // Update local UI immediately
         return result;
     }
@@ -1062,11 +1062,26 @@
             twitch_chat_enabled: document.getElementById('character-twitch-chat-enabled').checked,
             twitch_chat_window_seconds: parseInt(document.getElementById('character-twitch-chat-seconds').value),
             twitch_chat_max_messages: parseInt(document.getElementById('character-twitch-chat-max').value),
+            // Optimistic concurrency control - send timestamp to detect conflicts
+            expected_updated_at: editingCharacter?.updated_at || null,
         };
 
         try {
             if (editingCharacter) {
-                await updateCharacter(editingCharacter.name, data);
+                const result = await updateCharacter(editingCharacter.name, data, false);
+                // Handle 409 conflict - character was modified by another client
+                if (result && result.status === 409) {
+                    // Fetch fresh data and refresh the modal
+                    const freshCharacter = await apiCall(`/api/characters/${encodeURIComponent(editingCharacter.name)}`, 'GET', null, false);
+                    if (freshCharacter && !freshCharacter.error) {
+                        openEditCharacterModal(freshCharacter);
+                        showToast('Someone else modified this character. Please review the updated values and try again.', 'warning');
+                    } else {
+                        closeCharacterModal();
+                        showToast('Character was modified. Please try again.', 'warning');
+                    }
+                    return;
+                }
             } else {
                 await createCharacter(data);
             }
@@ -1636,10 +1651,13 @@
     // Character modal exports
     window.openCreateCharacterModal = openCreateCharacterModal;
     window.closeCharacterModal = closeCharacterModal;
-    window.editCharacter = function(characterName) {
-        const character = characters.find(c => c.name === characterName);
-        if (character) {
+    window.editCharacter = async function(characterName) {
+        // Fetch fresh data from API to avoid stale cached data
+        const character = await apiCall(`/api/characters/${encodeURIComponent(characterName)}`);
+        if (character && !character.error) {
             openEditCharacterModal(character);
+        } else {
+            showToast('Failed to load character', 'error');
         }
     };
     window.deleteCharacter = deleteCharacterAPI;

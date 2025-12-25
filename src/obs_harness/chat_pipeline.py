@@ -1,10 +1,14 @@
 """Chat pipeline orchestrating LLM -> TTS -> Browser streaming."""
 
+import logging
+import time
 from dataclasses import dataclass
 from typing import AsyncIterator
 
 from .openrouter import OpenRouterClient
 from .tts_pipeline import TTSStreamer
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -54,6 +58,10 @@ class ChatPipeline:
         Returns:
             The complete response text from the LLM
         """
+        start_time = time.time()
+        msg_preview = user_message[:40] + "..." if len(user_message) > 40 else user_message
+        logger.debug(f"Pipeline starting - model={self.config.model}, message=\"{msg_preview}\"")
+
         # Build system prompt with optional Twitch chat context
         system_content = self.config.system_prompt
         if self.config.twitch_chat_context:
@@ -80,22 +88,47 @@ Recent Twitch chat (you can see what viewers are saying):
         else:
             messages.append({"role": "user", "content": user_message})
 
+        # Create LLM client (kept alive to access usage after streaming)
+        llm_client = OpenRouterClient()
+
         # Create async generator that yields LLM tokens
         async def llm_tokens() -> AsyncIterator[str]:
-            async with OpenRouterClient() as llm_client:
-                async for token in llm_client.stream_chat(
-                    messages=messages,
-                    model=self.config.model,
-                    temperature=self.config.temperature,
-                    max_tokens=self.config.max_tokens,
-                    provider=self.config.provider,
-                ):
-                    if self._cancelled:
-                        break
-                    yield token
+            async for token in llm_client.stream_chat(
+                messages=messages,
+                model=self.config.model,
+                temperature=self.config.temperature,
+                max_tokens=self.config.max_tokens,
+                provider=self.config.provider,
+            ):
+                if self._cancelled:
+                    break
+                yield token
 
-        # Delegate to TTSStreamer with token iterator
-        return await self._tts_streamer.stream(llm_tokens())
+        try:
+            # Delegate to TTSStreamer with token iterator
+            result = await self._tts_streamer.stream(llm_tokens())
+
+            # Log with model, token usage, and cost
+            elapsed = time.time() - start_time
+            usage = llm_client.last_usage
+            model_short = self.config.model.split("/")[-1]  # e.g., "claude-sonnet-4" from "anthropic/claude-sonnet-4"
+
+            if usage:
+                cost_str = f"${usage.cost:.4f}" if usage.cost else "?"
+                tokens_str = f"{usage.prompt_tokens}+{usage.completion_tokens} tokens"
+                if self._cancelled:
+                    logger.info(f"LLM cancelled - {model_short} - {tokens_str} - {cost_str}")
+                else:
+                    logger.info(f"LLM complete - {model_short} - {tokens_str} - {cost_str} in {elapsed:.2f}s")
+            else:
+                if self._cancelled:
+                    logger.info(f"LLM cancelled - {model_short}")
+                else:
+                    logger.info(f"LLM complete - {model_short} - {len(result)} chars in {elapsed:.2f}s")
+
+            return result
+        finally:
+            await llm_client.close()
 
     async def cancel(self) -> None:
         """Cancel the pipeline - stops LLM and TTS immediately."""

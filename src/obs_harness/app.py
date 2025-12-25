@@ -47,6 +47,13 @@ from .models import (
     PlaybackLog,
     PlayCommand,
     PresetCreate,
+    SantaConfig,
+    SantaConfigResponse,
+    SantaConfigUpdate,
+    SantaMessageRequest,
+    SantaSession,
+    SantaSessionStatus,
+    SantaVerdictRequest,
     SpeakRequest,
     StopCommand,
     StopStreamCommand,
@@ -65,7 +72,8 @@ from .models import (
     WordTimingCommand,
     get_character_tts_config,
 )
-from .twitch_chat import TwitchChatManager
+from .twitch_eventsub import TwitchEventSubManager, ChannelPointRedemption, ChatMessage
+from .santa_session import SantaSessionManager, SantaState, SessionData
 
 
 class ConnectionManager:
@@ -379,7 +387,16 @@ def create_app(
 
     manager = ConnectionManager()
     harness = OBSHarness(manager)
-    twitch_manager = TwitchChatManager()
+    eventsub_manager = TwitchEventSubManager()
+
+    # Santa session manager (initialized after harness)
+    santa_manager: SantaSessionManager | None = None
+
+    # Santa dashboard WebSocket connections
+    santa_dashboard_connections: list[WebSocket] = []
+
+    # Twitch chat WebSocket connections for real-time chat updates
+    twitch_chat_connections: list[WebSocket] = []
 
     # In-memory conversation history per character (for non-persistent memory)
     conversation_memory: dict[str, list[dict]] = {}
@@ -554,6 +571,159 @@ def create_app(
         spoken_text = gen.get_spoken_text()
         return spoken_text
 
+    # =========================================================================
+    # Santa Session Helpers
+    # =========================================================================
+
+    async def broadcast_santa_status(session_data: SessionData | None = None) -> None:
+        """Broadcast Santa session status to all Santa dashboard connections."""
+        nonlocal santa_manager
+        if santa_manager:
+            status = santa_manager.get_session_status()
+        else:
+            status = {"active": False, "session_id": None, "state": None}
+
+        message = {"type": "santa_status", "status": status}
+        for ws in santa_dashboard_connections[:]:
+            try:
+                await ws.send_json(message)
+            except Exception:
+                santa_dashboard_connections.remove(ws)
+
+    async def on_santa_state_change(session_data: SessionData) -> None:
+        """Callback for Santa session state changes."""
+        await broadcast_santa_status(session_data)
+
+    async def handle_channel_point_redemption(redemption: ChannelPointRedemption) -> None:
+        """Handle incoming channel point redemption."""
+        nonlocal santa_manager
+
+        if not santa_manager:
+            logger.warning("Santa manager not initialized, ignoring redemption")
+            return
+
+        # Get Santa config
+        async with get_session() as session:
+            result = await session.execute(select(SantaConfig).limit(1))
+            config = result.scalar_one_or_none()
+
+        if not config or not config.enabled:
+            logger.debug("Santa not enabled, ignoring redemption")
+            return
+
+        # Check if this is the configured reward
+        if config.reward_id and redemption.reward_id != config.reward_id:
+            logger.debug(f"Redemption for different reward ({redemption.reward_title}), ignoring")
+            return
+
+        # Check if session already active
+        if santa_manager.is_active:
+            logger.warning(f"Santa session already active, cannot process redemption from {redemption.user_display_name}")
+            # Optionally refund the redemption
+            await eventsub_manager.cancel_redemption(redemption.redemption_id, redemption.reward_id)
+            return
+
+        # Pause the reward to prevent new redeems
+        await eventsub_manager.pause_reward(redemption.reward_id)
+
+        # Get past sessions for this user (repeat visitor detection)
+        past_sessions = []
+        async with get_session() as session:
+            result = await session.execute(
+                select(SantaSession)
+                .where(SantaSession.redeemer_user_id == redemption.user_id)
+                .order_by(SantaSession.started_at.desc())
+                .limit(5)
+            )
+            for ps in result.scalars().all():
+                past_sessions.append({
+                    "wish_text": ps.wish_text,
+                    "outcome": ps.outcome,
+                    "started_at": ps.started_at.isoformat() if ps.started_at else None,
+                })
+
+        # Create session record
+        async with get_session() as session:
+            db_session = SantaSession(
+                redeemer_user_id=redemption.user_id,
+                redeemer_username=redemption.user_login,
+                redeemer_display_name=redemption.user_display_name,
+                wish_text=redemption.user_input or "",
+                state="processing",
+            )
+            session.add(db_session)
+            await session.commit()
+            await session.refresh(db_session)
+            session_id = db_session.id
+
+        logger.info(f"Starting Santa session {session_id} for {redemption.user_display_name}")
+
+        # Start the session
+        success = await santa_manager.start_session(
+            session_id=session_id,
+            redeemer_user_id=redemption.user_id,
+            redeemer_username=redemption.user_login,
+            redeemer_display_name=redemption.user_display_name,
+            wish_text=redemption.user_input or "I want a surprise!",
+            past_sessions=past_sessions if past_sessions else None,
+        )
+
+        if not success:
+            logger.error(f"Failed to start Santa session for {redemption.user_display_name}")
+            await eventsub_manager.unpause_reward(redemption.reward_id)
+
+    async def finalize_santa_session() -> None:
+        """Finalize the current Santa session (save to DB, unpause reward)."""
+        nonlocal santa_manager
+
+        if not santa_manager or not santa_manager.active_session:
+            return
+
+        session_data = santa_manager.active_session
+
+        # Update database
+        async with get_session() as db_session:
+            result = await db_session.execute(
+                select(SantaSession).where(SantaSession.id == session_data.session_id)
+            )
+            db_record = result.scalar_one_or_none()
+            if db_record:
+                db_record.state = session_data.state.value
+                db_record.outcome = session_data.outcome
+                db_record.followup_count = session_data.followup_count
+                db_record.conversation_history = santa_manager.get_conversation_json()
+                db_record.ended_at = datetime.utcnow()
+                await db_session.commit()
+
+        # Get reward ID from config and unpause
+        async with get_session() as session:
+            result = await session.execute(select(SantaConfig).limit(1))
+            config = result.scalar_one_or_none()
+            if config and config.reward_id:
+                await eventsub_manager.unpause_reward(config.reward_id)
+
+        logger.info(f"Santa session {session_data.session_id} finalized: {session_data.outcome}")
+
+    # =========================================================================
+    # Twitch Chat WebSocket Helpers
+    # =========================================================================
+
+    async def on_chat_message(message: ChatMessage) -> None:
+        """Callback for incoming chat messages - broadcast to all chat WebSocket clients."""
+        msg_data = {
+            "type": "chat_message",
+            "message": {
+                "user": message.user_display_name,
+                "text": message.message,
+                "timestamp": message.timestamp.isoformat(),
+            }
+        }
+        for ws in twitch_chat_connections[:]:
+            try:
+                await ws.send_json(msg_data)
+            except Exception:
+                twitch_chat_connections.remove(ws)
+
     async def ping_all_connections():
         """Background task: Send pings to all WebSocket clients and close stale connections."""
         while True:
@@ -589,27 +759,86 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        nonlocal santa_manager
+
         await init_db(db_url)
 
-        # Load saved Twitch config and auto-connect if available
+        # Load saved Twitch config and auto-connect EventSub if available
         try:
             async with get_session() as session:
                 result = await session.execute(select(TwitchConfig).limit(1))
                 twitch_config = result.scalar_one_or_none()
-                if twitch_config:
-                    await twitch_manager.start(
+                if twitch_config and twitch_config.access_token and twitch_config.user_id:
+                    # Look up channel's user ID if different from logged-in user
+                    channel_user_id = twitch_config.user_id
+                    if twitch_config.channel and twitch_config.channel.lower() != (twitch_config.username or "").lower():
+                        try:
+                            import httpx
+                            async with httpx.AsyncClient() as client:
+                                resp = await client.get(
+                                    f"https://api.twitch.tv/helix/users?login={twitch_config.channel}",
+                                    headers={
+                                        "Authorization": f"Bearer {twitch_config.access_token}",
+                                        "Client-Id": os.environ.get("TWITCH_CLIENT_ID", "h1x5odjr6qy1m8sesgev1p9wcssz63"),
+                                    }
+                                )
+                                if resp.status_code == 200:
+                                    data = resp.json()
+                                    if data.get("data"):
+                                        channel_user_id = data["data"][0]["id"]
+                        except Exception as e:
+                            logger.warning(f"Failed to look up channel user ID on startup: {e}")
+
+                    # Set chat callback and start EventSub
+                    eventsub_manager.set_chat_callback(on_chat_message)
+                    await eventsub_manager.start(
                         access_token=twitch_config.access_token,
-                        channel=twitch_config.channel,
+                        client_id=os.environ.get("TWITCH_CLIENT_ID", "h1x5odjr6qy1m8sesgev1p9wcssz63"),
+                        broadcaster_user_id=channel_user_id,
+                        user_id=twitch_config.user_id,
+                        subscribe_to_chat=True,
+                        subscribe_to_redemptions=False,
                     )
-                    logger.info(f"Twitch chat auto-connected to #{twitch_config.channel}")
+                    logger.info(f"EventSub auto-connected to #{twitch_config.channel}")
         except Exception as e:
-            logger.warning(f"Failed to auto-connect Twitch chat: {e}")
+            logger.warning(f"Failed to auto-connect EventSub: {e}")
 
         # Load persisted conversation memory
         try:
             await load_persisted_memory_on_startup()
         except Exception as e:
             logger.warning(f"Failed to load persisted memory: {e}")
+
+        # Initialize Santa session manager
+        async with get_session() as session:
+            result = await session.execute(select(SantaConfig).limit(1))
+            santa_config = result.scalar_one_or_none()
+
+        if santa_config:
+            santa_manager = SantaSessionManager(
+                harness=harness,
+                eventsub=eventsub_manager,
+                character_name=santa_config.character_name,
+                max_followups=santa_config.max_followups,
+                response_timeout=santa_config.response_timeout_seconds,
+                debounce_seconds=santa_config.debounce_seconds,
+                chat_vote_seconds=santa_config.chat_vote_seconds,
+            )
+            santa_manager.set_state_callback(on_santa_state_change)
+            logger.info(f"Santa session manager initialized (character: {santa_config.character_name})")
+        else:
+            # Create default config
+            async with get_session() as session:
+                santa_config = SantaConfig()
+                session.add(santa_config)
+                await session.commit()
+
+            santa_manager = SantaSessionManager(
+                harness=harness,
+                eventsub=eventsub_manager,
+            )
+            santa_manager.set_state_callback(on_santa_state_change)
+            logger.info("Santa session manager initialized with defaults")
 
         # Start background ping task for WebSocket heartbeat
         ping_task = asyncio.create_task(ping_all_connections())
@@ -623,7 +852,8 @@ def create_app(
         except asyncio.CancelledError:
             pass
 
-        await twitch_manager.stop()
+        # Stop EventSub
+        await eventsub_manager.stop()
         await close_db()
 
     app = FastAPI(
@@ -636,7 +866,8 @@ def create_app(
     # Attach harness to app state for external access
     app.state.harness = harness
     app.state.manager = manager
-    app.state.twitch = twitch_manager
+    app.state.eventsub = eventsub_manager
+    # Note: santa_manager is accessed via closure since it's initialized in lifespan
 
     # Mount static files
     if static_dir.exists():
@@ -686,6 +917,14 @@ def create_app(
             return FileResponse(twitch_path)
         return HTMLResponse("<html><body><h1>Auth Error</h1><p>Callback page not found.</p></body></html>")
 
+    @app.get("/santa", response_class=HTMLResponse)
+    async def santa_page():
+        """Serve the Santa Timmy dashboard page."""
+        santa_path = static_dir / "santa.html"
+        if santa_path.exists():
+            return FileResponse(santa_path)
+        return HTMLResponse("<html><body><h1>Santa Timmy</h1><p>Santa dashboard not found.</p></body></html>")
+
     # =========================================================================
     # Version API
     # =========================================================================
@@ -728,6 +967,62 @@ def create_app(
                     pass
         except WebSocketDisconnect:
             manager.disconnect_dashboard(websocket)
+
+    @app.websocket("/ws/santa")
+    async def santa_websocket(websocket: WebSocket):
+        """WebSocket endpoint for Santa dashboard live updates."""
+        await websocket.accept()
+        santa_dashboard_connections.append(websocket)
+
+        # Send current status immediately
+        await broadcast_santa_status()
+
+        try:
+            while True:
+                data = await websocket.receive_text()
+                try:
+                    event = json.loads(data)
+                    if event.get("event") == "pong":
+                        pass  # Could track pongs if needed
+                except json.JSONDecodeError:
+                    pass
+        except WebSocketDisconnect:
+            if websocket in santa_dashboard_connections:
+                santa_dashboard_connections.remove(websocket)
+
+    @app.websocket("/ws/twitch/chat")
+    async def twitch_chat_websocket(websocket: WebSocket):
+        """WebSocket endpoint for real-time Twitch chat updates via EventSub."""
+        await websocket.accept()
+        twitch_chat_connections.append(websocket)
+
+        # Get channel from database for status
+        channel = None
+        async with get_session() as session:
+            result = await session.execute(select(TwitchConfig).limit(1))
+            twitch_config = result.scalar_one_or_none()
+            if twitch_config:
+                channel = twitch_config.channel
+
+        # Send connection status immediately
+        await websocket.send_json({
+            "type": "connected",
+            "eventsub_active": eventsub_manager.is_connected,
+            "channel": channel,
+        })
+
+        try:
+            while True:
+                data = await websocket.receive_text()
+                try:
+                    event = json.loads(data)
+                    if event.get("event") == "pong":
+                        pass  # Could track pongs if needed
+                except json.JSONDecodeError:
+                    pass
+        except WebSocketDisconnect:
+            if websocket in twitch_chat_connections:
+                twitch_chat_connections.remove(websocket)
 
     @app.websocket("/ws/{character}")
     async def character_websocket(websocket: WebSocket, character: str):
@@ -844,12 +1139,26 @@ def create_app(
     # =========================================================================
 
     @app.get("/api/twitch/status")
-    async def twitch_status() -> TwitchStatusResponse:
-        """Get Twitch chat connection status."""
-        return TwitchStatusResponse(
-            connected=twitch_manager.is_connected,
-            channel=twitch_manager.current_channel,
-        )
+    async def twitch_status() -> dict:
+        """Get Twitch connection status."""
+        # Get stored user info from database
+        user_id = None
+        username = None
+        channel = None
+        async with get_session() as session:
+            result = await session.execute(select(TwitchConfig).limit(1))
+            twitch_config = result.scalar_one_or_none()
+            if twitch_config:
+                user_id = twitch_config.user_id
+                username = twitch_config.username
+                channel = twitch_config.channel
+
+        return {
+            "connected": eventsub_manager.is_connected,
+            "channel": channel,
+            "user_id": user_id,
+            "username": username,
+        }
 
     @app.post("/api/twitch/token")
     async def twitch_save_token(request: TwitchTokenRequest) -> dict:
@@ -865,68 +1174,155 @@ def create_app(
             if twitch_config:
                 # Update existing config
                 twitch_config.access_token = request.access_token
+                twitch_config.user_id = request.user_id
+                twitch_config.username = request.username
                 twitch_config.channel = request.channel
                 twitch_config.updated_at = datetime.utcnow()
             else:
                 # Create new config
                 twitch_config = TwitchConfig(
                     access_token=request.access_token,
+                    user_id=request.user_id,
+                    username=request.username,
                     channel=request.channel,
                 )
                 session.add(twitch_config)
 
             await session.commit()
 
-        # Start Twitch chat connection
-        await twitch_manager.start(
-            access_token=request.access_token,
-            channel=request.channel,
-        )
+        # Look up the channel's user ID (may be different from logged-in user)
+        channel_user_id = request.user_id  # Default to logged-in user
+        if request.channel.lower() != request.username.lower():
+            # Different channel - look up its user ID
+            try:
+                import httpx
+                async with httpx.AsyncClient() as client:
+                    resp = await client.get(
+                        f"https://api.twitch.tv/helix/users?login={request.channel}",
+                        headers={
+                            "Authorization": f"Bearer {request.access_token}",
+                            "Client-Id": os.environ.get("TWITCH_CLIENT_ID", "h1x5odjr6qy1m8sesgev1p9wcssz63"),
+                        }
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        if data.get("data"):
+                            channel_user_id = data["data"][0]["id"]
+                            logger.info(f"Looked up channel {request.channel} -> user_id {channel_user_id}")
+            except Exception as e:
+                logger.warning(f"Failed to look up channel user ID: {e}")
 
-        return {"success": True, "channel": request.channel}
+        # Start EventSub for real-time chat via WebSocket
+        try:
+            # Set the chat callback to broadcast to WebSocket clients
+            eventsub_manager.set_chat_callback(on_chat_message)
+
+            await eventsub_manager.start(
+                access_token=request.access_token,
+                client_id=os.environ.get("TWITCH_CLIENT_ID", "h1x5odjr6qy1m8sesgev1p9wcssz63"),
+                broadcaster_user_id=channel_user_id,  # Channel to monitor
+                user_id=request.user_id,  # Authenticated user (for permissions)
+                subscribe_to_chat=True,
+                subscribe_to_redemptions=False,  # Don't subscribe to redemptions yet (Santa handles that)
+            )
+            logger.info(f"EventSub started for chat on #{request.channel} (broadcaster: {channel_user_id})")
+        except Exception as e:
+            logger.warning(f"Failed to start EventSub for chat: {e}")
+
+        return {"success": True, "channel": request.channel, "user_id": request.user_id, "username": request.username}
 
     @app.post("/api/twitch/channel")
     async def twitch_set_channel(request: TwitchChannelRequest) -> dict:
         """Change the Twitch channel to listen to."""
-        if not twitch_manager.is_connected:
-            raise HTTPException(status_code=400, detail="Not connected to Twitch")
-
-        # Update channel in database
+        # Get stored config
         async with get_session() as session:
             result = await session.execute(select(TwitchConfig).limit(1))
             twitch_config = result.scalar_one_or_none()
 
-            if twitch_config:
-                # Leave old channel
-                if twitch_config.channel != request.channel:
-                    await twitch_manager.leave_channel(twitch_config.channel)
+            if not twitch_config:
+                raise HTTPException(status_code=400, detail="Not logged in to Twitch")
 
-                twitch_config.channel = request.channel
-                twitch_config.updated_at = datetime.utcnow()
-                await session.commit()
+            # Update channel
+            twitch_config.channel = request.channel
+            twitch_config.updated_at = datetime.utcnow()
+            await session.commit()
 
-        # Join new channel
-        await twitch_manager.join_channel(request.channel)
+            access_token = twitch_config.access_token
+            user_id = twitch_config.user_id
+
+        # Restart EventSub for the new channel
+        try:
+            # Look up channel's user ID
+            channel_user_id = user_id  # Default
+            import httpx
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    f"https://api.twitch.tv/helix/users?login={request.channel}",
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Client-Id": os.environ.get("TWITCH_CLIENT_ID", "h1x5odjr6qy1m8sesgev1p9wcssz63"),
+                    }
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("data"):
+                        channel_user_id = data["data"][0]["id"]
+                        logger.info(f"Looked up channel {request.channel} -> user_id {channel_user_id}")
+
+            # Restart EventSub with new broadcaster
+            eventsub_manager.set_chat_callback(on_chat_message)
+            await eventsub_manager.start(
+                access_token=access_token,
+                client_id=os.environ.get("TWITCH_CLIENT_ID", "h1x5odjr6qy1m8sesgev1p9wcssz63"),
+                broadcaster_user_id=channel_user_id,
+                user_id=user_id,
+                subscribe_to_chat=True,
+                subscribe_to_redemptions=False,
+            )
+            logger.info(f"EventSub restarted for chat on #{request.channel}")
+        except Exception as e:
+            logger.warning(f"Failed to restart EventSub for new channel: {e}")
 
         return {"success": True, "channel": request.channel}
 
     @app.post("/api/twitch/disconnect")
     async def twitch_disconnect() -> dict:
-        """Disconnect from Twitch chat."""
-        await twitch_manager.stop()
+        """Disconnect from Twitch and clear saved credentials."""
+        await eventsub_manager.stop()
+
+        # Clear stored config from database
+        async with get_session() as session:
+            result = await session.execute(select(TwitchConfig).limit(1))
+            twitch_config = result.scalar_one_or_none()
+            if twitch_config:
+                await session.delete(twitch_config)
+                await session.commit()
+
         return {"success": True}
 
     @app.get("/api/twitch/chat")
     async def get_twitch_chat(seconds: int = 60) -> dict:
-        """Get recent chat messages (for debugging/preview)."""
-        if not twitch_manager.current_channel:
-            return {"messages": [], "channel": None}
+        """Get recent chat messages (for debugging/preview).
 
-        context = await twitch_manager.get_chat_context(seconds=seconds)
-        return {
-            "channel": twitch_manager.current_channel,
-            "context": context,
-        }
+        Args:
+            seconds: Number of seconds of chat history to retrieve
+        """
+        # Get channel from database
+        channel = None
+        async with get_session() as session:
+            result = await session.execute(select(TwitchConfig).limit(1))
+            twitch_config = result.scalar_one_or_none()
+            if twitch_config:
+                channel = twitch_config.channel
+
+        if eventsub_manager.is_connected:
+            context = await eventsub_manager.get_chat_context(seconds=seconds)
+            return {
+                "channel": channel,
+                "context": context,
+            }
+        else:
+            return {"messages": [], "channel": channel, "context": ""}
 
     # =========================================================================
     # OpenRouter API Routes
@@ -994,6 +1390,7 @@ def create_app(
             playing=manager._channel_state.get(c.name, {}).get("playing", False),
             streaming=manager._channel_state.get(c.name, {}).get("streaming", False),
             created_at=c.created_at,
+            updated_at=c.updated_at,
         )
 
     # -------------------------------------------------------------------------
@@ -1236,13 +1633,21 @@ def create_app(
             if not character:
                 raise HTTPException(status_code=404, detail="Character not found")
 
+            # Optimistic concurrency control - reject if record was modified since client loaded it
+            if request.expected_updated_at is not None:
+                if character.updated_at != request.expected_updated_at:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Character was modified by another client. Please refresh and try again."
+                    )
+
             # Validate TTS settings if being updated
             # Use new provider if specified, otherwise use character's current provider
             provider_for_validation = request.tts_provider if request.tts_provider is not None else character.tts_provider
             if request.tts_settings is not None:
                 _validate_tts_settings(provider_for_validation, request.tts_settings)
 
-            update_data = request.model_dump(exclude_unset=True)
+            update_data = request.model_dump(exclude_unset=True, exclude={"expected_updated_at"})
             # Serialize tts_settings dict to JSON string for storage
             if "tts_settings" in update_data and update_data["tts_settings"] is not None:
                 update_data["tts_settings"] = json.dumps(update_data["tts_settings"])
@@ -1452,10 +1857,10 @@ def create_app(
         if twitch_seconds is None:
             twitch_seconds = character.twitch_chat_window_seconds if character.twitch_chat_enabled else 0
 
-        # Get Twitch chat context if enabled
+        # Get Twitch chat context if enabled (using EventSub)
         twitch_chat_context = None
-        if twitch_seconds > 0 and twitch_manager.is_connected:
-            twitch_chat_context = await twitch_manager.get_chat_context(
+        if twitch_seconds > 0 and eventsub_manager.is_connected:
+            twitch_chat_context = await eventsub_manager.get_chat_context(
                 seconds=twitch_seconds,
                 max_messages=character.twitch_chat_max_messages,
             )
@@ -1666,5 +2071,170 @@ def create_app(
 
         history = await get_conversation_messages(name, persist)
         return {"character": name, "message_count": len(history), "messages": history}
+
+    # =========================================================================
+    # Santa API Routes
+    # =========================================================================
+
+    @app.get("/api/santa/config")
+    async def get_santa_config() -> SantaConfigResponse:
+        """Get Santa configuration."""
+        async with get_session() as session:
+            result = await session.execute(select(SantaConfig).limit(1))
+            config = result.scalar_one_or_none()
+            if not config:
+                config = SantaConfig()
+                session.add(config)
+                await session.commit()
+                await session.refresh(config)
+
+            return SantaConfigResponse(
+                enabled=config.enabled,
+                character_name=config.character_name,
+                reward_id=config.reward_id,
+                chat_vote_seconds=config.chat_vote_seconds,
+                max_followups=config.max_followups,
+                response_timeout_seconds=config.response_timeout_seconds,
+                debounce_seconds=config.debounce_seconds,
+            )
+
+    @app.put("/api/santa/config")
+    async def update_santa_config(request: SantaConfigUpdate) -> SantaConfigResponse:
+        """Update Santa configuration."""
+        nonlocal santa_manager
+
+        async with get_session() as session:
+            result = await session.execute(select(SantaConfig).limit(1))
+            config = result.scalar_one_or_none()
+            if not config:
+                config = SantaConfig()
+                session.add(config)
+
+            update_data = request.model_dump(exclude_unset=True)
+            for key, value in update_data.items():
+                setattr(config, key, value)
+            config.updated_at = datetime.utcnow()
+            await session.commit()
+            await session.refresh(config)
+
+            # Update santa_manager with new settings if it exists
+            if santa_manager:
+                santa_manager.max_followups = config.max_followups
+                santa_manager.response_timeout = config.response_timeout_seconds
+                santa_manager.debounce_seconds = config.debounce_seconds
+                santa_manager.chat_vote_seconds = config.chat_vote_seconds
+                santa_manager.character_name = config.character_name
+
+            return SantaConfigResponse(
+                enabled=config.enabled,
+                character_name=config.character_name,
+                reward_id=config.reward_id,
+                chat_vote_seconds=config.chat_vote_seconds,
+                max_followups=config.max_followups,
+                response_timeout_seconds=config.response_timeout_seconds,
+                debounce_seconds=config.debounce_seconds,
+            )
+
+    @app.get("/api/santa/session")
+    async def get_santa_session() -> SantaSessionStatus:
+        """Get current Santa session status."""
+        if not santa_manager:
+            return SantaSessionStatus(active=False)
+
+        status = santa_manager.get_session_status()
+        return SantaSessionStatus(**status)
+
+    @app.post("/api/santa/session/message")
+    async def santa_session_message(request: SantaMessageRequest) -> dict:
+        """Send a message to the active Santa session (dashboard override)."""
+        if not santa_manager:
+            raise HTTPException(status_code=500, detail="Santa manager not initialized")
+
+        if not santa_manager.is_active:
+            raise HTTPException(status_code=400, detail="No active Santa session")
+
+        success = await santa_manager.send_message(request.message)
+        return {"success": success}
+
+    @app.post("/api/santa/session/verdict")
+    async def santa_session_verdict(request: SantaVerdictRequest) -> dict:
+        """Force a verdict on the active Santa session (skip chat voting)."""
+        if not santa_manager:
+            raise HTTPException(status_code=500, detail="Santa manager not initialized")
+
+        if not santa_manager.is_active:
+            raise HTTPException(status_code=400, detail="No active Santa session")
+
+        success = await santa_manager.force_verdict(request.verdict)
+        if success:
+            # Finalize session after verdict
+            await finalize_santa_session()
+        return {"success": success}
+
+    @app.post("/api/santa/session/cancel")
+    async def santa_session_cancel() -> dict:
+        """Cancel the active Santa session."""
+        if not santa_manager:
+            raise HTTPException(status_code=500, detail="Santa manager not initialized")
+
+        if not santa_manager.is_active:
+            return {"success": True, "message": "No active session to cancel"}
+
+        await santa_manager.cancel_session("cancelled")
+        await finalize_santa_session()
+        return {"success": True}
+
+    @app.post("/api/santa/start")
+    async def santa_start() -> dict:
+        """Start listening for channel point redemptions."""
+        # Get Twitch config
+        async with get_session() as session:
+            result = await session.execute(select(TwitchConfig).limit(1))
+            twitch_config = result.scalar_one_or_none()
+
+        if not twitch_config:
+            raise HTTPException(status_code=400, detail="Twitch not configured. Go to /twitch to sign in.")
+
+        if not twitch_config.user_id:
+            raise HTTPException(status_code=400, detail="Twitch user ID not set. Re-authenticate at /twitch.")
+
+        # Get Santa config for reward_id
+        async with get_session() as session:
+            result = await session.execute(select(SantaConfig).limit(1))
+            santa_config = result.scalar_one_or_none()
+
+        try:
+            await eventsub_manager.start(
+                access_token=twitch_config.access_token,
+                client_id=os.environ.get("TWITCH_CLIENT_ID", "h1x5odjr6qy1m8sesgev1p9wcssz63"),
+                broadcaster_user_id=twitch_config.user_id,
+                reward_id=santa_config.reward_id if santa_config else None,
+                on_redemption=handle_channel_point_redemption,
+            )
+            return {"success": True, "message": "EventSub started"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to start EventSub: {e}")
+
+    @app.post("/api/santa/stop")
+    async def santa_stop() -> dict:
+        """Stop listening for channel point redemptions."""
+        await eventsub_manager.stop()
+        return {"success": True, "message": "EventSub stopped"}
+
+    @app.get("/api/santa/rewards")
+    async def get_santa_rewards() -> dict:
+        """Get available channel point rewards."""
+        if not eventsub_manager.is_connected:
+            return {"rewards": [], "message": "EventSub not connected"}
+
+        rewards = await eventsub_manager.get_rewards()
+        return {"rewards": rewards}
+
+    @app.get("/api/santa/eventsub/status")
+    async def get_eventsub_status() -> dict:
+        """Get EventSub connection status."""
+        return {
+            "connected": eventsub_manager.is_connected,
+        }
 
     return app

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Twitch Chat Integration</title>
+    <title>Twitch Integration</title>
     <style>
         :root {
             --bg-primary: #1a1a2e;
@@ -78,7 +78,7 @@
             display: flex;
             align-items: center;
             gap: 0.75rem;
-            margin-bottom: 1rem;
+            margin-bottom: 0.5rem;
         }
 
         .status-dot {
@@ -96,7 +96,22 @@
             color: var(--text-secondary);
         }
 
-        .channel-name {
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--bg-secondary);
+        }
+
+        .info-row:last-child {
+            border-bottom: none;
+        }
+
+        .info-label {
+            color: var(--text-secondary);
+        }
+
+        .info-value {
             color: var(--accent);
             font-weight: 500;
         }
@@ -163,6 +178,7 @@
         .btn-secondary {
             background: var(--bg-secondary);
             color: var(--text-primary);
+            width: 100%;
         }
 
         .btn-secondary:hover {
@@ -181,24 +197,6 @@
 
         .button-row .btn {
             flex: 1;
-        }
-
-        .chat-preview {
-            background: var(--bg-secondary);
-            border-radius: 6px;
-            padding: 1rem;
-            max-height: 300px;
-            overflow-y: auto;
-            font-family: monospace;
-            font-size: 0.875rem;
-            white-space: pre-wrap;
-            color: var(--text-secondary);
-        }
-
-        .chat-preview:empty::before {
-            content: "No recent messages...";
-            color: var(--text-secondary);
-            opacity: 0.5;
         }
 
         .message {
@@ -225,113 +223,161 @@
             width: 20px;
             height: 20px;
         }
+
+        .section-description {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            margin-bottom: 1rem;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>Twitch Chat Integration</h1>
+            <h1>Twitch Integration</h1>
             <a href="/" class="back-link">Back to Dashboard</a>
         </header>
 
         <div id="message" class="message hidden"></div>
         <div id="error" class="error hidden"></div>
 
-        <!-- Connection Status -->
+        <!-- Login Section -->
         <div class="card">
-            <div class="card-title">Connection Status</div>
+            <div class="card-title">1. Login to Twitch</div>
+            <p class="section-description">
+                Login with your Twitch account to enable EventSub for channel point redemptions.
+            </p>
+
+            <div id="not-logged-in" class="hidden">
+                <button id="login-btn" class="btn btn-twitch">
+                    <svg class="twitch-logo" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714Z"/>
+                    </svg>
+                    Login with Twitch
+                </button>
+            </div>
+
+            <div id="logged-in" class="hidden">
+                <div class="info-row">
+                    <span class="info-label">Logged in as</span>
+                    <span class="info-value" id="username-display">-</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">User ID</span>
+                    <span class="info-value" id="user-id-display">-</span>
+                </div>
+                <button id="logout-btn" class="btn btn-danger" style="margin-top: 1rem; width: 100%;">Logout</button>
+            </div>
+        </div>
+
+        <!-- Channel Section -->
+        <div class="card">
+            <div class="card-title">2. Chat Channel to Monitor</div>
+            <p class="section-description">
+                Choose which channel's chat to read. This can be different from the logged-in account.
+            </p>
+
             <div class="status-row">
                 <div id="status-dot" class="status-dot"></div>
-                <span id="status-text" class="status-text">Checking...</span>
+                <span id="status-text" class="status-text">Not connected</span>
             </div>
-            <div id="channel-display" class="hidden">
-                Listening to: <span id="channel-name" class="channel-name"></span>
-            </div>
-        </div>
 
-        <!-- Sign In (shown when not connected) -->
-        <div id="signin-section" class="card hidden">
-            <div class="card-title">Sign in with Twitch</div>
             <div class="form-group">
-                <label for="channel">Channel to join (without #)</label>
-                <input type="text" id="channel" placeholder="yourchannelname">
+                <label for="channel">Channel name (without #)</label>
+                <input type="text" id="channel" placeholder="channelname">
             </div>
-            <button id="signin-btn" class="btn btn-twitch">
-                <svg class="twitch-logo" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714Z"/>
-                </svg>
-                Sign in with Twitch
-            </button>
-        </div>
-
-        <!-- Connected Controls (shown when connected) -->
-        <div id="connected-section" class="card hidden">
-            <div class="card-title">Controls</div>
-            <div class="form-group">
-                <label for="new-channel">Change Channel</label>
-                <input type="text" id="new-channel" placeholder="newchannelname">
-            </div>
-            <div class="button-row">
-                <button id="change-channel-btn" class="btn btn-secondary">Change Channel</button>
-                <button id="disconnect-btn" class="btn btn-danger">Disconnect</button>
-            </div>
+            <button id="connect-btn" class="btn btn-secondary">Connect to Channel</button>
         </div>
 
         <!-- Chat Preview -->
         <div id="preview-section" class="card hidden">
             <div class="card-title">Recent Chat (Last 60 seconds)</div>
-            <div id="chat-preview" class="chat-preview"></div>
-            <button id="refresh-btn" class="btn btn-secondary" style="margin-top: 1rem; width: 100%;">Refresh</button>
+            <div id="chat-preview" style="background: var(--bg-secondary); border-radius: 6px; padding: 1rem; max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.875rem; white-space: pre-wrap; color: var(--text-secondary);"></div>
+            <button id="refresh-btn" class="btn btn-secondary" style="margin-top: 1rem;">Refresh</button>
         </div>
     </div>
 
     <script>
+        // Twitch OAuth config
         const CLIENT_ID = 'h1x5odjr6qy1m8sesgev1p9wcssz63';
-        const REDIRECT_URI = `${window.location.origin}/auth/callback`;
-        const SCOPES = 'chat:read';
+        const REDIRECT_URI = window.location.origin + '/auth/callback';
+        const SCOPES = [
+            'chat:read',
+            'user:read:chat',  // Required for EventSub chat subscription
+            'channel:read:redemptions',
+            'channel:manage:redemptions'
+        ].join(' ');
 
         // DOM elements
         const statusDot = document.getElementById('status-dot');
         const statusText = document.getElementById('status-text');
-        const channelDisplay = document.getElementById('channel-display');
-        const channelName = document.getElementById('channel-name');
-        const signinSection = document.getElementById('signin-section');
-        const connectedSection = document.getElementById('connected-section');
+        const notLoggedIn = document.getElementById('not-logged-in');
+        const loggedIn = document.getElementById('logged-in');
+        const usernameDisplay = document.getElementById('username-display');
+        const userIdDisplay = document.getElementById('user-id-display');
+        const channelInput = document.getElementById('channel');
         const previewSection = document.getElementById('preview-section');
         const messageEl = document.getElementById('message');
         const errorEl = document.getElementById('error');
 
-        // Check for OAuth token in URL fragment (after redirect)
-        async function checkOAuthCallback() {
+        // WebSocket connection for real-time chat
+        let chatWs = null;
+        let chatMessages = [];  // Store messages for display
+        const MAX_MESSAGES = 50;  // Max messages to keep in buffer
+
+        // Check if we're returning from OAuth
+        async function handleOAuthCallback() {
             const hash = window.location.hash;
-            if (hash && hash.includes('access_token')) {
-                const params = new URLSearchParams(hash.substring(1));
-                const accessToken = params.get('access_token');
-                const channel = localStorage.getItem('twitch_pending_channel') || '';
+            if (!hash) return;
 
-                if (accessToken && channel) {
-                    // Clear the hash from URL
-                    history.replaceState(null, '', window.location.pathname);
-                    localStorage.removeItem('twitch_pending_channel');
+            const params = new URLSearchParams(hash.substring(1));
+            const accessToken = params.get('access_token');
 
-                    // Save token to server
-                    try {
-                        const response = await fetch('/api/twitch/token', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ access_token: accessToken, channel: channel })
-                        });
+            if (!accessToken) return;
 
-                        if (response.ok) {
-                            showMessage('Successfully connected to Twitch!');
-                        } else {
-                            const data = await response.json();
-                            showError(data.detail || 'Failed to save token');
-                        }
-                    } catch (e) {
-                        showError('Failed to save token: ' + e.message);
+            // Clear the hash from URL
+            history.replaceState(null, '', window.location.pathname);
+
+            try {
+                // Fetch user info from Twitch
+                const userResponse = await fetch('https://api.twitch.tv/helix/users', {
+                    headers: {
+                        'Authorization': `Bearer ${accessToken}`,
+                        'Client-Id': CLIENT_ID
                     }
+                });
+
+                if (!userResponse.ok) {
+                    throw new Error('Failed to get user info from Twitch');
                 }
+
+                const userData = await userResponse.json();
+                const user = userData.data[0];
+
+                // Get current channel (use logged-in user's channel as default)
+                const channel = channelInput.value.trim() || user.login;
+
+                // Save to backend
+                const response = await fetch('/api/twitch/token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        access_token: accessToken,
+                        user_id: user.id,
+                        username: user.login,
+                        channel: channel
+                    })
+                });
+
+                if (response.ok) {
+                    showMessage(`Logged in as ${user.display_name}!`);
+                    await checkStatus();
+                } else {
+                    const data = await response.json();
+                    showError(data.detail || 'Failed to save token');
+                }
+            } catch (e) {
+                showError('OAuth error: ' + e.message);
             }
         }
 
@@ -341,22 +387,32 @@
                 const response = await fetch('/api/twitch/status');
                 const data = await response.json();
 
+                // Update login status
+                if (data.user_id) {
+                    notLoggedIn.classList.add('hidden');
+                    loggedIn.classList.remove('hidden');
+                    usernameDisplay.textContent = data.username || '-';
+                    userIdDisplay.textContent = data.user_id || '-';
+                } else {
+                    notLoggedIn.classList.remove('hidden');
+                    loggedIn.classList.add('hidden');
+                }
+
+                // Update connection status
                 if (data.connected) {
                     statusDot.classList.add('connected');
-                    statusText.textContent = 'Connected';
-                    channelName.textContent = '#' + data.channel;
-                    channelDisplay.classList.remove('hidden');
-                    signinSection.classList.add('hidden');
-                    connectedSection.classList.remove('hidden');
+                    statusText.textContent = `Connected to #${data.channel} (EventSub)`;
+                    channelInput.value = data.channel;
                     previewSection.classList.remove('hidden');
-                    document.getElementById('new-channel').value = data.channel;
+
+                    // Connect WebSocket and fetch initial chat history
+                    connectChatWebSocket();
+                    refreshChat();
                 } else {
                     statusDot.classList.remove('connected');
                     statusText.textContent = 'Not connected';
-                    channelDisplay.classList.add('hidden');
-                    signinSection.classList.remove('hidden');
-                    connectedSection.classList.add('hidden');
                     previewSection.classList.add('hidden');
+                    disconnectChatWebSocket();
                 }
             } catch (e) {
                 statusText.textContent = 'Error checking status';
@@ -364,37 +420,29 @@
             }
         }
 
-        // Refresh chat preview
-        async function refreshChat() {
-            try {
-                const response = await fetch('/api/twitch/chat?seconds=60');
-                const data = await response.json();
-                const preview = document.getElementById('chat-preview');
-                preview.textContent = data.context || '';
-            } catch (e) {
-                showError('Failed to load chat: ' + e.message);
-            }
-        }
-
-        // Sign in with Twitch
-        function signIn() {
-            const channel = document.getElementById('channel').value.trim().toLowerCase();
-            if (!channel) {
-                showError('Please enter a channel name');
-                return;
-            }
-
-            // Store channel for after redirect
-            localStorage.setItem('twitch_pending_channel', channel);
-
-            // Redirect to Twitch OAuth
-            const authUrl = `https://id.twitch.tv/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=token&scope=${SCOPES}`;
+        // Start OAuth flow
+        function login() {
+            const authUrl = `https://id.twitch.tv/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=token&scope=${encodeURIComponent(SCOPES)}`;
             window.location.href = authUrl;
         }
 
-        // Change channel
-        async function changeChannel() {
-            const channel = document.getElementById('new-channel').value.trim().toLowerCase();
+        // Logout
+        async function logout() {
+            try {
+                disconnectChatWebSocket();
+                const response = await fetch('/api/twitch/disconnect', { method: 'POST' });
+                if (response.ok) {
+                    showMessage('Logged out');
+                    await checkStatus();
+                }
+            } catch (e) {
+                showError('Failed to logout: ' + e.message);
+            }
+        }
+
+        // Connect to channel
+        async function connectToChannel() {
+            const channel = channelInput.value.trim().toLowerCase();
             if (!channel) {
                 showError('Please enter a channel name');
                 return;
@@ -408,27 +456,115 @@
                 });
 
                 if (response.ok) {
-                    showMessage('Channel changed successfully!');
+                    showMessage('Connected to #' + channel);
                     await checkStatus();
                 } else {
                     const data = await response.json();
-                    showError(data.detail || 'Failed to change channel');
+                    showError(data.detail || 'Failed to connect');
                 }
             } catch (e) {
-                showError('Failed to change channel: ' + e.message);
+                showError('Failed to connect: ' + e.message);
             }
         }
 
-        // Disconnect
-        async function disconnect() {
-            try {
-                const response = await fetch('/api/twitch/disconnect', { method: 'POST' });
-                if (response.ok) {
-                    showMessage('Disconnected from Twitch');
-                    await checkStatus();
+        // Connect to chat WebSocket for real-time updates
+        function connectChatWebSocket() {
+            if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+                return;  // Already connected
+            }
+
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/twitch/chat`;
+
+            chatWs = new WebSocket(wsUrl);
+
+            chatWs.onopen = () => {
+                console.log('Chat WebSocket connected');
+            };
+
+            chatWs.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+
+                    if (data.type === 'chat_message') {
+                        // Add new message to buffer
+                        chatMessages.push(data.message);
+                        if (chatMessages.length > MAX_MESSAGES) {
+                            chatMessages.shift();  // Remove oldest
+                        }
+                        updateChatDisplay();
+                    } else if (data.type === 'connected') {
+                        console.log('Chat WebSocket status:', data);
+                    }
+                } catch (e) {
+                    console.error('Failed to parse chat message:', e);
                 }
+            };
+
+            chatWs.onclose = () => {
+                console.log('Chat WebSocket disconnected');
+                // Reconnect after a delay if preview section is visible
+                setTimeout(() => {
+                    if (!previewSection.classList.contains('hidden')) {
+                        connectChatWebSocket();
+                    }
+                }, 3000);
+            };
+
+            chatWs.onerror = (e) => {
+                console.error('Chat WebSocket error:', e);
+            };
+        }
+
+        // Disconnect chat WebSocket
+        function disconnectChatWebSocket() {
+            if (chatWs) {
+                chatWs.close();
+                chatWs = null;
+            }
+            chatMessages = [];
+        }
+
+        // Update the chat display from buffered messages
+        function updateChatDisplay() {
+            const chatPreview = document.getElementById('chat-preview');
+            if (chatMessages.length === 0) {
+                chatPreview.textContent = 'No recent messages...';
+            } else {
+                chatPreview.textContent = chatMessages
+                    .map(m => `[${m.user}]: ${m.text}`)
+                    .join('\n');
+                // Auto-scroll to bottom
+                chatPreview.scrollTop = chatPreview.scrollHeight;
+            }
+        }
+
+        // Refresh chat preview (fetch initial history)
+        async function refreshChat() {
+            try {
+                const response = await fetch('/api/twitch/chat?seconds=60');
+                const data = await response.json();
+
+                // Parse the context into messages if using fallback
+                if (data.context) {
+                    // The context is a formatted string like "[user]: message\n[user2]: message2"
+                    const lines = data.context.split('\n').filter(l => l.trim());
+                    chatMessages = lines.map(line => {
+                        const match = line.match(/^\[([^\]]+)\]:\s*(.*)$/);
+                        if (match) {
+                            return { user: match[1], text: match[2] };
+                        }
+                        return { user: '?', text: line };
+                    });
+                } else {
+                    chatMessages = [];
+                }
+                updateChatDisplay();
+
+                // Show data source
+                console.log('Chat source:', data.source);
             } catch (e) {
-                showError('Failed to disconnect: ' + e.message);
+                console.error('Failed to load chat:', e);
             }
         }
 
@@ -449,29 +585,20 @@
         }
 
         // Event listeners
-        document.getElementById('signin-btn').addEventListener('click', signIn);
-        document.getElementById('change-channel-btn').addEventListener('click', changeChannel);
-        document.getElementById('disconnect-btn').addEventListener('click', disconnect);
+        document.getElementById('login-btn').addEventListener('click', login);
+        document.getElementById('logout-btn').addEventListener('click', logout);
+        document.getElementById('connect-btn').addEventListener('click', connectToChannel);
         document.getElementById('refresh-btn').addEventListener('click', refreshChat);
-
-        // Allow Enter key in channel inputs
-        document.getElementById('channel').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') signIn();
-        });
-        document.getElementById('new-channel').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') changeChannel();
+        channelInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') connectToChannel();
         });
 
         // Initialize
-        checkOAuthCallback().then(() => {
-            checkStatus();
-            // Auto-refresh chat every 5 seconds when connected
-            setInterval(() => {
-                if (!previewSection.classList.contains('hidden')) {
-                    refreshChat();
-                }
-            }, 5000);
-        });
+        handleOAuthCallback();
+        checkStatus();
+
+        // WebSocket handles real-time updates, no polling needed
+        // Keep refresh button for manual refresh of historical messages
     </script>
 </body>
 </html>

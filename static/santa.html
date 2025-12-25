@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Santa Timmy Dashboard</title>
+    <style>
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-card: #0f3460;
+            --text-primary: #eaeaea;
+            --text-secondary: #a0a0a0;
+            --accent: #e94560;
+            --accent-hover: #ff6b6b;
+            --success: #4ecca3;
+            --warning: #ffc107;
+            --christmas-red: #c41e3a;
+            --christmas-green: #228b22;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--bg-card);
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .nav-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 0.875rem;
+        }
+
+        .nav-links a:hover {
+            color: var(--text-primary);
+        }
+
+        .status-row {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--warning);
+        }
+
+        .status-dot.connected {
+            background: var(--success);
+        }
+
+        .section {
+            margin-bottom: 2rem;
+        }
+
+        .section-title {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .card-title {
+            font-weight: 600;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .session-status {
+            padding: 1rem;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+
+        .session-status.active {
+            border-left: 4px solid var(--christmas-green);
+        }
+
+        .session-status.idle {
+            border-left: 4px solid var(--text-secondary);
+        }
+
+        .session-info {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 0.5rem 1rem;
+            font-size: 0.875rem;
+        }
+
+        .session-info dt {
+            color: var(--text-secondary);
+        }
+
+        .session-info dd {
+            font-weight: 500;
+        }
+
+        .state-badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .state-badge.idle {
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+        }
+
+        .state-badge.processing {
+            background: var(--warning);
+            color: #000;
+        }
+
+        .state-badge.ask_followup {
+            background: #9b59b6;
+            color: #fff;
+        }
+
+        .state-badge.await_chat {
+            background: #3498db;
+            color: #fff;
+        }
+
+        .state-badge.complete {
+            background: var(--success);
+            color: #000;
+        }
+
+        .controls-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+        }
+
+        .btn {
+            padding: 0.75rem 1rem;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: var(--accent-hover);
+        }
+
+        .btn-success {
+            background: var(--christmas-green);
+            color: white;
+        }
+
+        .btn-success:hover:not(:disabled) {
+            background: #2ecc71;
+        }
+
+        .btn-danger {
+            background: var(--christmas-red);
+            color: white;
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            background: #e74c3c;
+        }
+
+        .btn-secondary {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: var(--bg-card);
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 0.75rem;
+            border: none;
+            border-radius: 6px;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            font-size: 0.875rem;
+        }
+
+        .form-group textarea {
+            min-height: 80px;
+            resize: vertical;
+        }
+
+        .form-row {
+            display: flex;
+            gap: 1rem;
+            align-items: flex-end;
+        }
+
+        .form-row .form-group {
+            flex: 1;
+        }
+
+        .config-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+        }
+
+        .message-input-row {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .message-input-row input {
+            flex: 1;
+            padding: 0.75rem;
+            border: none;
+            border-radius: 6px;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+        }
+
+        .verdict-buttons {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .verdict-buttons .btn {
+            flex: 1;
+        }
+
+        .log-area {
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            padding: 1rem;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 0.75rem;
+            line-height: 1.5;
+        }
+
+        .log-entry {
+            padding: 0.25rem 0;
+            border-bottom: 1px solid var(--bg-card);
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .log-time {
+            color: var(--text-secondary);
+        }
+
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 26px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: var(--bg-secondary);
+            transition: 0.3s;
+            border-radius: 26px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+
+        input:checked + .toggle-slider {
+            background-color: var(--success);
+        }
+
+        input:checked + .toggle-slider:before {
+            transform: translateX(24px);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Santa Timmy Dashboard</h1>
+            <div class="nav-links">
+                <a href="/">Main Dashboard</a>
+                <a href="/twitch">Twitch Config</a>
+            </div>
+        </header>
+
+        <div class="status-row">
+            <div class="status-indicator">
+                <span class="status-dot" id="wsStatus"></span>
+                <span id="wsStatusText">Connecting...</span>
+            </div>
+            <div class="status-indicator">
+                <span class="status-dot" id="eventsubStatus"></span>
+                <span id="eventsubStatusText">EventSub: Disconnected</span>
+            </div>
+        </div>
+
+        <!-- Current Session Status -->
+        <div class="section">
+            <h2 class="section-title">Current Session</h2>
+            <div class="card">
+                <div class="session-status idle" id="sessionStatus">
+                    <dl class="session-info">
+                        <dt>Status</dt>
+                        <dd><span class="state-badge idle" id="sessionState">Idle</span></dd>
+                        <dt>Visitor</dt>
+                        <dd id="sessionVisitor">-</dd>
+                        <dt>Wish</dt>
+                        <dd id="sessionWish">-</dd>
+                        <dt>Followups</dt>
+                        <dd id="sessionFollowups">0</dd>
+                    </dl>
+                </div>
+
+                <!-- Manual Message Input -->
+                <div class="form-group">
+                    <label>Send Message (as "child")</label>
+                    <div class="message-input-row">
+                        <input type="text" id="messageInput" placeholder="Type a message...">
+                        <button class="btn btn-primary" id="sendMessageBtn" disabled>Send</button>
+                    </div>
+                </div>
+
+                <!-- Mall Director Message -->
+                <div class="form-group" style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--bg-secondary);">
+                    <label>🎬 Mall Director (admin override - speaks directly)</label>
+                    <div class="message-input-row">
+                        <input type="text" id="directorInput" placeholder="Say something as Santa...">
+                        <button class="btn btn-secondary" id="speakDirectBtn">Speak</button>
+                    </div>
+                </div>
+
+                <!-- Verdict Buttons -->
+                <div class="verdict-buttons">
+                    <button class="btn btn-success" id="grantBtn" disabled>Grant Wish</button>
+                    <button class="btn btn-danger" id="denyBtn" disabled>Deny Wish</button>
+                    <button class="btn btn-secondary" id="cancelBtn" disabled>Cancel Session</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- EventSub Control -->
+        <div class="section">
+            <h2 class="section-title">EventSub Control</h2>
+            <div class="card">
+                <div class="controls-grid">
+                    <button class="btn btn-success" id="startEventsubBtn">Start Listening</button>
+                    <button class="btn btn-danger" id="stopEventsubBtn" disabled>Stop Listening</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Configuration -->
+        <div class="section">
+            <h2 class="section-title">Configuration</h2>
+            <div class="card">
+                <div class="form-group">
+                    <label style="display: flex; align-items: center; gap: 1rem;">
+                        <span>Santa Enabled</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="enabledToggle">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </label>
+                </div>
+
+                <div class="config-grid">
+                    <div class="form-group">
+                        <label>Character Name</label>
+                        <input type="text" id="characterName" value="santa_timmy">
+                    </div>
+                    <div class="form-group">
+                        <label>Reward to Listen For</label>
+                        <div style="display: flex; gap: 0.5rem;">
+                            <select id="rewardId" style="flex: 1;">
+                                <option value="">All rewards</option>
+                            </select>
+                            <button class="btn btn-secondary" id="refreshRewardsDropdownBtn" style="padding: 0.5rem 0.75rem;">↻</button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Chat Vote Seconds</label>
+                        <input type="number" id="chatVoteSeconds" value="15" min="5" max="60">
+                    </div>
+                    <div class="form-group">
+                        <label>Max Followups</label>
+                        <input type="number" id="maxFollowups" value="2" min="0" max="5">
+                    </div>
+                    <div class="form-group">
+                        <label>Response Timeout (s)</label>
+                        <input type="number" id="responseTimeout" value="60" min="10" max="120">
+                    </div>
+                    <div class="form-group">
+                        <label>Debounce Seconds</label>
+                        <input type="number" id="debounceSeconds" value="4" min="1" max="10">
+                    </div>
+                </div>
+
+                <button class="btn btn-primary" id="saveConfigBtn">Save Configuration</button>
+            </div>
+        </div>
+
+        <!-- System Prompt Editor -->
+        <div class="section">
+            <h2 class="section-title">System Prompt</h2>
+            <div class="card">
+                <div class="form-group">
+                    <label>Santa Timmy's Personality & Instructions</label>
+                    <textarea id="systemPrompt" style="min-height: 200px; font-family: monospace; font-size: 0.8rem;"></textarea>
+                </div>
+                <div style="display: flex; gap: 1rem;">
+                    <button class="btn btn-primary" id="savePromptBtn">Save Prompt</button>
+                    <button class="btn btn-secondary" id="resetPromptBtn">Reset to Default</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Rewards List -->
+        <div class="section">
+            <h2 class="section-title">Channel Point Rewards</h2>
+            <div class="card">
+                <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+                    Start EventSub to see available rewards.
+                </p>
+                <button class="btn btn-secondary" id="refreshRewardsBtn" disabled>Refresh Rewards</button>
+                <div id="rewardsList" style="margin-top: 1rem;"></div>
+            </div>
+        </div>
+
+        <!-- Activity Log -->
+        <div class="section">
+            <h2 class="section-title">Activity Log</h2>
+            <div class="card">
+                <div class="log-area" id="logArea">
+                    <div class="log-entry">
+                        <span class="log-time">[--:--:--]</span> Dashboard loaded
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/santa.js"></script>
+</body>
+</html>

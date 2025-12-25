@@ -56,7 +56,7 @@ class TwitchIRCClient:
 
     TWITCH_IRC_URL = "wss://irc-ws.chat.twitch.tv:443"
 
-    def __init__(self, access_token: str, channel: str | None = None):
+    def __init__(self, channel: str | None = None, access_token: str | None = None):
         self.access_token = access_token
         self._channel = channel
         self._buffer = ChatBuffer()
@@ -224,7 +224,7 @@ class TwitchChatManager:
             await self.stop()
 
         self._access_token = access_token
-        self._client = TwitchIRCClient(access_token, channel)
+        self._client = TwitchIRCClient(channel=channel, access_token=access_token)
 
         # Try initial connection with retries
         max_retries = 3
@@ -295,3 +295,20 @@ class TwitchChatManager:
 
         messages = await self._client.buffer.get_recent(seconds)
         return self._client.format_for_prompt(messages, max_messages)
+
+    async def get_raw_messages(
+        self,
+        seconds: int = 60,
+    ) -> list[StoredMessage]:
+        """Get raw chat messages for processing.
+
+        Args:
+            seconds: How far back to look for messages
+
+        Returns:
+            List of StoredMessage objects
+        """
+        if not self._client:
+            return []
+
+        return await self._client.buffer.get_recent(seconds)

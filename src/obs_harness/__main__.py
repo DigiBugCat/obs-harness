@@ -2,7 +2,34 @@
 
 import argparse
 import asyncio
+import logging
 from pathlib import Path
+
+
+def setup_logging(level: str) -> None:
+    """Configure centralized logging for the application."""
+    log_level = getattr(logging, level.upper(), logging.INFO)
+
+    # Configure format
+    formatter = logging.Formatter(
+        "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    # Configure root handler for console output
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+
+    # Set up obs_harness logger hierarchy
+    app_logger = logging.getLogger("obs_harness")
+    app_logger.setLevel(log_level)
+    app_logger.addHandler(handler)
+    app_logger.propagate = False  # Don't double-log to root
+
+    # Also configure uvicorn loggers to use same format
+    for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+        uv_logger = logging.getLogger(name)
+        uv_logger.handlers = [handler]
 
 
 def main() -> None:
@@ -60,8 +87,17 @@ def main() -> None:
         default=None,
         help="Path to SSL private key file (use with --ssl-cert)",
     )
+    parser.add_argument(
+        "--log-level",
+        choices=["debug", "info", "warning", "error"],
+        default="info",
+        help="Set logging level (default: info)",
+    )
 
     args = parser.parse_args()
+
+    # Configure logging before anything else
+    setup_logging(args.log_level)
 
     # Import here to avoid slow startup for --help
     import uvicorn
@@ -134,6 +170,7 @@ def main() -> None:
             reload=True,
             ssl_certfile=ssl_certfile,
             ssl_keyfile=ssl_keyfile,
+            log_level=args.log_level,
         )
     elif ssl_certfile:
         # Run both HTTP and HTTPS servers
@@ -146,6 +183,7 @@ def main() -> None:
             app,
             host=args.host,
             port=args.port,
+            log_level=args.log_level,
         )
 
 
@@ -162,7 +200,7 @@ async def _run_dual_servers(args, ssl_certfile: str, ssl_keyfile: str, https_por
         app,
         host=args.host,
         port=args.port,
-        log_level="info",
+        log_level=args.log_level,
     )
     http_server = uvicorn.Server(http_config)
 
@@ -173,7 +211,7 @@ async def _run_dual_servers(args, ssl_certfile: str, ssl_keyfile: str, https_por
         port=https_port,
         ssl_certfile=ssl_certfile,
         ssl_keyfile=ssl_keyfile,
-        log_level="info",
+        log_level=args.log_level,
     )
     https_server = uvicorn.Server(https_config)
 

@@ -48,11 +48,15 @@ class PlaybackLog(SQLModel, table=True):
 
 
 class TwitchConfig(SQLModel, table=True):
-    """Twitch chat configuration (singleton - only one row)."""
+    """Twitch configuration (singleton - only one row)."""
 
     id: int | None = SQLField(default=None, primary_key=True)
+    # Auth - the logged-in user (for EventSub channel points)
     access_token: str  # OAuth token (no refresh token with implicit grant)
-    channel: str  # Channel to join (without #)
+    user_id: str | None = SQLField(default=None)  # Logged-in user's Twitch ID
+    username: str | None = SQLField(default=None)  # Logged-in user's username
+    # Chat - which channel to read chat from (can be different from logged-in user)
+    channel: str  # Channel to join for chat (without #)
     updated_at: datetime = SQLField(default_factory=datetime.utcnow)
 
 
@@ -307,6 +311,9 @@ class CharacterUpdate(BaseModel):
     memory_enabled: bool | None = None
     persist_memory: bool | None = None
 
+    # Optimistic concurrency control
+    expected_updated_at: datetime | None = None  # If provided, update fails if record was modified
+
 
 class CharacterResponse(BaseModel):
     """Character information response."""
@@ -368,6 +375,7 @@ class CharacterResponse(BaseModel):
     streaming: bool = False
 
     created_at: datetime
+    updated_at: datetime | None = None
 
 
 class ImageData(BaseModel):
@@ -602,11 +610,13 @@ class TwitchTokenRequest(BaseModel):
     """Request to save Twitch OAuth token."""
 
     access_token: str
-    channel: str
+    user_id: str  # Logged-in user's Twitch ID
+    username: str  # Logged-in user's username
+    channel: str  # Channel to monitor for chat
 
 
 class TwitchChannelRequest(BaseModel):
-    """Request to set Twitch channel."""
+    """Request to set Twitch channel to monitor."""
 
     channel: str
 
@@ -615,4 +625,91 @@ class TwitchStatusResponse(BaseModel):
     """Twitch connection status response."""
 
     connected: bool
-    channel: str | None = None
+    channel: str | None = None  # Chat channel being monitored
+    user_id: str | None = None  # Logged-in user ID
+    username: str | None = None  # Logged-in username
+
+
+# =============================================================================
+# Santa Timmy Feature Models
+# =============================================================================
+
+
+class SantaConfig(SQLModel, table=True):
+    """Santa feature configuration (singleton)."""
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    enabled: bool = SQLField(default=False)
+    character_name: str = SQLField(default="santa_timmy")
+    reward_id: str | None = SQLField(default=None)  # Channel point reward UUID
+    chat_vote_seconds: int = SQLField(default=15)
+    max_followups: int = SQLField(default=2)
+    response_timeout_seconds: int = SQLField(default=60)
+    debounce_seconds: int = SQLField(default=4)  # Wait for additional messages
+    updated_at: datetime = SQLField(default_factory=datetime.utcnow)
+
+
+class SantaSession(SQLModel, table=True):
+    """Active/historical wish session with Santa Timmy."""
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    redeemer_user_id: str = SQLField(index=True)  # Twitch user ID (stable identifier)
+    redeemer_username: str
+    redeemer_display_name: str
+    wish_text: str
+    state: str = SQLField(default="idle")  # idle, processing, ask_followup, await_chat, complete
+    followup_count: int = SQLField(default=0)
+    outcome: str | None = SQLField(default=None)  # grant, deny, cancelled, timeout
+    conversation_history: str = SQLField(default="[]")  # JSON array of messages
+    started_at: datetime = SQLField(default_factory=datetime.utcnow)
+    ended_at: datetime | None = SQLField(default=None)
+
+
+# Santa API Models (Pydantic)
+
+
+class SantaConfigResponse(BaseModel):
+    """Response for Santa config."""
+
+    enabled: bool
+    character_name: str
+    reward_id: str | None
+    chat_vote_seconds: int
+    max_followups: int
+    response_timeout_seconds: int
+    debounce_seconds: int
+
+
+class SantaConfigUpdate(BaseModel):
+    """Request to update Santa config."""
+
+    enabled: bool | None = None
+    reward_id: str | None = None
+    chat_vote_seconds: int | None = Field(default=None, ge=5, le=60)
+    max_followups: int | None = Field(default=None, ge=0, le=5)
+    response_timeout_seconds: int | None = Field(default=None, ge=10, le=120)
+    debounce_seconds: int | None = Field(default=None, ge=1, le=10)
+
+
+class SantaSessionStatus(BaseModel):
+    """Current state of Santa session."""
+
+    active: bool
+    session_id: int | None = None
+    redeemer_display_name: str | None = None
+    wish_text: str | None = None
+    state: str | None = None
+    followup_count: int = 0
+    started_at: datetime | None = None
+
+
+class SantaMessageRequest(BaseModel):
+    """Send a message to active Santa session (dashboard override)."""
+
+    message: str
+
+
+class SantaVerdictRequest(BaseModel):
+    """Force a verdict (skip chat voting)."""
+
+    verdict: Literal["grant", "deny"]
