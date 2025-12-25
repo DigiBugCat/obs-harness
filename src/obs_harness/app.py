@@ -4,11 +4,17 @@ import asyncio
 import json
 import logging
 import os
+import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Union
+
+from . import __version__
+
+# Build ID for version checking - changes on every server restart
+BUILD_ID = str(int(time.time()))
 
 from dotenv import load_dotenv
 
@@ -65,10 +71,15 @@ from .twitch_chat import TwitchChatManager
 class ConnectionManager:
     """Manages WebSocket connections for all channels."""
 
+    # Heartbeat constants
+    PING_INTERVAL = 25  # seconds - send ping every 25s (under 30s proxy timeout)
+    STALE_THRESHOLD = 60  # seconds - close connections without pong for 60s
+
     def __init__(self) -> None:
         self._connections: dict[str, list[WebSocket]] = {}  # Multiple connections per channel
         self._channel_state: dict[str, dict[str, Any]] = {}
         self._dashboard_connections: list[WebSocket] = []
+        self._last_pong: dict[WebSocket, float] = {}  # Track last pong time per connection
 
     async def connect(self, channel: str, websocket: WebSocket) -> None:
         """Register a channel connection (supports multiple per channel)."""
@@ -77,7 +88,13 @@ class ConnectionManager:
             self._connections[channel] = []
             self._channel_state[channel] = {"playing": False, "streaming": False}
         self._connections[channel].append(websocket)
+        self._last_pong[websocket] = time.time()  # Initialize pong time
+        logger.info(f"WebSocket connected: {channel} ({len(self._connections[channel])} connections)")
         await self._notify_dashboard()
+
+    def record_pong(self, websocket: WebSocket) -> None:
+        """Record that a pong was received from a connection."""
+        self._last_pong[websocket] = time.time()
 
     def disconnect(self, channel: str, websocket: WebSocket | None = None) -> None:
         """Remove a channel connection. If websocket specified, only remove that one."""
@@ -87,12 +104,18 @@ class ConnectionManager:
             # Remove specific websocket
             if websocket in self._connections[channel]:
                 self._connections[channel].remove(websocket)
+            self._last_pong.pop(websocket, None)  # Clean up pong tracking
+            remaining = len(self._connections.get(channel, []))
+            logger.info(f"WebSocket disconnected: {channel} ({remaining} connections remaining)")
             # Clean up if no more connections
             if not self._connections[channel]:
                 del self._connections[channel]
                 self._channel_state.pop(channel, None)
         else:
             # Remove all connections for channel
+            for ws in self._connections[channel]:
+                self._last_pong.pop(ws, None)  # Clean up pong tracking
+            logger.info(f"WebSocket disconnected: {channel} (all connections)")
             del self._connections[channel]
             self._channel_state.pop(channel, None)
 
@@ -100,6 +123,7 @@ class ConnectionManager:
         """Register a dashboard connection."""
         await websocket.accept()
         self._dashboard_connections.append(websocket)
+        self._last_pong[websocket] = time.time()  # Initialize pong time
         # Send current state immediately
         await websocket.send_json({"type": "characters", "characters": [ch.model_dump() for ch in self.get_characters()]})
 
@@ -107,6 +131,7 @@ class ConnectionManager:
         """Remove a dashboard connection."""
         if websocket in self._dashboard_connections:
             self._dashboard_connections.remove(websocket)
+        self._last_pong.pop(websocket, None)  # Clean up pong tracking
 
     async def send_to_channel(self, channel: str, message: dict) -> bool:
         """Send a JSON message to all connections on a channel."""
@@ -222,6 +247,7 @@ class OBSHarness:
         if success:
             await self._manager.set_channel_state(channel, "streaming", True)
             await self._log_playback(channel, "stream", "stream")
+            logger.debug(f"[{channel}] Audio stream started (sample_rate={sample_rate})")
         return success
 
     async def stream_audio(self, channel: str, audio_bytes: bytes) -> bool:
@@ -235,6 +261,7 @@ class OBSHarness:
         reports stream_ended event, so dashboard knows when playback finishes.
         """
         cmd = StreamEndCommand()
+        logger.debug(f"[{channel}] Audio stream ended")
         return await self._manager.send_to_channel(channel, cmd.model_dump())
 
     async def stop_stream(self, channel: str) -> bool:
@@ -527,6 +554,39 @@ def create_app(
         spoken_text = gen.get_spoken_text()
         return spoken_text
 
+    async def ping_all_connections():
+        """Background task: Send pings to all WebSocket clients and close stale connections."""
+        while True:
+            await asyncio.sleep(manager.PING_INTERVAL)
+            now = time.time()
+
+            # Ping channel connections
+            for channel, websockets in list(manager._connections.items()):
+                for ws in list(websockets):
+                    try:
+                        await ws.send_json({"action": "ping", "ts": now})
+                    except Exception:
+                        manager.disconnect(channel, ws)
+
+            # Ping dashboard connections
+            for ws in list(manager._dashboard_connections):
+                try:
+                    await ws.send_json({"type": "ping", "ts": now})
+                except Exception:
+                    manager.disconnect_dashboard(ws)
+
+            # Close stale connections (no pong received within threshold)
+            stale_threshold = now - manager.STALE_THRESHOLD
+            for ws, last_pong in list(manager._last_pong.items()):
+                if last_pong < stale_threshold:
+                    logger.warning(f"Closing stale WebSocket connection (no pong for {now - last_pong:.0f}s)")
+                    try:
+                        await ws.close()
+                    except Exception:
+                        pass
+                    # Clean up tracking (disconnect handlers will also try, but be safe)
+                    manager._last_pong.pop(ws, None)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await init_db(db_url)
@@ -551,7 +611,17 @@ def create_app(
         except Exception as e:
             logger.warning(f"Failed to load persisted memory: {e}")
 
+        # Start background ping task for WebSocket heartbeat
+        ping_task = asyncio.create_task(ping_all_connections())
+
         yield
+
+        # Cancel ping task on shutdown
+        ping_task.cancel()
+        try:
+            await ping_task
+        except asyncio.CancelledError:
+            pass
 
         await twitch_manager.stop()
         await close_db()
@@ -617,6 +687,20 @@ def create_app(
         return HTMLResponse("<html><body><h1>Auth Error</h1><p>Callback page not found.</p></body></html>")
 
     # =========================================================================
+    # Version API
+    # =========================================================================
+
+    @app.get("/api/version")
+    async def get_version():
+        """Get server version and build ID for client version checking."""
+        return {"version": __version__, "build_id": BUILD_ID}
+
+    @app.get("/health")
+    async def health_check():
+        """Health check endpoint for load balancers and client polling."""
+        return {"status": "ok", "build_id": BUILD_ID}
+
+    # =========================================================================
     # WebSocket Routes
     # =========================================================================
 
@@ -625,9 +709,23 @@ def create_app(
     async def dashboard_websocket(websocket: WebSocket):
         """WebSocket endpoint for dashboard live updates."""
         await manager.connect_dashboard(websocket)
+
+        # Send hello message with version info for client version checking
+        await websocket.send_json({
+            "type": "hello",
+            "version": __version__,
+            "build_id": BUILD_ID,
+        })
+
         try:
             while True:
-                await websocket.receive_text()
+                data = await websocket.receive_text()
+                try:
+                    event = json.loads(data)
+                    if event.get("event") == "pong":
+                        manager.record_pong(websocket)
+                except json.JSONDecodeError:
+                    pass
         except WebSocketDisconnect:
             manager.disconnect_dashboard(websocket)
 
@@ -657,6 +755,13 @@ def create_app(
         manager._connections[character].append(websocket)
         await manager._notify_dashboard()
 
+        # Send hello message with version info for client version checking
+        await websocket.send_json({
+            "action": "hello",
+            "version": __version__,
+            "build_id": BUILD_ID,
+        })
+
         try:
             while True:
                 data = await websocket.receive_text()
@@ -684,6 +789,8 @@ def create_app(
                             )
                             logger.debug(f"[{character}] Updated memory[{msg_idx}] with actual spoken text (persist={persist})")
                             del pending_interrupted[character]
+                    elif event_type == "pong":
+                        manager.record_pong(websocket)
 
                 except json.JSONDecodeError:
                     pass
@@ -1069,6 +1176,8 @@ def create_app(
     @app.post("/api/characters", status_code=201)
     async def create_character(request: CharacterCreate) -> Character:
         """Create a new character."""
+        logger.info(f"POST /api/characters - creating \"{request.name}\"")
+
         # Validate TTS settings before saving
         _validate_tts_settings(request.tts_provider, request.tts_settings)
 
@@ -1117,6 +1226,8 @@ def create_app(
     @app.put("/api/characters/{name}")
     async def update_character(name: str, request: CharacterUpdate) -> Character:
         """Update a character."""
+        logger.debug(f"PUT /api/characters/{name} - updating")
+
         async with get_session() as session:
             result = await session.execute(
                 select(Character).where(Character.name == name)
@@ -1148,6 +1259,8 @@ def create_app(
     @app.delete("/api/characters/{name}")
     async def delete_character(name: str) -> dict:
         """Delete a character. Disconnects any active connection."""
+        logger.info(f"DELETE /api/characters/{name}")
+
         async with get_session() as session:
             result = await session.execute(
                 select(Character).where(Character.name == name)
@@ -1174,6 +1287,10 @@ def create_app(
         1. Looks up the character configuration
         2. Streams TTS audio to the connected browser
         """
+        start_time = time.time()
+        text_preview = request.text[:50] + "..." if len(request.text) > 50 else request.text
+        logger.info(f"POST /api/characters/{name}/speak - \"{text_preview}\" ({len(request.text)} chars)")
+
         # Look up character
         async with get_session() as session:
             result = await session.execute(
@@ -1254,12 +1371,16 @@ def create_app(
             try:
                 await streamer.stream(request.text)
                 await harness._log_playback(name, request.text, "stream")
+                elapsed = time.time() - start_time
+                logger.info(f"POST /api/characters/{name}/speak - completed in {elapsed:.2f}s")
                 return {"success": True, "character": name}
             except (ElevenLabsWSError, CartesiaWSError) as e:
                 await harness.stop_stream(name)
+                logger.error(f"POST /api/characters/{name}/speak - TTS error: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
             except Exception as e:
                 await harness.stop_stream(name)
+                logger.error(f"POST /api/characters/{name}/speak - error: {e}")
                 raise HTTPException(status_code=500, detail=f"TTS error: {e}")
             finally:
                 active_generations.pop(name, None)
@@ -1274,6 +1395,10 @@ def create_app(
         3. Streams LLM response tokens through TTS (ElevenLabs or Cartesia)
         4. Sends audio and text to the browser in real-time
         """
+        start_time = time.time()
+        msg_preview = request.message[:50] + "..." if len(request.message) > 50 else request.message
+        logger.info(f"POST /api/characters/{name}/chat - \"{msg_preview}\"")
+
         # Check OpenRouter API key (required for LLM)
         if not os.environ.get("OPENROUTER_API_KEY"):
             raise HTTPException(
@@ -1462,6 +1587,10 @@ def create_app(
                     # Log the chat
                     await harness._log_playback(name, f"chat:{name}", "stream")
 
+                elapsed = time.time() - start_time
+                response_preview = response_text[:50] + "..." if len(response_text) > 50 else response_text
+                logger.info(f"POST /api/characters/{name}/chat - completed in {elapsed:.2f}s - \"{response_preview}\"")
+
                 return ChatResponse(
                     success=True,
                     character=name,
@@ -1473,6 +1602,7 @@ def create_app(
                 # Force stop streams on error and clean up pending state
                 pending_interrupted.pop(name, None)
                 await harness.stop_stream(name)
+                logger.error(f"POST /api/characters/{name}/chat - error: {e}")
                 raise HTTPException(status_code=500, detail=f"Chat error: {e}")
             finally:
                 active_generations.pop(name, None)
@@ -1496,6 +1626,11 @@ def create_app(
         # Always send stop command to browser - audio may still be playing
         # even if generation has already completed
         await harness.stop_stream(name)
+
+        if was_active:
+            logger.info(f"POST /api/characters/{name}/stop - generation cancelled")
+        else:
+            logger.debug(f"POST /api/characters/{name}/stop - no active generation")
 
         return {
             "success": True,

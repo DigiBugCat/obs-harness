@@ -9,7 +9,21 @@
     // WebSocket connection
     let ws = null;
     let reconnectTimeout = null;
-    const reconnectDelay = 2000;
+
+    // Reconnection with exponential backoff
+    let reconnectAttempts = 0;
+    const BASE_RECONNECT_DELAY = 1000;  // Start at 1 second
+    const MAX_RECONNECT_DELAY = 30000;  // Max 30 seconds
+    const MAX_RECONNECT_ATTEMPTS = 10;  // Reload page after this many failures
+
+    // Heartbeat tracking
+    const PING_TIMEOUT = 60000;  // 60 seconds - consider connection dead if no ping
+    const HEALTH_POLL_INTERVAL = 30000;  // 30 seconds - fallback health check
+    let lastPingTime = Date.now();
+    let healthPollInterval = null;
+
+    // Server version tracking for auto-refresh on updates
+    let serverBuildId = null;
 
     // State
     let presets = [];
@@ -42,6 +56,9 @@
         ws.onopen = () => {
             wsStatus.classList.add('connected');
             wsStatusText.textContent = 'Connected';
+            reconnectAttempts = 0;  // Reset backoff on successful connection
+            lastPingTime = Date.now();  // Reset ping timer
+            stopHealthPoll();  // Stop fallback polling
             if (reconnectTimeout) {
                 clearTimeout(reconnectTimeout);
                 reconnectTimeout = null;
@@ -51,6 +68,7 @@
         ws.onclose = () => {
             wsStatus.classList.remove('connected');
             wsStatusText.textContent = 'Disconnected';
+            startHealthPoll();  // Start fallback health polling
             scheduleReconnect();
         };
 
@@ -70,13 +88,96 @@
 
     function scheduleReconnect() {
         if (!reconnectTimeout) {
+            // After too many failures, reload the page entirely
+            if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                console.log(`[dashboard] Max reconnect attempts (${MAX_RECONNECT_ATTEMPTS}) reached, reloading page...`);
+                location.reload();
+                return;
+            }
+
+            // Exponential backoff: 1s, 2s, 4s, 8s, ... up to 30s max
+            const delay = Math.min(
+                BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempts),
+                MAX_RECONNECT_DELAY
+            );
+            reconnectAttempts++;
+
+            console.log(`[dashboard] Reconnecting in ${delay}ms (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
             reconnectTimeout = setTimeout(() => {
+                reconnectTimeout = null;
                 connect();
-            }, reconnectDelay);
+            }, delay);
         }
     }
 
+    // =========================================================================
+    // Health Poll Fallback
+    // =========================================================================
+
+    function startHealthPoll() {
+        if (healthPollInterval) return;
+        healthPollInterval = setInterval(async () => {
+            // Skip if WebSocket is connected
+            if (ws && ws.readyState === WebSocket.OPEN) return;
+
+            try {
+                const res = await fetch('/health', { signal: AbortSignal.timeout(5000) });
+                if (res.ok && reconnectAttempts >= MAX_RECONNECT_ATTEMPTS / 2) {
+                    // Server is healthy but WebSocket keeps failing - reload
+                    console.log('[dashboard] Server healthy but WebSocket failing, reloading page...');
+                    location.reload();
+                }
+            } catch (e) {
+                // Server unreachable, reconnect logic will handle it
+            }
+        }, HEALTH_POLL_INTERVAL);
+    }
+
+    function stopHealthPoll() {
+        if (healthPollInterval) {
+            clearInterval(healthPollInterval);
+            healthPollInterval = null;
+        }
+    }
+
+    // Ping timeout check (dashboard has no animation loop, so use interval)
+    setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN && Date.now() - lastPingTime > PING_TIMEOUT) {
+            console.log(`[dashboard] No ping received in ${PING_TIMEOUT}ms, connection stale - reconnecting...`);
+            lastPingTime = Date.now();  // Reset to prevent spam
+            ws.close();  // Will trigger reconnect via onclose
+        }
+    }, 10000);  // Check every 10 seconds
+
     function handleMessage(msg) {
+        // Handle ping (heartbeat)
+        if (msg.type === 'ping') {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ event: 'pong', ts: msg.ts }));
+            }
+            lastPingTime = Date.now();
+            return;
+        }
+
+        // Handle version check (auto-refresh on server update)
+        if (msg.type === 'hello') {
+            const newBuildId = msg.build_id;
+
+            if (serverBuildId === null) {
+                // First connection - store the build ID
+                serverBuildId = newBuildId;
+                console.log(`[dashboard] Server build ID: ${serverBuildId}`);
+            } else if (serverBuildId !== newBuildId) {
+                // Server restarted with new version - refresh to get new JS/CSS
+                console.log(`[dashboard] Server version changed (${serverBuildId} -> ${newBuildId}), refreshing page...`);
+                location.reload();
+                return;
+            } else {
+                console.log(`[dashboard] Reconnected to same server version`);
+            }
+            return;
+        }
+
         if (msg.type === 'characters') {
             // Merge connection status into character list
             const statusMap = new Map(msg.characters.map(c => [c.name, c]));
