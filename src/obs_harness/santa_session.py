@@ -149,6 +149,7 @@ class SantaSessionManager:
         self._speech_lock = asyncio.Lock()  # Prevents overlapping TTS
         self._message_queue: asyncio.Queue[tuple[str, str, str]] = asyncio.Queue()  # (user_id, username, message)
         self._cancelled = False
+        self._held = False  # When True, timeouts are paused
 
         # Callbacks for state updates (for WebSocket broadcasting)
         self._on_state_change: Callable[[SessionData], Awaitable[None]] | None = None
@@ -162,6 +163,17 @@ class SantaSessionManager:
     def is_active(self) -> bool:
         """Check if a session is currently active."""
         return self._session is not None and self._session.state != SantaState.COMPLETE
+
+    @property
+    def is_held(self) -> bool:
+        """Check if session is on hold (timeouts paused)."""
+        return self._held
+
+    def toggle_hold(self) -> bool:
+        """Toggle the hold state. Returns new hold state."""
+        self._held = not self._held
+        logger.info(f"Session hold {'enabled' if self._held else 'disabled'}")
+        return self._held
 
     def set_state_callback(self, callback: Callable[[SessionData], Awaitable[None]]) -> None:
         """Set callback for state changes (for WebSocket updates)."""
@@ -264,7 +276,7 @@ class SantaSessionManager:
                 await self._message_queue.put((user_id, username, message))
 
     async def force_verdict(self, verdict: str) -> bool:
-        """Force a grant/deny verdict from dashboard.
+        """Force a grant/deny verdict from dashboard - immediately stops session.
 
         Args:
             verdict: "grant" or "deny"
@@ -278,13 +290,20 @@ class SantaSessionManager:
         if verdict not in ("grant", "deny"):
             return False
 
-        # Send forced verdict message to LLM
+        # Record in conversation history so Santa remembers
         self._session.conversation.append({
             "role": "user",
-            "content": f"[DASHBOARD OVERRIDE] Force verdict: {verdict.upper()}"
+            "content": f"[MALL DIRECTOR OVERRIDE] Session ended by mall director. Verdict: {verdict.upper()}"
+        })
+        self._session.conversation.append({
+            "role": "assistant",
+            "content": f'{{"speech": "(session cut short by mall director)", "action": "{verdict}"}}'
         })
 
-        await self._process_turn(f"The elves have spoken! Verdict: {verdict}")
+        # Immediately set outcome and complete - no LLM call, no speech
+        self._session.outcome = verdict
+        self._session.state = SantaState.COMPLETE
+        logger.info(f"Santa session force-{verdict}ed by mall director (no speech)")
         return True
 
     async def speak_direct(self, text: str) -> bool:
@@ -408,11 +427,20 @@ class SantaSessionManager:
                 "parsed_action": santa_response.action,
             })
 
+            # Set state BEFORE speaking so chat messages can queue during speech
+            if santa_response.action == "ask_followup":
+                self._session.followup_count += 1
+                self._session.state = SantaState.ASK_FOLLOWUP
+                await self._notify_state_change()
+            elif santa_response.action == "await_chat":
+                self._session.state = SantaState.AWAIT_CHAT
+                await self._notify_state_change()
+
             # Send speech to TTS
             if santa_response.speech and not self._cancelled:
                 await self._speak(santa_response.speech)
 
-            # Handle action
+            # Handle action (state already set, this handles waiting/completion)
             await self._handle_action(santa_response.action)
 
         except Exception as e:
@@ -459,26 +487,27 @@ class SantaSessionManager:
         )
 
     async def _handle_action(self, action: str) -> None:
-        """Handle the action from LLM response."""
+        """Handle the action from LLM response.
+
+        Note: State is already set before speech in _process_turn so chat can queue.
+        This method just handles the waiting/completion logic.
+        """
         if self._cancelled or not self._session:
             return
 
         if action == "ask_followup":
-            if self._session.followup_count >= self.max_followups:
+            if self._session.followup_count > self.max_followups:
                 # Max followups reached, force await_chat
                 logger.info("Max followups reached, transitioning to await_chat")
                 self._session.state = SantaState.AWAIT_CHAT
                 await self._notify_state_change()
                 await self._wait_for_chat_vote()
             else:
-                self._session.followup_count += 1
-                self._session.state = SantaState.ASK_FOLLOWUP
-                await self._notify_state_change()
+                # State already set, just wait for followup
                 await self._wait_for_followup()
 
         elif action == "await_chat":
-            self._session.state = SantaState.AWAIT_CHAT
-            await self._notify_state_change()
+            # State already set, just wait for chat vote
             await self._wait_for_chat_vote()
 
         elif action in ("grant", "deny"):
@@ -501,7 +530,9 @@ class SantaSessionManager:
         async with self._speech_lock:
             try:
                 import httpx
+                start_time = asyncio.get_event_loop().time()
                 logger.info(f"Santa speaking: {text[:50]}...")
+
                 async with httpx.AsyncClient() as client:
                     response = await client.post(
                         f"http://localhost:8080/api/characters/{self.character_name}/speak",
@@ -512,12 +543,19 @@ class SantaSessionManager:
                         logger.error(f"TTS speak failed: {response.text}")
                         return
 
-                # Wait for audio to finish playing
-                # Estimate ~100ms per character for speech (roughly 600 chars/minute)
-                # Add 1 second buffer for TTS processing and network latency
-                estimated_duration = len(text) * 0.1 + 1.0
-                logger.debug(f"Waiting {estimated_duration:.1f}s for audio playback...")
-                await asyncio.sleep(estimated_duration)
+                # Wait for actual stream completion from browser
+                completed = await self.harness.wait_for_stream_complete(
+                    self.character_name, timeout=60.0
+                )
+
+                # Log actual timing for calibration
+                duration = asyncio.get_event_loop().time() - start_time
+                chars = len(text)
+                ms_per_char = (duration * 1000) / chars if chars > 0 else 0
+                logger.info(f"Santa speech complete: {chars} chars in {duration:.1f}s ({ms_per_char:.0f}ms/char)")
+
+                if not completed:
+                    logger.warning("Stream wait timed out")
 
             except Exception as e:
                 logger.error(f"Error sending speech to TTS: {e}")
@@ -537,10 +575,23 @@ class SantaSessionManager:
         first_message_time: float | None = None
 
         try:
+            start_time = asyncio.get_event_loop().time()
             while not self._cancelled:
-                # Calculate remaining time
-                if first_message_time is None:
-                    timeout = self.response_timeout
+                # Calculate remaining time (but skip timeout if held)
+                if self._held:
+                    # When held, use short poll interval but don't timeout
+                    timeout = 1.0
+                elif first_message_time is None:
+                    elapsed = asyncio.get_event_loop().time() - start_time
+                    timeout = max(0.1, self.response_timeout - elapsed)
+                    if timeout <= 0.1:
+                        # Real timeout (not held)
+                        logger.info("Followup timeout - no response received")
+                        self._session.state = SantaState.COMPLETE
+                        self._session.outcome = "timeout"
+                        await self._speak("Ho ho ho! Looks like the little one got shy. Maybe next time!")
+                        await self._notify_state_change()
+                        return
                 else:
                     # After first message, use debounce timeout
                     elapsed = asyncio.get_event_loop().time() - first_message_time
@@ -562,7 +613,10 @@ class SantaSessionManager:
 
                 except asyncio.TimeoutError:
                     if first_message_time is None:
-                        # No message received within timeout
+                        # No message yet - continue if held, otherwise already handled above
+                        if self._held:
+                            continue
+                        # Should not reach here, but safety check
                         logger.info("Followup timeout - no response received")
                         self._session.state = SantaState.COMPLETE
                         self._session.outcome = "timeout"
@@ -640,6 +694,8 @@ Make your own judgment based on the wish. Use action "grant" or "deny"."""
                 "state": None,
                 "followup_count": 0,
                 "started_at": None,
+                "held": self._held,
+                "conversation": [],
             }
 
         return {
@@ -650,4 +706,6 @@ Make your own judgment based on the wish. Use action "grant" or "deny"."""
             "state": self._session.state.value,
             "followup_count": self._session.followup_count,
             "started_at": None,  # Would need to track this
+            "held": self._held,
+            "conversation": self._session.conversation,
         }

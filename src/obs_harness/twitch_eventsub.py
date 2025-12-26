@@ -96,6 +96,9 @@ class TwitchEventSubManager:
     - Redemption fulfill/cancel via Twitch API
     """
 
+    # Stale connection threshold - if no activity for this long, consider disconnected
+    STALE_THRESHOLD_SECONDS = 120  # 2 minutes
+
     def __init__(self):
         self._twitch: Twitch | None = None
         self._eventsub: EventSubWebsocket | None = None
@@ -106,11 +109,26 @@ class TwitchEventSubManager:
         self._on_chat_message: Callable[[ChatMessage], Awaitable[None]] | None = None
         self._running = False
         self._chat_buffer = ChatBuffer()
+        self._last_activity: datetime | None = None  # Track last received event
 
     @property
     def is_connected(self) -> bool:
         """Check if connected to EventSub."""
-        return self._running and self._eventsub is not None
+        if not self._running or self._eventsub is None:
+            return False
+
+        # If we have activity tracking, check for stale connection
+        if self._last_activity:
+            stale_cutoff = datetime.utcnow() - timedelta(seconds=self.STALE_THRESHOLD_SECONDS)
+            if self._last_activity < stale_cutoff:
+                logger.warning(f"EventSub connection stale - no activity for {self.STALE_THRESHOLD_SECONDS}s")
+                return False
+
+        return True
+
+    def _update_activity(self) -> None:
+        """Update last activity timestamp."""
+        self._last_activity = datetime.utcnow()
 
     @property
     def chat_buffer(self) -> ChatBuffer:
@@ -198,6 +216,7 @@ class TwitchEventSubManager:
                 logger.info(f"Subscribed to redemptions for channel {broadcaster_user_id}")
 
             self._running = True
+            self._update_activity()  # Mark as active on start
             logger.info(f"EventSub started for broadcaster {broadcaster_user_id}")
 
         except Exception as e:
@@ -226,6 +245,8 @@ class TwitchEventSubManager:
 
     async def _handle_chat_message(self, event: ChannelChatMessageEvent) -> None:
         """Handle incoming chat message from EventSub."""
+        self._update_activity()  # Track activity
+
         message = ChatMessage(
             message_id=event.event.message_id,
             user_id=event.event.chatter_user_id,
@@ -246,6 +267,7 @@ class TwitchEventSubManager:
 
     async def _handle_redemption(self, event: ChannelPointsCustomRewardRedemptionAddEvent) -> None:
         """Handle incoming redemption event from pyTwitchAPI."""
+        self._update_activity()  # Track activity
         print(f"[DEBUG] Redemption event received!")
         redemption = ChannelPointRedemption(
             redemption_id=event.event.id,
@@ -297,6 +319,7 @@ class TwitchEventSubManager:
                 broadcaster_id=self._broadcaster_user_id,
                 reward_id=rid,
                 is_enabled=False,
+                is_user_input_required=True,  # Preserve text input requirement
             )
             logger.info(f"Disabled reward: {rid}")
             return True
@@ -316,6 +339,7 @@ class TwitchEventSubManager:
                 broadcaster_id=self._broadcaster_user_id,
                 reward_id=rid,
                 is_enabled=True,
+                is_user_input_required=True,  # Preserve text input requirement
             )
             logger.info(f"Enabled reward: {rid}")
             return True

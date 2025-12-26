@@ -26,7 +26,7 @@ load_dotenv()
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from sqlmodel import select
+from sqlmodel import select, delete
 
 from .chat_pipeline import ChatPipeline, ChatPipelineConfig
 from .database import close_db, get_session, init_db
@@ -365,6 +365,28 @@ class OBSHarness:
         """Check if a channel is connected."""
         return self._manager.is_connected(channel)
 
+    def is_streaming(self, channel: str) -> bool:
+        """Check if a channel is currently streaming audio."""
+        return self._manager._channel_state.get(channel, {}).get("streaming", False)
+
+    async def wait_for_stream_complete(self, channel: str, timeout: float = 60.0) -> bool:
+        """Wait for audio stream to complete on a channel.
+
+        Args:
+            channel: The channel name
+            timeout: Maximum seconds to wait
+
+        Returns:
+            True if stream completed, False if timeout
+        """
+        import asyncio
+        start = asyncio.get_event_loop().time()
+        while self.is_streaming(channel):
+            if asyncio.get_event_loop().time() - start > timeout:
+                return False
+            await asyncio.sleep(0.1)  # Poll every 100ms
+        return True
+
     async def _log_playback(self, channel: str, content: str, content_type: str) -> None:
         """Log a playback event."""
         try:
@@ -594,6 +616,10 @@ def create_app(
         """Callback for Santa session state changes."""
         await broadcast_santa_status(session_data)
 
+        # When session completes, finalize it (save to DB, re-enable reward)
+        if session_data.state == SantaState.COMPLETE:
+            await finalize_santa_session()
+
     async def handle_channel_point_redemption(redemption: ChannelPointRedemption) -> None:
         """Handle incoming channel point redemption."""
         nonlocal santa_manager
@@ -727,7 +753,7 @@ def create_app(
 
         # Forward to Santa if there's an active session waiting for followup
         if santa_manager and santa_manager.is_active:
-            await santa_manager.on_chat_message(
+            await santa_manager.receive_chat_message(
                 user_id=message.user_id,
                 username=message.user_login,
                 message=message.message,
@@ -754,6 +780,22 @@ def create_app(
                 except Exception:
                     manager.disconnect_dashboard(ws)
 
+            # Ping Santa dashboard connections
+            for ws in list(santa_dashboard_connections):
+                try:
+                    await ws.send_json({"type": "ping", "ts": now})
+                except Exception:
+                    if ws in santa_dashboard_connections:
+                        santa_dashboard_connections.remove(ws)
+
+            # Ping Twitch chat connections
+            for ws in list(twitch_chat_connections):
+                try:
+                    await ws.send_json({"type": "ping", "ts": now})
+                except Exception:
+                    if ws in twitch_chat_connections:
+                        twitch_chat_connections.remove(ws)
+
             # Close stale connections (no pong received within threshold)
             stale_threshold = now - manager.STALE_THRESHOLD
             for ws, last_pong in list(manager._last_pong.items()):
@@ -765,6 +807,71 @@ def create_app(
                         pass
                     # Clean up tracking (disconnect handlers will also try, but be safe)
                     manager._last_pong.pop(ws, None)
+
+    async def eventsub_auto_reconnect():
+        """Background task to auto-reconnect EventSub if disconnected."""
+        RECONNECT_INTERVAL = 10  # Check every 10 seconds
+        while True:
+            await asyncio.sleep(RECONNECT_INTERVAL)
+
+            # Skip if already connected
+            if eventsub_manager.is_connected:
+                continue
+
+            # Try to reconnect using saved Twitch config
+            try:
+                async with get_session() as session:
+                    result = await session.execute(select(TwitchConfig).limit(1))
+                    twitch_config = result.scalar_one_or_none()
+
+                    # Also check Santa config to see if we need redemptions
+                    santa_result = await session.execute(select(SantaConfig).limit(1))
+                    santa_config = santa_result.scalar_one_or_none()
+
+                if not twitch_config or not twitch_config.access_token or not twitch_config.user_id:
+                    continue  # No valid config, can't reconnect
+
+                # Look up channel's user ID if different from logged-in user
+                channel_user_id = twitch_config.user_id
+                if twitch_config.channel and twitch_config.channel.lower() != (twitch_config.username or "").lower():
+                    try:
+                        import httpx
+                        async with httpx.AsyncClient() as client:
+                            resp = await client.get(
+                                f"https://api.twitch.tv/helix/users?login={twitch_config.channel}",
+                                headers={
+                                    "Authorization": f"Bearer {twitch_config.access_token}",
+                                    "Client-Id": os.environ.get("TWITCH_CLIENT_ID", "h1x5odjr6qy1m8sesgev1p9wcssz63"),
+                                }
+                            )
+                            if resp.status_code == 200:
+                                data = resp.json()
+                                if data.get("data"):
+                                    channel_user_id = data["data"][0]["id"]
+                    except Exception:
+                        pass  # Use default user_id
+
+                # Check if Santa is enabled - if so, subscribe to redemptions too
+                santa_enabled = santa_config and santa_config.enabled
+                reward_id = santa_config.reward_id if santa_config else None
+
+                # Reconnect
+                logger.info(f"EventSub disconnected, attempting auto-reconnect... (Santa enabled: {santa_enabled})")
+                eventsub_manager.set_chat_callback(on_chat_message)
+                await eventsub_manager.start(
+                    access_token=twitch_config.access_token,
+                    client_id=os.environ.get("TWITCH_CLIENT_ID", "h1x5odjr6qy1m8sesgev1p9wcssz63"),
+                    broadcaster_user_id=channel_user_id,
+                    user_id=twitch_config.user_id,
+                    reward_id=reward_id if santa_enabled else None,
+                    on_redemption=handle_channel_point_redemption if santa_enabled else None,
+                    subscribe_to_chat=True,
+                    subscribe_to_redemptions=santa_enabled,
+                )
+                logger.info(f"EventSub auto-reconnected to #{twitch_config.channel}")
+
+            except Exception as e:
+                logger.warning(f"EventSub auto-reconnect failed: {e}")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -849,15 +956,21 @@ def create_app(
             santa_manager.set_state_callback(on_santa_state_change)
             logger.info("Santa session manager initialized with defaults")
 
-        # Start background ping task for WebSocket heartbeat
+        # Start background tasks
         ping_task = asyncio.create_task(ping_all_connections())
+        reconnect_task = asyncio.create_task(eventsub_auto_reconnect())
 
         yield
 
-        # Cancel ping task on shutdown
+        # Cancel background tasks on shutdown
         ping_task.cancel()
+        reconnect_task.cancel()
         try:
             await ping_task
+        except asyncio.CancelledError:
+            pass
+        try:
+            await reconnect_task
         except asyncio.CancelledError:
             pass
 
@@ -2169,6 +2282,100 @@ def create_app(
         status = santa_manager.get_session_status()
         return SantaSessionStatus(**status)
 
+    @app.get("/api/santa/sessions")
+    async def get_santa_sessions(limit: int = 20) -> dict:
+        """Get past Santa sessions with conversation history."""
+        async with get_session() as session:
+            result = await session.execute(
+                select(SantaSession)
+                .order_by(SantaSession.started_at.desc())
+                .limit(limit)
+            )
+            sessions = result.scalars().all()
+
+        return {
+            "sessions": [
+                {
+                    "id": s.id,
+                    "redeemer_display_name": s.redeemer_display_name,
+                    "wish_text": s.wish_text,
+                    "outcome": s.outcome,
+                    "followup_count": s.followup_count,
+                    "started_at": s.started_at.isoformat() if s.started_at else None,
+                    "ended_at": s.ended_at.isoformat() if s.ended_at else None,
+                    "conversation": json.loads(s.conversation_history) if s.conversation_history else [],
+                }
+                for s in sessions
+            ]
+        }
+
+    @app.delete("/api/santa/sessions")
+    async def clear_santa_sessions() -> dict:
+        """Clear all past Santa sessions."""
+        async with get_session() as session:
+            await session.execute(delete(SantaSession))
+            await session.commit()
+
+        logger.info("Cleared all Santa sessions")
+        return {"success": True, "message": "All sessions cleared"}
+
+    @app.post("/api/santa/reset")
+    async def reset_santa() -> dict:
+        """Full Santa reset: clear sessions, clear memory, restart EventSub."""
+        nonlocal eventsub_manager
+
+        results = []
+
+        # 1. Clear sessions
+        async with get_session() as session:
+            await session.execute(delete(SantaSession))
+            await session.commit()
+        results.append("Sessions cleared")
+
+        # 2. Clear character memory
+        async with get_session() as session:
+            char = await session.exec(
+                select(Character).where(Character.name == "santa_timmy")
+            )
+            char = char.first()
+            if char:
+                char.memory = None
+                session.add(char)
+                await session.commit()
+                results.append("Memory cleared")
+
+        # 3. Restart EventSub if we have Twitch config
+        if eventsub_manager and eventsub_manager.is_connected:
+            await eventsub_manager.stop()
+            results.append("EventSub stopped")
+
+        # Get config and restart
+        async with get_session() as session:
+            config = await session.exec(select(SantaConfig))
+            santa_config = config.first()
+            twitch_config = await session.exec(select(TwitchConfig))
+            twitch = twitch_config.first()
+
+            if twitch and twitch.access_token and twitch.broadcaster_id:
+                if not eventsub_manager:
+                    eventsub_manager = TwitchEventSubManager()
+
+                await eventsub_manager.start(
+                    access_token=twitch.access_token,
+                    client_id=twitch.client_id or "h1x5odjr6qy1m8sesgev1p9wcssz63",
+                    broadcaster_user_id=twitch.broadcaster_id,
+                    user_id=twitch.user_id,
+                    reward_id=santa_config.reward_id if santa_config else None,
+                    on_redemption=on_redemption,
+                    subscribe_to_chat=True,
+                    subscribe_to_redemptions=True,
+                )
+                eventsub_manager.set_chat_callback(on_chat_message)
+                results.append("EventSub restarted")
+
+        logger.info(f"Santa reset complete: {', '.join(results)}")
+        return {"success": True, "results": results}
+
     @app.post("/api/santa/session/message")
     async def santa_session_message(request: SantaMessageRequest) -> dict:
         """Send a message to the active Santa session (dashboard override)."""
@@ -2208,6 +2415,15 @@ def create_app(
         await santa_manager.cancel_session("cancelled")
         await finalize_santa_session()
         return {"success": True}
+
+    @app.post("/api/santa/session/hold")
+    async def santa_session_hold() -> dict:
+        """Toggle hold state on active session (pauses timeouts)."""
+        if not santa_manager:
+            raise HTTPException(status_code=500, detail="Santa manager not initialized")
+
+        new_state = santa_manager.toggle_hold()
+        return {"success": True, "held": new_state}
 
     @app.post("/api/santa/start")
     async def santa_start() -> dict:
@@ -2280,7 +2496,7 @@ def create_app(
 
     @app.post("/api/santa/toggle")
     async def toggle_santa_enabled() -> dict:
-        """Toggle Santa enabled state and immediately enable/disable reward."""
+        """Toggle Santa enabled state - restarts EventSub to subscribe/unsubscribe from redemptions."""
         async with get_session() as session:
             result = await session.execute(select(SantaConfig).limit(1))
             config = result.scalar_one_or_none()
@@ -2297,14 +2513,62 @@ def create_app(
             new_enabled = config.enabled
             reward_id = config.reward_id
 
-        # Enable/disable reward on Twitch
-        if reward_id and eventsub_manager.is_connected:
-            if new_enabled:
-                await eventsub_manager.enable_reward(reward_id)
-                logger.info(f"Santa enabled - enabled reward {reward_id}")
-            else:
-                await eventsub_manager.disable_reward(reward_id)
-                logger.info(f"Santa disabled - disabled reward {reward_id}")
+            # Get Twitch config for restart
+            twitch_result = await session.execute(select(TwitchConfig).limit(1))
+            twitch_config = twitch_result.scalar_one_or_none()
+
+        # Restart EventSub to subscribe/unsubscribe from redemptions
+        if twitch_config and twitch_config.access_token:
+            try:
+                # Stop current connection
+                await eventsub_manager.stop()
+
+                # Look up channel's user ID
+                channel_user_id = twitch_config.user_id
+                if twitch_config.channel and twitch_config.channel.lower() != (twitch_config.username or "").lower():
+                    try:
+                        import httpx
+                        async with httpx.AsyncClient() as client:
+                            resp = await client.get(
+                                f"https://api.twitch.tv/helix/users?login={twitch_config.channel}",
+                                headers={
+                                    "Authorization": f"Bearer {twitch_config.access_token}",
+                                    "Client-Id": os.environ.get("TWITCH_CLIENT_ID", "h1x5odjr6qy1m8sesgev1p9wcssz63"),
+                                }
+                            )
+                            if resp.status_code == 200:
+                                data = resp.json()
+                                if data.get("data"):
+                                    channel_user_id = data["data"][0]["id"]
+                    except Exception:
+                        pass
+
+                # Restart with appropriate subscriptions
+                eventsub_manager.set_chat_callback(on_chat_message)
+                await eventsub_manager.start(
+                    access_token=twitch_config.access_token,
+                    client_id=os.environ.get("TWITCH_CLIENT_ID", "h1x5odjr6qy1m8sesgev1p9wcssz63"),
+                    broadcaster_user_id=channel_user_id,
+                    user_id=twitch_config.user_id,
+                    reward_id=reward_id if new_enabled else None,
+                    on_redemption=handle_channel_point_redemption if new_enabled else None,
+                    subscribe_to_chat=True,
+                    subscribe_to_redemptions=new_enabled,
+                )
+
+                if new_enabled:
+                    # Enable the reward on Twitch
+                    if reward_id:
+                        await eventsub_manager.enable_reward(reward_id)
+                    logger.info(f"Santa enabled - EventSub restarted with redemptions")
+                else:
+                    # Disable the reward on Twitch
+                    if reward_id:
+                        await eventsub_manager.disable_reward(reward_id)
+                    logger.info(f"Santa disabled - EventSub restarted without redemptions")
+
+            except Exception as e:
+                logger.error(f"Failed to restart EventSub on toggle: {e}")
 
         return {"success": True, "enabled": new_enabled}
 

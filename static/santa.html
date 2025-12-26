@@ -67,13 +67,47 @@
             color: var(--text-primary);
         }
 
-        .status-row {
+        /* Connection Banner */
+        .connection-banner {
+            background: var(--bg-card);
+            border-radius: 8px;
+            padding: 1rem 1.5rem;
+            margin-bottom: 2rem;
             display: flex;
-            gap: 1rem;
+            justify-content: space-between;
             align-items: center;
+            border-left: 4px solid var(--warning);
         }
 
-        .status-indicator {
+        .connection-banner.connected {
+            border-left-color: var(--success);
+        }
+
+        .connection-banner.error {
+            border-left-color: var(--christmas-red);
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .status-icon {
+            font-size: 1.5rem;
+        }
+
+        .status-text {
+            font-weight: 600;
+            font-size: 1rem;
+        }
+
+        .connection-details {
+            display: flex;
+            gap: 1.5rem;
+        }
+
+        .detail-item {
             display: flex;
             align-items: center;
             gap: 0.5rem;
@@ -82,14 +116,18 @@
         }
 
         .status-dot {
-            width: 8px;
-            height: 8px;
+            width: 10px;
+            height: 10px;
             border-radius: 50%;
             background: var(--warning);
         }
 
         .status-dot.connected {
             background: var(--success);
+        }
+
+        .status-dot.error {
+            background: var(--christmas-red);
         }
 
         .section {
@@ -377,6 +415,83 @@
         input:checked + .toggle-slider:before {
             transform: translateX(24px);
         }
+
+        /* Chat bubble styles */
+        .chat-bubble {
+            margin-bottom: 0.75rem;
+            max-width: 85%;
+        }
+        .chat-bubble.user {
+            margin-left: auto;
+            text-align: right;
+        }
+        .chat-bubble.assistant {
+            margin-right: auto;
+        }
+        .chat-bubble-label {
+            font-size: 0.625rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.25rem;
+            text-transform: uppercase;
+        }
+        .chat-bubble-content {
+            padding: 0.5rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.875rem;
+            line-height: 1.4;
+            display: inline-block;
+            text-align: left;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .chat-bubble.user .chat-bubble-content {
+            background: var(--accent);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+        .chat-bubble.assistant .chat-bubble-content {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border-bottom-left-radius: 4px;
+        }
+        .conversation-container {
+            background: var(--bg-primary);
+            border-radius: 8px;
+            padding: 1rem;
+            max-height: 350px;
+            overflow-y: auto;
+            min-height: 100px;
+        }
+        .session-card {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        .session-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+        .session-outcome {
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .session-outcome.grant {
+            background: var(--success);
+            color: #000;
+        }
+        .session-outcome.deny {
+            background: var(--christmas-red);
+            color: white;
+        }
+        .session-outcome.timeout, .session-outcome.cancelled {
+            background: var(--text-secondary);
+            color: #000;
+        }
     </style>
 </head>
 <body>
@@ -389,14 +504,21 @@
             </div>
         </header>
 
-        <div class="status-row">
-            <div class="status-indicator">
-                <span class="status-dot" id="wsStatus"></span>
-                <span id="wsStatusText">Connecting...</span>
+        <!-- Connection Status Banner -->
+        <div class="connection-banner" id="connectionBanner">
+            <div class="connection-status">
+                <span class="status-icon" id="overallStatusIcon">⏳</span>
+                <span class="status-text" id="overallStatusText">Connecting...</span>
             </div>
-            <div class="status-indicator">
-                <span class="status-dot" id="eventsubStatus"></span>
-                <span id="eventsubStatusText">EventSub: Disconnected</span>
+            <div class="connection-details">
+                <span class="detail-item">
+                    <span class="status-dot" id="wsStatus"></span>
+                    <span id="wsStatusText">Dashboard</span>
+                </span>
+                <span class="detail-item">
+                    <span class="status-dot" id="eventsubStatus"></span>
+                    <span id="eventsubStatusText">EventSub</span>
+                </span>
             </div>
         </div>
 
@@ -404,6 +526,18 @@
         <div class="section">
             <h2 class="section-title">Current Session</h2>
             <div class="card">
+                <!-- Hold Toggle at top -->
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--bg-secondary);">
+                    <span style="font-weight: 600;">Session Control</span>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <span id="holdLabel" style="font-size: 0.875rem;">Hold</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="holdToggle">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </label>
+                </div>
+
                 <div class="session-status idle" id="sessionStatus">
                     <dl class="session-info">
                         <dt>Status</dt>
@@ -441,16 +575,27 @@
                     <button class="btn btn-danger" id="denyBtn" disabled>Deny Wish</button>
                     <button class="btn btn-secondary" id="cancelBtn" disabled>Cancel Session</button>
                 </div>
+
+                <!-- Conversation History -->
+                <div style="margin-top: 1rem;">
+                    <label style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 0.5rem; display: block;">Current Conversation</label>
+                    <div id="conversationArea" class="conversation-container">
+                        <div id="conversation-empty" style="color: var(--text-secondary); text-align: center; padding: 2rem;">No conversation yet</div>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <!-- EventSub Control -->
+        <!-- Past Sessions -->
         <div class="section">
-            <h2 class="section-title">EventSub Control</h2>
+            <h2 class="section-title">Past Sessions</h2>
             <div class="card">
-                <div class="controls-grid">
-                    <button class="btn btn-success" id="startEventsubBtn">Start Listening</button>
-                    <button class="btn btn-danger" id="stopEventsubBtn" disabled>Stop Listening</button>
+                <div id="pastSessionsArea" class="log-area" style="max-height: 300px; font-size: 0.85rem;">
+                    <div style="color: var(--text-secondary);">Loading past sessions...</div>
+                </div>
+                <div style="display: flex; gap: 1rem; margin-top: 1rem;">
+                    <button class="btn btn-secondary" id="refreshSessionsBtn">Refresh</button>
+                    <button class="btn btn-danger" id="clearSessionsBtn">Clear All Sessions</button>
                 </div>
             </div>
         </div>
@@ -507,10 +652,11 @@
                 <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--bg-secondary);">
                     <h3 style="margin-bottom: 1rem; font-size: 1rem; color: var(--text-secondary);">Quick Actions</h3>
                     <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
-                        <button class="btn btn-secondary" id="clearMemoryBtn">🧹 Clear Santa's Memory</button>
+                        <button class="btn btn-danger" id="resetSantaBtn">🔄 Reset Santa</button>
+                        <button class="btn btn-secondary" id="clearMemoryBtn">🧹 Clear Memory Only</button>
                     </div>
                     <p style="margin-top: 0.75rem; font-size: 0.8rem; color: var(--text-secondary);">
-                        💡 The Santa Enabled toggle controls the channel point reward (enabled = reward available, disabled = reward paused)
+                        Reset Santa clears sessions, memory, and restarts EventSub in one click.
                     </p>
                 </div>
             </div>

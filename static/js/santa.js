@@ -14,6 +14,7 @@ class SantaDashboard {
     constructor() {
         this.ws = null;
         this.connected = false;
+        this.eventsubConnected = false;
         this.sessionActive = false;
 
         // DOM Elements
@@ -32,10 +33,18 @@ class SantaDashboard {
         this.sendMessageBtn = document.getElementById('sendMessageBtn');
         this.grantBtn = document.getElementById('grantBtn');
         this.denyBtn = document.getElementById('denyBtn');
+        this.holdToggle = document.getElementById('holdToggle');
+        this.holdLabel = document.getElementById('holdLabel');
         this.cancelBtn = document.getElementById('cancelBtn');
+        this.conversationArea = document.getElementById('conversationArea');
+        this.pastSessionsArea = document.getElementById('pastSessionsArea');
+        this.refreshSessionsBtn = document.getElementById('refreshSessionsBtn');
+        this.clearSessionsBtn = document.getElementById('clearSessionsBtn');
 
-        this.startEventsubBtn = document.getElementById('startEventsubBtn');
-        this.stopEventsubBtn = document.getElementById('stopEventsubBtn');
+        // Connection banner
+        this.connectionBanner = document.getElementById('connectionBanner');
+        this.overallStatusIcon = document.getElementById('overallStatusIcon');
+        this.overallStatusText = document.getElementById('overallStatusText');
 
         this.enabledToggle = document.getElementById('enabledToggle');
         this.characterName = document.getElementById('characterName');
@@ -60,6 +69,7 @@ class SantaDashboard {
         this.resetPromptBtn = document.getElementById('resetPromptBtn');
 
         // Quick actions
+        this.resetSantaBtn = document.getElementById('resetSantaBtn');
         this.clearMemoryBtn = document.getElementById('clearMemoryBtn');
 
         this.init();
@@ -70,7 +80,11 @@ class SantaDashboard {
         this.loadConfig();
         this.loadEventSubStatus();
         this.loadCharacter();
+        this.loadPastSessions();
         this.attachEventListeners();
+
+        // Poll EventSub status every 5 seconds to keep banner updated
+        setInterval(() => this.loadEventSubStatus(), 5000);
     }
 
     // -------------------------------------------------------------------------
@@ -86,15 +100,17 @@ class SantaDashboard {
         this.ws.onopen = () => {
             this.connected = true;
             this.wsStatus.classList.add('connected');
-            this.wsStatusText.textContent = 'Connected';
+            this.wsStatusText.textContent = 'Dashboard';
             this.log('WebSocket connected');
+            this.updateConnectionBanner();
         };
 
         this.ws.onclose = () => {
             this.connected = false;
             this.wsStatus.classList.remove('connected');
-            this.wsStatusText.textContent = 'Disconnected';
+            this.wsStatusText.textContent = 'Dashboard';
             this.log('WebSocket disconnected, reconnecting...');
+            this.updateConnectionBanner();
             setTimeout(() => this.connectWebSocket(), 3000);
         };
 
@@ -132,10 +148,11 @@ class SantaDashboard {
 
     updateSessionStatus(status) {
         this.sessionActive = status.active;
+        this.sessionHeld = status.held || false;
 
         // Update state badge
         const state = status.state || 'idle';
-        this.sessionState.textContent = state.replace('_', ' ');
+        this.sessionState.textContent = state.replace('_', ' ') + (this.sessionHeld ? ' (HELD)' : '');
         this.sessionState.className = `state-badge ${state}`;
 
         // Update session info
@@ -152,11 +169,122 @@ class SantaDashboard {
             this.sessionStatusEl.classList.add('idle');
         }
 
+        // Update hold toggle
+        this.holdToggle.checked = this.sessionHeld;
+        this.holdLabel.textContent = this.sessionHeld ? 'On Hold' : 'Hold';
+
+        // Update conversation display
+        this.updateConversation(status.conversation || []);
+
         // Update button states
         this.updateButtonStates();
 
         if (status.state && status.state !== 'idle') {
             this.log(`Session state: ${state}`);
+        }
+    }
+
+    updateConversation(conversation) {
+        const emptyDiv = this.conversationArea.querySelector('#conversation-empty');
+
+        if (!conversation || conversation.length === 0) {
+            if (emptyDiv) emptyDiv.style.display = 'block';
+            this.conversationArea.querySelectorAll('.chat-bubble').forEach(el => el.remove());
+            return;
+        }
+
+        if (emptyDiv) emptyDiv.style.display = 'none';
+
+        const html = conversation.map(msg => {
+            const isUser = msg.role === 'user';
+            const label = isUser ? '👤 CHILD' : '🎅 SANTA';
+            let content = msg.content;
+
+            // Try to parse assistant JSON responses
+            if (msg.role === 'assistant') {
+                try {
+                    const parsed = JSON.parse(content);
+                    content = parsed.speech || content;
+                } catch (e) {
+                    // Not JSON, use as-is
+                }
+            }
+
+            return `<div class="chat-bubble ${msg.role}">
+                <div class="chat-bubble-label">${label}</div>
+                <div class="chat-bubble-content">${escapeHtml(content)}</div>
+            </div>`;
+        }).join('');
+
+        // Keep empty div, replace only bubbles
+        this.conversationArea.querySelectorAll('.chat-bubble').forEach(el => el.remove());
+        this.conversationArea.insertAdjacentHTML('beforeend', html);
+        this.conversationArea.scrollTop = this.conversationArea.scrollHeight;
+    }
+
+    async loadPastSessions() {
+        try {
+            const response = await fetch('/api/santa/sessions?limit=10');
+            const data = await response.json();
+
+            if (!data.sessions || data.sessions.length === 0) {
+                this.pastSessionsArea.innerHTML = '<div style="color: var(--text-secondary); text-align: center; padding: 2rem;">No past sessions</div>';
+                return;
+            }
+
+            const html = data.sessions.map(session => {
+                const outcomeClass = session.outcome || 'unknown';
+                const outcomeLabel = session.outcome ? session.outcome.toUpperCase() : 'IN PROGRESS';
+                const date = session.started_at ? new Date(session.started_at).toLocaleString() : 'Unknown';
+
+                // Render conversation bubbles
+                let convoHtml = '';
+                if (session.conversation && session.conversation.length > 0) {
+                    convoHtml = session.conversation.map(msg => {
+                        const isUser = msg.role === 'user';
+                        const label = isUser ? '👤 CHILD' : '🎅 SANTA';
+                        let content = msg.content;
+
+                        if (msg.role === 'assistant') {
+                            try {
+                                const parsed = JSON.parse(content);
+                                content = parsed.speech || content;
+                            } catch (e) {}
+                        }
+
+                        return `<div class="chat-bubble ${msg.role}">
+                            <div class="chat-bubble-label">${label}</div>
+                            <div class="chat-bubble-content">${escapeHtml(content)}</div>
+                        </div>`;
+                    }).join('');
+                } else {
+                    convoHtml = '<div style="color: var(--text-secondary); font-size: 0.8rem;">No conversation recorded</div>';
+                }
+
+                return `<div class="session-card">
+                    <div class="session-card-header">
+                        <div>
+                            <strong>${escapeHtml(session.redeemer_display_name)}</strong>
+                            <span style="color: var(--text-secondary); font-size: 0.75rem; margin-left: 0.5rem;">${date}</span>
+                        </div>
+                        <span class="session-outcome ${outcomeClass}">${outcomeLabel}</span>
+                    </div>
+                    <div style="color: var(--text-secondary); font-size: 0.8rem; margin-bottom: 0.5rem;">
+                        Wish: "${escapeHtml(session.wish_text || 'No wish')}"
+                    </div>
+                    <details>
+                        <summary style="cursor: pointer; font-size: 0.8rem; color: var(--text-secondary);">Show conversation (${session.conversation?.length || 0} messages)</summary>
+                        <div style="margin-top: 0.5rem; padding: 0.5rem; background: var(--bg-primary); border-radius: 4px; max-height: 200px; overflow-y: auto;">
+                            ${convoHtml}
+                        </div>
+                    </details>
+                </div>`;
+            }).join('');
+
+            this.pastSessionsArea.innerHTML = html;
+        } catch (e) {
+            this.pastSessionsArea.innerHTML = '<div style="color: var(--text-secondary);">Failed to load past sessions</div>';
+            console.error('Failed to load past sessions:', e);
         }
     }
 
@@ -225,59 +353,49 @@ class SantaDashboard {
             const response = await fetch('/api/santa/eventsub/status');
             const status = await response.json();
 
+            this.eventsubConnected = status.connected;
+
             if (status.connected) {
                 this.eventsubStatus.classList.add('connected');
-                this.eventsubStatusText.textContent = 'EventSub: Connected';
-                this.startEventsubBtn.disabled = true;
-                this.stopEventsubBtn.disabled = false;
+                this.eventsubStatusText.textContent = 'EventSub';
                 // Auto-load rewards when connected
                 this.loadRewards();
             } else {
                 this.eventsubStatus.classList.remove('connected');
-                this.eventsubStatusText.textContent = 'EventSub: Disconnected';
-                this.startEventsubBtn.disabled = false;
-                this.stopEventsubBtn.disabled = true;
+                this.eventsubStatusText.textContent = 'EventSub';
             }
+
+            this.updateConnectionBanner();
         } catch (e) {
-            this.log('Failed to get EventSub status: ' + e.message);
+            this.eventsubConnected = false;
+            this.updateConnectionBanner();
         }
     }
 
-    async startEventSub() {
-        try {
-            this.startEventsubBtn.disabled = true;
-            this.log('Starting EventSub...');
+    updateConnectionBanner() {
+        const wsOk = this.connected;
+        const eventsubOk = this.eventsubConnected;
+        const allConnected = wsOk && eventsubOk;
+        const noneConnected = !wsOk && !eventsubOk;
 
-            const response = await fetch('/api/santa/start', { method: 'POST' });
-            const result = await response.json();
-
-            if (response.ok) {
-                this.log('EventSub started');
-                this.loadEventSubStatus();
-                this.loadRewards();
+        // Update banner class
+        this.connectionBanner.classList.remove('connected', 'error');
+        if (allConnected) {
+            this.connectionBanner.classList.add('connected');
+            this.overallStatusIcon.textContent = '🎅';
+            this.overallStatusText.textContent = 'Santa Ready';
+        } else if (noneConnected) {
+            this.connectionBanner.classList.add('error');
+            this.overallStatusIcon.textContent = '❌';
+            this.overallStatusText.textContent = 'Disconnected';
+        } else {
+            // Partial connection
+            this.overallStatusIcon.textContent = '⚠️';
+            if (!eventsubOk) {
+                this.overallStatusText.textContent = 'EventSub not connected - use Reset Santa';
             } else {
-                this.log('Failed to start EventSub: ' + result.detail);
-                this.startEventsubBtn.disabled = false;
+                this.overallStatusText.textContent = 'Dashboard reconnecting...';
             }
-        } catch (e) {
-            this.log('Failed to start EventSub: ' + e.message);
-            this.startEventsubBtn.disabled = false;
-        }
-    }
-
-    async stopEventSub() {
-        try {
-            this.stopEventsubBtn.disabled = true;
-            this.log('Stopping EventSub...');
-
-            const response = await fetch('/api/santa/stop', { method: 'POST' });
-
-            if (response.ok) {
-                this.log('EventSub stopped');
-            }
-            this.loadEventSubStatus();
-        } catch (e) {
-            this.log('Failed to stop EventSub: ' + e.message);
         }
     }
 
@@ -363,6 +481,21 @@ class SantaDashboard {
             }
         } catch (e) {
             this.log('Failed to cancel session: ' + e.message);
+        }
+    }
+
+    async toggleHold() {
+        try {
+            const response = await fetch('/api/santa/session/hold', { method: 'POST' });
+            const result = await response.json();
+
+            if (response.ok) {
+                this.log(result.held ? '⏸ Session on hold' : '▶ Session resumed');
+            } else {
+                this.log('Failed to toggle hold: ' + result.detail);
+            }
+        } catch (e) {
+            this.log('Failed to toggle hold: ' + e.message);
         }
     }
 
@@ -461,6 +594,33 @@ You remember everything from this stream. Reference past visitors, chat's previo
         }
     }
 
+    async resetSanta() {
+        if (!confirm('Reset Santa completely? This will clear sessions, memory, and restart EventSub.')) {
+            return;
+        }
+
+        try {
+            this.resetSantaBtn.disabled = true;
+            this.log('🔄 Resetting Santa...');
+
+            const response = await fetch('/api/santa/reset', { method: 'POST' });
+            const result = await response.json();
+
+            if (response.ok) {
+                this.log('✅ Reset complete: ' + result.results.join(', '));
+                // Refresh everything
+                this.loadEventSubStatus();
+                this.loadPastSessions();
+            } else {
+                this.log('Failed to reset: ' + result.detail);
+            }
+        } catch (e) {
+            this.log('Failed to reset: ' + e.message);
+        } finally {
+            this.resetSantaBtn.disabled = false;
+        }
+    }
+
     async clearMemory() {
         if (!confirm('Clear Santa Timmy\'s memory? This will forget all past conversations.')) {
             return;
@@ -482,6 +642,31 @@ You remember everything from this stream. Reference past visitors, chat's previo
             this.log('Failed to clear memory: ' + e.message);
         } finally {
             this.clearMemoryBtn.disabled = false;
+        }
+    }
+
+    async clearSessions() {
+        if (!confirm('Clear ALL past Santa sessions? This will delete session history but NOT Santa\'s memory.')) {
+            return;
+        }
+
+        try {
+            this.clearSessionsBtn.disabled = true;
+            const response = await fetch('/api/santa/sessions', {
+                method: 'DELETE',
+            });
+
+            if (response.ok) {
+                this.log('🗑️ All sessions cleared');
+                this.loadPastSessions();
+            } else {
+                const error = await response.json();
+                this.log('Failed to clear sessions: ' + error.detail);
+            }
+        } catch (e) {
+            this.log('Failed to clear sessions: ' + e.message);
+        } finally {
+            this.clearSessionsBtn.disabled = false;
         }
     }
 
@@ -537,8 +722,6 @@ You remember everything from this stream. Reference past visitors, chat's previo
 
     attachEventListeners() {
         this.saveConfigBtn.addEventListener('click', () => this.saveConfig());
-        this.startEventsubBtn.addEventListener('click', () => this.startEventSub());
-        this.stopEventsubBtn.addEventListener('click', () => this.stopEventSub());
         this.refreshRewardsDropdownBtn.addEventListener('click', () => this.loadRewards());
         this.createRewardBtn.addEventListener('click', () => this.createReward());
 
@@ -551,7 +734,10 @@ You remember everything from this stream. Reference past visitors, chat's previo
 
         this.grantBtn.addEventListener('click', () => this.forceVerdict('grant'));
         this.denyBtn.addEventListener('click', () => this.forceVerdict('deny'));
+        this.holdToggle.addEventListener('change', () => this.toggleHold());
         this.cancelBtn.addEventListener('click', () => this.cancelSession());
+        this.refreshSessionsBtn.addEventListener('click', () => this.loadPastSessions());
+        this.clearSessionsBtn.addEventListener('click', () => this.clearSessions());
 
         // Director speak
         this.speakDirectBtn.addEventListener('click', () => this.speakDirect());
@@ -566,6 +752,7 @@ You remember everything from this stream. Reference past visitors, chat's previo
         this.resetPromptBtn.addEventListener('click', () => this.resetSystemPrompt());
 
         // Quick actions
+        this.resetSantaBtn.addEventListener('click', () => this.resetSanta());
         this.clearMemoryBtn.addEventListener('click', () => this.clearMemory());
 
         // Enabled toggle - immediate action
