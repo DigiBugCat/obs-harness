@@ -428,10 +428,10 @@
 
                 <!-- Mall Director Message -->
                 <div class="form-group" style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--bg-secondary);">
-                    <label>🎬 Mall Director (admin override - speaks directly)</label>
+                    <label>🎬 Mall Director (interrupt Santa with a message)</label>
                     <div class="message-input-row">
-                        <input type="text" id="directorInput" placeholder="Say something as Santa...">
-                        <button class="btn btn-secondary" id="speakDirectBtn">Speak</button>
+                        <input type="text" id="directorInput" placeholder="Hey Santa, we need to close early today...">
+                        <button class="btn btn-secondary" id="speakDirectBtn">Send</button>
                     </div>
                 </div>
 
@@ -474,13 +474,14 @@
                         <label>Character Name</label>
                         <input type="text" id="characterName" value="santa_timmy">
                     </div>
-                    <div class="form-group">
+                    <div class="form-group" style="grid-column: span 2;">
                         <label>Reward to Listen For</label>
+                        <select id="rewardId" style="width: 100%; margin-bottom: 0.5rem;">
+                            <option value="">All rewards</option>
+                        </select>
                         <div style="display: flex; gap: 0.5rem;">
-                            <select id="rewardId" style="flex: 1;">
-                                <option value="">All rewards</option>
-                            </select>
-                            <button class="btn btn-secondary" id="refreshRewardsDropdownBtn" style="padding: 0.5rem 0.75rem;">↻</button>
+                            <button class="btn btn-secondary" id="refreshRewardsDropdownBtn" style="flex: 1;">↻ Refresh</button>
+                            <button class="btn btn-success" id="createRewardBtn" style="flex: 1;">+ Create New Reward</button>
                         </div>
                     </div>
                     <div class="form-group">
@@ -502,6 +503,16 @@
                 </div>
 
                 <button class="btn btn-primary" id="saveConfigBtn">Save Configuration</button>
+
+                <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--bg-secondary);">
+                    <h3 style="margin-bottom: 1rem; font-size: 1rem; color: var(--text-secondary);">Quick Actions</h3>
+                    <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                        <button class="btn btn-secondary" id="clearMemoryBtn">🧹 Clear Santa's Memory</button>
+                    </div>
+                    <p style="margin-top: 0.75rem; font-size: 0.8rem; color: var(--text-secondary);">
+                        💡 The Santa Enabled toggle controls the channel point reward (enabled = reward available, disabled = reward paused)
+                    </p>
+                </div>
             </div>
         </div>
 
@@ -517,18 +528,6 @@
                     <button class="btn btn-primary" id="savePromptBtn">Save Prompt</button>
                     <button class="btn btn-secondary" id="resetPromptBtn">Reset to Default</button>
                 </div>
-            </div>
-        </div>
-
-        <!-- Rewards List -->
-        <div class="section">
-            <h2 class="section-title">Channel Point Rewards</h2>
-            <div class="card">
-                <p style="color: var(--text-secondary); margin-bottom: 1rem;">
-                    Start EventSub to see available rewards.
-                </p>
-                <button class="btn btn-secondary" id="refreshRewardsBtn" disabled>Refresh Rewards</button>
-                <div id="rewardsList" style="margin-top: 1rem;"></div>
             </div>
         </div>
 

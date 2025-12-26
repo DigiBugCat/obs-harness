@@ -188,11 +188,13 @@ class TwitchEventSubManager:
 
             # Subscribe to channel point redemptions
             if subscribe_to_redemptions:
+                print(f"[DEBUG] Subscribing to redemptions for {broadcaster_user_id}, reward_id={reward_id}")
                 await self._eventsub.listen_channel_points_custom_reward_redemption_add(
                     broadcaster_user_id=broadcaster_user_id,
                     reward_id=reward_id,  # None means all rewards
                     callback=self._handle_redemption,
                 )
+                print(f"[DEBUG] Successfully subscribed to redemptions")
                 logger.info(f"Subscribed to redemptions for channel {broadcaster_user_id}")
 
             self._running = True
@@ -244,6 +246,7 @@ class TwitchEventSubManager:
 
     async def _handle_redemption(self, event: ChannelPointsCustomRewardRedemptionAddEvent) -> None:
         """Handle incoming redemption event from pyTwitchAPI."""
+        print(f"[DEBUG] Redemption event received!")
         redemption = ChannelPointRedemption(
             redemption_id=event.event.id,
             reward_id=event.event.reward.id,
@@ -255,6 +258,7 @@ class TwitchEventSubManager:
             redeemed_at=event.event.redeemed_at.isoformat() if event.event.redeemed_at else "",
         )
 
+        print(f"[DEBUG] Redemption: {redemption.user_display_name} redeemed '{redemption.reward_title}'")
         logger.info(f"Redemption: {redemption.user_display_name} redeemed '{redemption.reward_title}'")
 
         if self._on_redemption:
@@ -280,8 +284,29 @@ class TwitchEventSubManager:
     # Reward Management API
     # -------------------------------------------------------------------------
 
-    async def pause_reward(self, reward_id: str | None = None) -> bool:
-        """Pause a channel point reward (prevent new redemptions)."""
+    async def disable_reward(self, reward_id: str | None = None) -> bool:
+        """Disable a channel point reward (hide it completely)."""
+        rid = reward_id or self._reward_id
+        if not self._twitch or not rid or not self._broadcaster_user_id:
+            print(f"[DEBUG] disable_reward early return: twitch={self._twitch}, rid={rid}, broadcaster={self._broadcaster_user_id}")
+            return False
+
+        try:
+            print(f"[DEBUG] Calling update_custom_reward: broadcaster_id={self._broadcaster_user_id}, reward_id={rid}")
+            await self._twitch.update_custom_reward(
+                broadcaster_id=self._broadcaster_user_id,
+                reward_id=rid,
+                is_enabled=False,
+            )
+            logger.info(f"Disabled reward: {rid}")
+            return True
+        except Exception as e:
+            print(f"[DEBUG] disable_reward exception: {e}")
+            logger.error(f"Failed to disable reward: {e}")
+            return False
+
+    async def enable_reward(self, reward_id: str | None = None) -> bool:
+        """Enable a channel point reward (show it)."""
         rid = reward_id or self._reward_id
         if not self._twitch or not rid or not self._broadcaster_user_id:
             return False
@@ -290,30 +315,12 @@ class TwitchEventSubManager:
             await self._twitch.update_custom_reward(
                 broadcaster_id=self._broadcaster_user_id,
                 reward_id=rid,
-                is_paused=True,
+                is_enabled=True,
             )
-            logger.info(f"Paused reward: {rid}")
+            logger.info(f"Enabled reward: {rid}")
             return True
         except Exception as e:
-            logger.error(f"Failed to pause reward: {e}")
-            return False
-
-    async def unpause_reward(self, reward_id: str | None = None) -> bool:
-        """Unpause a channel point reward (allow new redemptions)."""
-        rid = reward_id or self._reward_id
-        if not self._twitch or not rid or not self._broadcaster_user_id:
-            return False
-
-        try:
-            await self._twitch.update_custom_reward(
-                broadcaster_id=self._broadcaster_user_id,
-                reward_id=rid,
-                is_paused=False,
-            )
-            logger.info(f"Unpaused reward: {rid}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to unpause reward: {e}")
+            logger.error(f"Failed to enable reward: {e}")
             return False
 
     async def fulfill_redemption(self, redemption_id: str, reward_id: str | None = None) -> bool:
@@ -377,3 +384,48 @@ class TwitchEventSubManager:
         except Exception as e:
             logger.error(f"Failed to get rewards: {e}")
             return []
+
+    async def create_reward(
+        self,
+        title: str,
+        cost: int,
+        prompt: str = "",
+        is_user_input_required: bool = True,
+        is_enabled: bool = True,
+    ) -> dict | None:
+        """Create a new channel point reward.
+
+        Args:
+            title: The reward title
+            cost: Cost in channel points
+            prompt: Description/prompt shown to users
+            is_user_input_required: Whether user must enter text when redeeming
+            is_enabled: Whether reward is enabled
+
+        Returns:
+            Dict with reward info if successful, None otherwise.
+        """
+        if not self._twitch or not self._broadcaster_user_id:
+            return None
+
+        try:
+            result = await self._twitch.create_custom_reward(
+                broadcaster_id=self._broadcaster_user_id,
+                title=title,
+                cost=cost,
+                prompt=prompt if prompt else None,
+                is_user_input_required=is_user_input_required,
+                is_enabled=is_enabled,
+                should_redemptions_skip_request_queue=False,  # We want to manage redemptions
+            )
+            logger.info(f"Created reward: {title} (id={result.id})")
+            return {
+                "id": result.id,
+                "title": result.title,
+                "cost": result.cost,
+                "is_paused": result.is_paused,
+                "is_enabled": result.is_enabled,
+            }
+        except Exception as e:
+            logger.error(f"Failed to create reward: {e}")
+            return None

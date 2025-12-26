@@ -624,7 +624,7 @@ def create_app(
             return
 
         # Pause the reward to prevent new redeems
-        await eventsub_manager.pause_reward(redemption.reward_id)
+        await eventsub_manager.disable_reward(redemption.reward_id)
 
         # Get past sessions for this user (repeat visitor detection)
         past_sessions = []
@@ -670,7 +670,7 @@ def create_app(
 
         if not success:
             logger.error(f"Failed to start Santa session for {redemption.user_display_name}")
-            await eventsub_manager.unpause_reward(redemption.reward_id)
+            await eventsub_manager.enable_reward(redemption.reward_id)
 
     async def finalize_santa_session() -> None:
         """Finalize the current Santa session (save to DB, unpause reward)."""
@@ -695,12 +695,12 @@ def create_app(
                 db_record.ended_at = datetime.utcnow()
                 await db_session.commit()
 
-        # Get reward ID from config and unpause
+        # Get reward ID from config and re-enable
         async with get_session() as session:
             result = await session.execute(select(SantaConfig).limit(1))
             config = result.scalar_one_or_none()
-            if config and config.reward_id:
-                await eventsub_manager.unpause_reward(config.reward_id)
+            if config and config.reward_id and config.enabled:
+                await eventsub_manager.enable_reward(config.reward_id)
 
         logger.info(f"Santa session {session_data.session_id} finalized: {session_data.outcome}")
 
@@ -709,7 +709,8 @@ def create_app(
     # =========================================================================
 
     async def on_chat_message(message: ChatMessage) -> None:
-        """Callback for incoming chat messages - broadcast to all chat WebSocket clients."""
+        """Callback for incoming chat messages - broadcast to all chat WebSocket clients and Santa."""
+        # Broadcast to WebSocket clients
         msg_data = {
             "type": "chat_message",
             "message": {
@@ -723,6 +724,14 @@ def create_app(
                 await ws.send_json(msg_data)
             except Exception:
                 twitch_chat_connections.remove(ws)
+
+        # Forward to Santa if there's an active session waiting for followup
+        if santa_manager and santa_manager.is_active:
+            await santa_manager.on_chat_message(
+                user_id=message.user_id,
+                username=message.user_login,
+                message=message.message,
+            )
 
     async def ping_all_connections():
         """Background task: Send pings to all WebSocket clients and close stale connections."""
@@ -2110,6 +2119,10 @@ def create_app(
                 config = SantaConfig()
                 session.add(config)
 
+            # Track if enabled state changed
+            old_enabled = config.enabled
+            old_reward_id = config.reward_id
+
             update_data = request.model_dump(exclude_unset=True)
             for key, value in update_data.items():
                 setattr(config, key, value)
@@ -2124,6 +2137,18 @@ def create_app(
                 santa_manager.debounce_seconds = config.debounce_seconds
                 santa_manager.chat_vote_seconds = config.chat_vote_seconds
                 santa_manager.character_name = config.character_name
+
+            # Enable/disable reward based on enabled state
+            reward_id = config.reward_id
+            if reward_id and eventsub_manager.is_connected:
+                if config.enabled and not old_enabled:
+                    # Santa was just enabled - enable the reward
+                    await eventsub_manager.enable_reward(reward_id)
+                    logger.info(f"Santa enabled - enabled reward {reward_id}")
+                elif not config.enabled and old_enabled:
+                    # Santa was just disabled - disable the reward
+                    await eventsub_manager.disable_reward(reward_id)
+                    logger.info(f"Santa disabled - disabled reward {reward_id}")
 
             return SantaConfigResponse(
                 enabled=config.enabled,
@@ -2236,5 +2261,83 @@ def create_app(
         return {
             "connected": eventsub_manager.is_connected,
         }
+
+    @app.post("/api/santa/interrupt")
+    async def santa_interrupt(request: dict) -> dict:
+        """Send a Mall Director interruption through Santa (uses speech lock)."""
+        message = request.get("message", "").strip()
+        if not message:
+            raise HTTPException(status_code=400, detail="Message required")
+
+        if not santa_manager:
+            raise HTTPException(status_code=500, detail="Santa manager not initialized")
+
+        success = await santa_manager.interrupt_with_message(message)
+        if success:
+            return {"success": True}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to send interruption")
+
+    @app.post("/api/santa/toggle")
+    async def toggle_santa_enabled() -> dict:
+        """Toggle Santa enabled state and immediately enable/disable reward."""
+        async with get_session() as session:
+            result = await session.execute(select(SantaConfig).limit(1))
+            config = result.scalar_one_or_none()
+
+            if not config:
+                raise HTTPException(status_code=400, detail="Santa not configured")
+
+            # Toggle the enabled state
+            config.enabled = not config.enabled
+            session.add(config)
+            await session.commit()
+            await session.refresh(config)
+
+            new_enabled = config.enabled
+            reward_id = config.reward_id
+
+        # Enable/disable reward on Twitch
+        if reward_id and eventsub_manager.is_connected:
+            if new_enabled:
+                await eventsub_manager.enable_reward(reward_id)
+                logger.info(f"Santa enabled - enabled reward {reward_id}")
+            else:
+                await eventsub_manager.disable_reward(reward_id)
+                logger.info(f"Santa disabled - disabled reward {reward_id}")
+
+        return {"success": True, "enabled": new_enabled}
+
+    @app.post("/api/santa/reward/create")
+    async def create_santa_reward(
+        title: str = "Talk to Santa",
+        cost: int = 100,
+        prompt: str = "Tell Santa your Christmas wish!",
+    ) -> dict:
+        """Create a new channel point reward for Santa wishes."""
+        if not eventsub_manager.is_connected:
+            raise HTTPException(status_code=400, detail="EventSub not connected")
+
+        result = await eventsub_manager.create_reward(
+            title=title,
+            cost=cost,
+            prompt=prompt,
+            is_user_input_required=True,
+            is_enabled=True,
+        )
+
+        if result:
+            # Auto-save this reward to config
+            async with get_session() as session:
+                db_result = await session.execute(select(SantaConfig).limit(1))
+                config = db_result.scalar_one_or_none()
+                if config:
+                    config.reward_id = result["id"]
+                    session.add(config)
+                    await session.commit()
+
+            return {"success": True, "reward": result}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to create reward")
 
     return app

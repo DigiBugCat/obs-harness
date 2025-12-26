@@ -3,6 +3,13 @@
  * Handles WebSocket connection, session status, and configuration management.
  */
 
+// HTML escape helper to prevent XSS
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 class SantaDashboard {
     constructor() {
         this.ws = null;
@@ -29,7 +36,6 @@ class SantaDashboard {
 
         this.startEventsubBtn = document.getElementById('startEventsubBtn');
         this.stopEventsubBtn = document.getElementById('stopEventsubBtn');
-        this.refreshRewardsBtn = document.getElementById('refreshRewardsBtn');
 
         this.enabledToggle = document.getElementById('enabledToggle');
         this.characterName = document.getElementById('characterName');
@@ -40,9 +46,9 @@ class SantaDashboard {
         this.debounceSeconds = document.getElementById('debounceSeconds');
         this.saveConfigBtn = document.getElementById('saveConfigBtn');
 
-        this.rewardsList = document.getElementById('rewardsList');
         this.logArea = document.getElementById('logArea');
         this.refreshRewardsDropdownBtn = document.getElementById('refreshRewardsDropdownBtn');
+        this.createRewardBtn = document.getElementById('createRewardBtn');
 
         // Director speak
         this.directorInput = document.getElementById('directorInput');
@@ -52,6 +58,9 @@ class SantaDashboard {
         this.systemPrompt = document.getElementById('systemPrompt');
         this.savePromptBtn = document.getElementById('savePromptBtn');
         this.resetPromptBtn = document.getElementById('resetPromptBtn');
+
+        // Quick actions
+        this.clearMemoryBtn = document.getElementById('clearMemoryBtn');
 
         this.init();
     }
@@ -221,7 +230,6 @@ class SantaDashboard {
                 this.eventsubStatusText.textContent = 'EventSub: Connected';
                 this.startEventsubBtn.disabled = true;
                 this.stopEventsubBtn.disabled = false;
-                this.refreshRewardsBtn.disabled = false;
                 // Auto-load rewards when connected
                 this.loadRewards();
             } else {
@@ -229,7 +237,6 @@ class SantaDashboard {
                 this.eventsubStatusText.textContent = 'EventSub: Disconnected';
                 this.startEventsubBtn.disabled = false;
                 this.stopEventsubBtn.disabled = true;
-                this.refreshRewardsBtn.disabled = true;
             }
         } catch (e) {
             this.log('Failed to get EventSub status: ' + e.message);
@@ -283,20 +290,10 @@ class SantaDashboard {
             const currentValue = this.rewardId.value || this.configuredRewardId || '';
 
             if (data.rewards && data.rewards.length > 0) {
-                // Update rewards list display
-                this.rewardsList.innerHTML = data.rewards.map(r => `
-                    <div style="padding: 0.5rem; background: var(--bg-secondary); border-radius: 4px; margin-bottom: 0.5rem;">
-                        <strong>${r.title}</strong> (${r.cost} points)
-                        <br>
-                        <small style="color: var(--text-secondary);">ID: ${r.id}</small>
-                        ${r.is_paused ? '<span style="color: var(--warning);"> [PAUSED]</span>' : ''}
-                    </div>
-                `).join('');
-
                 // Update dropdown
                 this.rewardId.innerHTML = '<option value="">All rewards</option>' +
                     data.rewards.map(r =>
-                        `<option value="${r.id}">${r.title} (${r.cost} pts)${r.is_paused ? ' [PAUSED]' : ''}</option>`
+                        `<option value="${r.id}">${escapeHtml(r.title)} (${r.cost} pts)${r.is_paused ? ' [PAUSED]' : ''}</option>`
                     ).join('');
 
                 // Restore selection
@@ -304,8 +301,8 @@ class SantaDashboard {
 
                 this.log(`Loaded ${data.rewards.length} rewards`);
             } else {
-                this.rewardsList.innerHTML = '<p style="color: var(--text-secondary);">No manageable rewards found.</p>';
                 this.rewardId.innerHTML = '<option value="">All rewards</option>';
+                this.log('No rewards found');
             }
         } catch (e) {
             this.log('Failed to load rewards: ' + e.message);
@@ -439,25 +436,98 @@ You remember everything from this stream. Reference past visitors, chat's previo
 
         try {
             this.speakDirectBtn.disabled = true;
-            this.log('Mall Director speaking: ' + text);
+            this.log('Mall Director interrupting: ' + text);
 
-            const response = await fetch('/api/characters/santa_timmy/speak', {
+            // Send through Santa's interrupt endpoint (uses speech lock)
+            const message = `[MALL DIRECTOR INTERRUPTION]: ${text}`;
+
+            const response = await fetch('/api/santa/interrupt', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text }),
+                body: JSON.stringify({ message }),
             });
 
             if (response.ok) {
                 this.directorInput.value = '';
-                this.log('Speech sent to TTS');
+                this.log('Director message sent to Santa');
             } else {
                 const error = await response.json();
-                this.log('Failed to speak: ' + error.detail);
+                this.log('Failed to send: ' + error.detail);
             }
         } catch (e) {
-            this.log('Failed to speak: ' + e.message);
+            this.log('Failed to send: ' + e.message);
         } finally {
             this.speakDirectBtn.disabled = false;
+        }
+    }
+
+    async clearMemory() {
+        if (!confirm('Clear Santa Timmy\'s memory? This will forget all past conversations.')) {
+            return;
+        }
+
+        try {
+            this.clearMemoryBtn.disabled = true;
+            const response = await fetch('/api/characters/santa_timmy/memory', {
+                method: 'DELETE',
+            });
+
+            if (response.ok) {
+                this.log('🧹 Santa\'s memory cleared');
+            } else {
+                const error = await response.json();
+                this.log('Failed to clear memory: ' + error.detail);
+            }
+        } catch (e) {
+            this.log('Failed to clear memory: ' + e.message);
+        } finally {
+            this.clearMemoryBtn.disabled = false;
+        }
+    }
+
+    async createReward() {
+        const title = prompt('Reward title:', 'Talk to Santa');
+        if (!title) return;
+
+        const costStr = prompt('Cost in channel points:', '100');
+        if (!costStr) return;
+
+        const cost = parseInt(costStr);
+        if (isNaN(cost) || cost < 1) {
+            this.log('Invalid cost');
+            return;
+        }
+
+        try {
+            this.createRewardBtn.disabled = true;
+            this.log('Creating reward...');
+
+            const response = await fetch('/api/santa/reward/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title,
+                    cost,
+                    prompt: 'Tell Santa your Christmas wish!',
+                }),
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                this.log(`✅ Created reward: ${result.reward.title} (${result.reward.cost} pts)`);
+                // Refresh rewards and select the new one
+                await this.loadRewards();
+                this.rewardId.value = result.reward.id;
+                // Save config with new reward
+                await this.saveConfig();
+            } else {
+                const error = await response.json();
+                this.log('Failed to create reward: ' + error.detail);
+            }
+        } catch (e) {
+            this.log('Failed to create reward: ' + e.message);
+        } finally {
+            this.createRewardBtn.disabled = false;
         }
     }
 
@@ -469,8 +539,8 @@ You remember everything from this stream. Reference past visitors, chat's previo
         this.saveConfigBtn.addEventListener('click', () => this.saveConfig());
         this.startEventsubBtn.addEventListener('click', () => this.startEventSub());
         this.stopEventsubBtn.addEventListener('click', () => this.stopEventSub());
-        this.refreshRewardsBtn.addEventListener('click', () => this.loadRewards());
         this.refreshRewardsDropdownBtn.addEventListener('click', () => this.loadRewards());
+        this.createRewardBtn.addEventListener('click', () => this.createReward());
 
         this.sendMessageBtn.addEventListener('click', () => this.sendMessage());
         this.messageInput.addEventListener('keypress', (e) => {
@@ -494,6 +564,35 @@ You remember everything from this stream. Reference past visitors, chat's previo
         // System prompt
         this.savePromptBtn.addEventListener('click', () => this.saveSystemPrompt());
         this.resetPromptBtn.addEventListener('click', () => this.resetSystemPrompt());
+
+        // Quick actions
+        this.clearMemoryBtn.addEventListener('click', () => this.clearMemory());
+
+        // Enabled toggle - immediate action
+        this.enabledToggle.addEventListener('change', () => this.toggleEnabled());
+    }
+
+    async toggleEnabled() {
+        try {
+            const response = await fetch('/api/santa/toggle', { method: 'POST' });
+            const result = await response.json();
+
+            if (response.ok) {
+                // Update checkbox to match server state
+                this.enabledToggle.checked = result.enabled;
+                this.log(result.enabled ? '✅ Santa enabled' : '⏸️ Santa disabled');
+                // Refresh rewards to show updated status
+                this.loadRewards();
+            } else {
+                // Revert checkbox on error
+                this.enabledToggle.checked = !this.enabledToggle.checked;
+                this.log('Failed to toggle: ' + result.detail);
+            }
+        } catch (e) {
+            // Revert checkbox on error
+            this.enabledToggle.checked = !this.enabledToggle.checked;
+            this.log('Failed to toggle: ' + e.message);
+        }
     }
 
     // -------------------------------------------------------------------------

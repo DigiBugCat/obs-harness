@@ -146,6 +146,7 @@ class SantaSessionManager:
 
         self._session: SessionData | None = None
         self._lock = asyncio.Lock()
+        self._speech_lock = asyncio.Lock()  # Prevents overlapping TTS
         self._message_queue: asyncio.Queue[tuple[str, str, str]] = asyncio.Queue()  # (user_id, username, message)
         self._cancelled = False
 
@@ -285,6 +286,61 @@ class SantaSessionManager:
 
         await self._process_turn(f"The elves have spoken! Verdict: {verdict}")
         return True
+
+    async def speak_direct(self, text: str) -> bool:
+        """Speak directly as Santa (for Mall Director), using the speech lock.
+
+        This ensures Mall Director messages don't overlap with ongoing Santa speech.
+
+        Args:
+            text: Text to speak via TTS
+
+        Returns:
+            True if speech was sent successfully.
+        """
+        try:
+            await self._speak(text)
+            return True
+        except Exception as e:
+            logger.error(f"Error in speak_direct: {e}")
+            return False
+
+    async def interrupt_with_message(self, message: str) -> bool:
+        """Send a message through the LLM as an interruption (Mall Director style).
+
+        This uses the speech lock to prevent overlapping speech.
+
+        Args:
+            message: The message to send (will be prefixed as MALL DIRECTOR INTERRUPTION)
+
+        Returns:
+            True if successful.
+        """
+        try:
+            # Use LLM to generate a response
+            llm_client = OpenRouterClient()
+
+            # Build a simple conversation for the interruption
+            system_prompt = await self._get_system_prompt()
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": message},
+            ]
+
+            # Get response (non-streaming, just need the text)
+            response = await llm_client.chat(
+                messages=messages,
+                model="openai/gpt-4o-mini",  # Fast model for quick responses
+            )
+
+            if response:
+                await self._speak(response)
+                return True
+            return False
+
+        except Exception as e:
+            logger.error(f"Error in interrupt_with_message: {e}")
+            return False
 
     async def send_message(self, message: str) -> bool:
         """Send a message as the "child" from dashboard.
@@ -438,12 +494,33 @@ class SantaSessionManager:
             await self._wait_for_chat_vote()
 
     async def _speak(self, text: str) -> None:
-        """Send text to TTS via harness."""
-        try:
-            # Use the harness speak method for the santa_timmy character
-            await self.harness.speak(self.character_name, text, show_text=True)
-        except Exception as e:
-            logger.error(f"Error sending speech to TTS: {e}")
+        """Send text to TTS via character speak endpoint and wait for audio to finish.
+
+        Uses a lock to prevent overlapping speech - subsequent calls wait for previous to finish.
+        """
+        async with self._speech_lock:
+            try:
+                import httpx
+                logger.info(f"Santa speaking: {text[:50]}...")
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        f"http://localhost:8080/api/characters/{self.character_name}/speak",
+                        json={"text": text},
+                        timeout=60.0,
+                    )
+                    if response.status_code != 200:
+                        logger.error(f"TTS speak failed: {response.text}")
+                        return
+
+                # Wait for audio to finish playing
+                # Estimate ~100ms per character for speech (roughly 600 chars/minute)
+                # Add 1 second buffer for TTS processing and network latency
+                estimated_duration = len(text) * 0.1 + 1.0
+                logger.debug(f"Waiting {estimated_duration:.1f}s for audio playback...")
+                await asyncio.sleep(estimated_duration)
+
+            except Exception as e:
+                logger.error(f"Error sending speech to TTS: {e}")
 
     # -------------------------------------------------------------------------
     # Message Collection
