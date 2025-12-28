@@ -207,6 +207,13 @@ class TextAnimator {
         this.current = null;
     }
 
+    /**
+     * Check if there's an animation in progress
+     */
+    isAnimating(): boolean {
+        return this.current !== null;
+    }
+
     next(): void {
         if (this.queue.length > 0) {
             this.current = this.queue.shift();

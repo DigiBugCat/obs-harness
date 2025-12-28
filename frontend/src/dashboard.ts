@@ -4,7 +4,54 @@
  */
 
 import { TextAnimator } from './text-animator';
+import type { AnimationStyle } from './text-animator';
 import type { Character, TextPreset, ElevenLabsModel } from './types';
+
+// =============================================================================
+// Global Window Interface Extension
+// =============================================================================
+
+// Extend Character with runtime properties
+interface ExtendedCharacter extends Character {
+    ws_token?: string;
+    memory_enabled?: boolean;
+    color?: string;
+    icon?: string;
+    description?: string;
+}
+
+// Global functions exposed to window for HTML onclick handlers
+declare global {
+    interface Window {
+        openCreateCharacterModal: () => void;
+        closeCharacterModal: () => void;
+        editCharacter: (characterName: string) => Promise<void>;
+        deleteCharacter: (characterName: string) => Promise<void>;
+        openSpeakModal: (characterName: string) => void;
+        closeSpeakModal: () => void;
+        sendSpeak: () => Promise<void>;
+        stopGeneration: (modalType: 'speak' | 'chat') => Promise<void>;
+        openChatModal: (characterName: string) => Promise<void>;
+        closeChatModal: () => void;
+        sendChat: () => Promise<void>;
+        clearChatMemory: () => Promise<void>;
+        attachImage: () => void;
+        handleImageSelect: (event: Event) => Promise<void>;
+        captureScreen: () => Promise<void>;
+        previewCharacterTextStyle: () => void;
+        stopCharacterTextPreview: () => void;
+        updateProviderDropdown: (model: string) => Promise<void>;
+        loadVoiceModels: (voiceId: string) => Promise<void>;
+        updateModelInfo: (modelId: string) => void;
+        toggleTTSProvider: (provider: string) => void;
+        updateCartesiaVoiceInfo: (voiceId: string) => void;
+        loadCartesiaVoices: () => Promise<void>;
+        selectCartesiaVoice: (voiceId: string) => void;
+        onCartesiaManualIdChange: (voiceId: string) => void;
+        copyCharacterUrl: (characterName: string) => Promise<void>;
+        rotateCharacterToken: (characterName: string) => Promise<void>;
+    }
+}
 
 // =============================================================================
 // DOM Helper Functions
@@ -40,6 +87,11 @@ function $canvas(id: string): HTMLCanvasElement {
     return document.getElementById(id) as HTMLCanvasElement;
 }
 
+/** Get form element by ID */
+function $form(id: string): HTMLFormElement {
+    return document.getElementById(id) as HTMLFormElement;
+}
+
 // Character status from WebSocket
 interface CharacterStatus {
     name: string;
@@ -51,6 +103,13 @@ interface CharacterStatus {
 interface PendingImage {
     data: string;
     mediaType: string;
+}
+
+// ElevenLabs voice info (from /api/elevenlabs/voices/{voice_id})
+interface ElevenLabsVoiceInfo {
+    voice_id: string;
+    name: string;
+    high_quality_base_model_ids?: string[];
 }
 
 // WebSocket connection
@@ -74,7 +133,7 @@ let serverBuildId: string | null = null;
 
 // State
 let presets: TextPreset[] = [];
-let characters: Character[] = [];
+let characters: ExtendedCharacter[] = [];
 let editingCharacter: Character | null = null;
 let chatCharacter: Character | null = null;
 let speakCharacter: Character | null = null;
@@ -422,19 +481,18 @@ const historyList = document.getElementById('history-list')!
         return result;
     }
 
-    async function deleteCharacterAPI(name) {
+    async function deleteCharacterAPI(name: string): Promise<void> {
         if (!confirm(`Delete character "${name}"? This cannot be undone.`)) {
             return;
         }
         recentLocalUpdate = true;
-        const result = await apiCall(`/api/characters/${name}`, 'DELETE');
+        await apiCall(`/api/characters/${name}`, 'DELETE');
         await getAllCharacters();  // Update local UI immediately
-        return result;
     }
 
     // Provider dropdown
-    async function updateProviderDropdown(model) {
-        const select = document.getElementById('character-provider');
+    async function updateProviderDropdown(model: string) {
+        const select = document.getElementById('character-provider') as HTMLSelectElement | null;
         if (!select) return;
 
         // Reset to default while loading
@@ -448,7 +506,7 @@ const historyList = document.getElementById('history-list')!
         }
 
         try {
-            const result = await apiCall(`/api/openrouter/models/${encodeURIComponent(model)}/providers`, 'GET', null, false);
+            const result = await apiCall(`/api/openrouter/models/${encodeURIComponent(model)}/providers`, 'GET', null, false) as { providers?: string[] };
             select.innerHTML = '<option value="">Default (auto)</option>';
 
             if (result.providers && result.providers.length > 0) {
@@ -489,7 +547,7 @@ const historyList = document.getElementById('history-list')!
     }
 
     async function loadVoiceModels(voiceId: string) {
-        const select = document.getElementById('character-tts-model') as HTMLSelectElement | null;
+        const select = $select('character-tts-model');
         const infoEl = document.getElementById('tts-model-info');
         if (!select || !voiceId) return;
 
@@ -497,10 +555,10 @@ const historyList = document.getElementById('history-list')!
         if (infoEl) infoEl.textContent = '';
 
         try {
-            const voice = await apiCall(`/api/elevenlabs/voices/${voiceId}`, 'GET', null, false);
-            if (voice && voice.high_quality_base_model_ids && voice.high_quality_base_model_ids.length > 0) {
+            const voice = await apiCall(`/api/elevenlabs/voices/${voiceId}`, 'GET', null, false) as ElevenLabsVoiceInfo | null;
+            if (voice?.high_quality_base_model_ids && voice.high_quality_base_model_ids.length > 0) {
                 // Highlight compatible models
-                const compatibleIds = new Set(voice.high_quality_base_model_ids as string[]);
+                const compatibleIds = new Set(voice.high_quality_base_model_ids);
                 Array.from(select.options).forEach((option: HTMLOptionElement) => {
                     if (compatibleIds.has(option.value)) {
                         // Mark as recommended
@@ -524,7 +582,7 @@ const historyList = document.getElementById('history-list')!
     }
 
     // Model descriptions from ElevenLabs docs
-    const modelDescriptions = {
+    const modelDescriptions: Record<string, string> = {
         'eleven_v3': 'Latest flagship model with emotionally rich, expressive speech. 70+ languages. Best for audiobooks & dramatic content. Not optimized for real-time.',
         'eleven_multilingual_v2': 'Advanced emotionally-aware synthesis. 29 languages. Most stable for long-form. Higher latency but best quality.',
         'eleven_flash_v2_5': 'Fastest model (~75ms latency). 32 languages. 50% lower cost. Best for real-time agents & bulk processing.',
@@ -535,7 +593,7 @@ const historyList = document.getElementById('history-list')!
         'eleven_monolingual_v1': 'Legacy English model. Use newer models for better quality.',
     };
 
-    function updateModelInfo(modelId) {
+    function updateModelInfo(modelId: string) {
         const infoEl = document.getElementById('tts-model-info');
         const styleRow = document.getElementById('voice-style-row');
         const similarityRow = document.getElementById('voice-similarity-row');
@@ -564,12 +622,19 @@ const historyList = document.getElementById('history-list')!
     // Cartesia TTS Functions
     // =========================================================================
 
-    let cartesiaVoices = [];
+    interface CartesiaVoice {
+        voice_id: string;
+        name: string;
+        language: string;
+        description?: string;
+    }
+
+    let cartesiaVoices: CartesiaVoice[] = [];
 
     async function loadCartesiaVoices() {
         try {
-            cartesiaVoices = await apiCall('/api/cartesia/voices', 'GET', null, false);
-            const select = document.getElementById('cartesia-voice-select');
+            cartesiaVoices = await apiCall('/api/cartesia/voices', 'GET', null, false) as CartesiaVoice[];
+            const select = document.getElementById('cartesia-voice-select') as HTMLSelectElement | null;
             if (!select) return;
 
             select.innerHTML = '<option value="">-- Select a voice --</option>';
@@ -581,7 +646,7 @@ const historyList = document.getElementById('history-list')!
             });
         } catch (e) {
             console.error('Error loading Cartesia voices:', e);
-            const select = document.getElementById('cartesia-voice-select');
+            const select = document.getElementById('cartesia-voice-select') as HTMLSelectElement | null;
             if (select) {
                 select.innerHTML = '<option value="">Failed to load voices</option>';
             }
@@ -650,15 +715,22 @@ const historyList = document.getElementById('history-list')!
     }
 
     // Character actions
-    async function sendCharacterSpeak(characterName, text, showText) {
+    async function sendCharacterSpeak(characterName: string, text: string, showText: boolean) {
         return apiCall(`/api/characters/${characterName}/speak`, 'POST', {
             text,
             show_text: showText,
         });
     }
 
-    async function sendCharacterChat(characterName, message, showText, twitchChatSeconds = null, images = null) {
-        const body = {
+    interface ChatRequestBody {
+        message: string;
+        show_text: boolean;
+        twitch_chat_seconds?: number;
+        images?: Array<{ data: string; media_type: string }>;
+    }
+
+    async function sendCharacterChat(characterName: string, message: string, showText: boolean, twitchChatSeconds: string | null = null, images: PendingImage[] | null = null) {
+        const body: ChatRequestBody = {
             message,
             show_text: showText,
         };
@@ -674,11 +746,11 @@ const historyList = document.getElementById('history-list')!
         return apiCall(`/api/characters/${characterName}/chat`, 'POST', body);
     }
 
-    async function getCharacterMemory(characterName) {
+    async function getCharacterMemory(characterName: string) {
         return apiCall(`/api/characters/${characterName}/memory`);
     }
 
-    async function clearCharacterMemory(characterName) {
+    async function clearCharacterMemory(characterName: string) {
         return apiCall(`/api/characters/${characterName}/memory`, 'DELETE');
     }
 
@@ -816,33 +888,34 @@ const historyList = document.getElementById('history-list')!
     // Character Text Style Preview
     // =========================================================================
 
-    let characterPreviewAnimator = null;
-    let characterPreviewAnimationFrame = null;
+    let characterPreviewAnimator: TextAnimator | null = null;
+    let characterPreviewAnimationFrame: number | null = null;
 
     function previewCharacterTextStyle() {
         stopCharacterTextPreview();
 
-        const canvas = document.getElementById('character-preview-canvas');
+        const canvas = $canvas('character-preview-canvas');
         if (!canvas) return;
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas.getContext('2d')!;
 
         characterPreviewAnimator = new TextAnimator(ctx, canvas.width, canvas.height);
+        const animator = characterPreviewAnimator; // Non-null reference for closure
 
         const config = {
-            style: document.getElementById('character-text-style').value,
-            fontFamily: document.getElementById('character-font-family').value,
-            fontSize: parseInt(document.getElementById('character-font-size').value),
-            duration: parseInt(document.getElementById('character-text-duration').value),
-            color: document.getElementById('character-text-color').value,
-            strokeColor: document.getElementById('character-stroke-color').value,
-            strokeWidth: parseInt(document.getElementById('character-stroke-width').value),
-            positionX: parseInt(document.getElementById('character-position-x').value) / 100,
-            positionY: parseInt(document.getElementById('character-position-y').value) / 100,
+            style: $input('character-text-style').value as AnimationStyle,
+            fontFamily: $input('character-font-family').value,
+            fontSize: parseInt($input('character-font-size').value),
+            duration: parseInt($input('character-text-duration').value),
+            color: $input('character-text-color').value,
+            strokeColor: $input('character-stroke-color').value,
+            strokeWidth: parseInt($input('character-stroke-width').value),
+            positionX: parseInt($input('character-position-x').value) / 100,
+            positionY: parseInt($input('character-position-y').value) / 100,
         };
 
         const scaleFactor = canvas.width / 800;
 
-        characterPreviewAnimator.show({
+        animator.show({
             text: 'Sample Text',
             style: config.style,
             duration: config.duration,
@@ -857,10 +930,10 @@ const historyList = document.getElementById('history-list')!
 
         function animate() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            characterPreviewAnimator.update();
-            characterPreviewAnimator.draw();
+            animator.update();
+            animator.draw();
 
-            if (characterPreviewAnimator.current) {
+            if (animator.isAnimating()) {
                 characterPreviewAnimationFrame = requestAnimationFrame(animate);
             }
         }
@@ -876,10 +949,10 @@ const historyList = document.getElementById('history-list')!
         if (characterPreviewAnimator) {
             characterPreviewAnimator.clear();
         }
-        const canvas = document.getElementById('character-preview-canvas');
+        const canvas = $canvas('character-preview-canvas');
         if (canvas) {
             const ctx = canvas.getContext('2d');
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx?.clearRect(0, 0, canvas.width, canvas.height);
         }
     }
 
@@ -887,101 +960,104 @@ const historyList = document.getElementById('history-list')!
     // Character Modal Functions
     // =========================================================================
 
-    const characterModal = document.getElementById('character-modal');
-    const characterForm = document.getElementById('character-form');
-    const characterModalTitle = document.getElementById('character-modal-title');
+    const characterModal = $('character-modal');
+    const characterForm = $form('character-form');
+    const characterModalTitle = $('character-modal-title');
 
     function openCreateCharacterModal() {
         editingCharacter = null;
         characterModalTitle.textContent = 'Create Character';
         characterForm.reset();
-        document.getElementById('character-name').disabled = false;
+        $input('character-name').disabled = false;
 
         // Set defaults
-        document.getElementById('character-color').value = '#e94560';
-        document.getElementById('character-icon').value = '\uD83D\uDD0A';
-        document.getElementById('character-stability').value = 50;
-        document.getElementById('character-stability-value').textContent = '0.50';
-        document.getElementById('character-similarity').value = 75;
-        document.getElementById('character-similarity-value').textContent = '0.75';
-        document.getElementById('character-voice-style').value = 0;
-        document.getElementById('character-style-value').textContent = '0.00';
-        document.getElementById('character-voice-speed').value = 100;
-        document.getElementById('character-speed-value').textContent = '1.0';
-        document.getElementById('character-volume').value = 100;
-        document.getElementById('character-volume-value').textContent = '100';
-        document.getElementById('character-text-style').value = 'typewriter';
-        document.getElementById('character-font-family').value = 'Arial';
-        document.getElementById('character-font-size').value = 48;
-        document.getElementById('character-text-duration').value = 3000;
-        document.getElementById('character-text-color').value = '#ffffff';
-        document.getElementById('character-stroke-color').value = '#000000';
-        document.getElementById('character-stroke-width').value = 0;
-        document.getElementById('character-stroke-width-value').textContent = '0';
-        document.getElementById('character-position-x').value = 50;
-        document.getElementById('character-pos-x-value').textContent = '50';
-        document.getElementById('character-position-y').value = 50;
-        document.getElementById('character-pos-y-value').textContent = '50';
-        document.getElementById('character-model').value = 'anthropic/claude-sonnet-4.5';
-        document.getElementById('character-provider').innerHTML = '<option value="">Default (auto)</option>';
-        document.getElementById('character-provider').value = '';
-        document.getElementById('character-temperature').value = 70;
-        document.getElementById('character-temp-value').textContent = '0.7';
-        document.getElementById('character-max-tokens').value = 1024;
+        $input('character-color').value = '#e94560';
+        $input('character-icon').value = '\uD83D\uDD0A';
+        $input('character-stability').value = '50';
+        $('character-stability-value').textContent = '0.50';
+        $input('character-similarity').value = '75';
+        $('character-similarity-value').textContent = '0.75';
+        $input('character-voice-style').value = '0';
+        $('character-style-value').textContent = '0.00';
+        $input('character-voice-speed').value = '100';
+        $('character-speed-value').textContent = '1.0';
+        $input('character-volume').value = '100';
+        $('character-volume-value').textContent = '100';
+        $select('character-text-style').value = 'typewriter';
+        $input('character-font-family').value = 'Arial';
+        $input('character-font-size').value = '48';
+        $input('character-text-duration').value = '3000';
+        $input('character-text-color').value = '#ffffff';
+        $input('character-stroke-color').value = '#000000';
+        $input('character-stroke-width').value = '0';
+        $('character-stroke-width-value').textContent = '0';
+        $input('character-position-x').value = '50';
+        $('character-pos-x-value').textContent = '50';
+        $input('character-position-y').value = '50';
+        $('character-pos-y-value').textContent = '50';
+        $input('character-model').value = 'anthropic/claude-sonnet-4.5';
+        $select('character-provider').innerHTML = '<option value="">Default (auto)</option>';
+        $select('character-provider').value = '';
+        $input('character-temperature').value = '70';
+        $('character-temp-value').textContent = '0.7';
+        $input('character-max-tokens').value = '1024';
 
         // TTS model default
-        document.getElementById('character-tts-model').value = 'eleven_multilingual_v2';
-        document.getElementById('tts-model-info').textContent = '';
+        $select('character-tts-model').value = 'eleven_multilingual_v2';
+        $('tts-model-info').textContent = '';
         updateModelInfo('eleven_multilingual_v2');
 
         // Memory & Twitch settings
-        document.getElementById('character-memory-enabled').checked = false;
-        document.getElementById('character-persist-memory').checked = false;
-        document.getElementById('character-twitch-chat-enabled').checked = false;
-        document.getElementById('character-twitch-chat-seconds').value = 60;
-        document.getElementById('character-twitch-chat-max').value = 20;
+        $input('character-memory-enabled').checked = false;
+        $input('character-persist-memory').checked = false;
+        $input('character-twitch-chat-enabled').checked = false;
+        $input('character-twitch-chat-seconds').value = '60';
+        $input('character-twitch-chat-max').value = '20';
 
         characterModal.classList.add('active');
     }
 
-    function openEditCharacterModal(character) {
+    function openEditCharacterModal(character: Character) {
         editingCharacter = character;
         characterModalTitle.textContent = 'Edit Character';
 
         // Basic info
-        document.getElementById('character-name').value = character.name;
-        document.getElementById('character-name').disabled = true;
-        document.getElementById('character-description').value = character.description || '';
-        document.getElementById('character-color').value = character.color;
-        document.getElementById('character-icon').value = character.icon;
+        // Cast character to record for accessing extended properties
+        const charData = character as unknown as Record<string, unknown>;
+
+        $input('character-name').value = character.name;
+        $input('character-name').disabled = true;
+        $textarea('character-description').value = (charData.description as string) || '';
+        $input('character-color').value = charData.color as string;
+        $input('character-icon').value = charData.icon as string;
 
         // TTS Provider settings
         const ttsProvider = character.tts_provider || 'elevenlabs';
-        document.getElementById('character-tts-provider').value = ttsProvider;
+        $select('character-tts-provider').value = ttsProvider;
         toggleTTSProvider(ttsProvider);
 
         if (ttsProvider === 'cartesia' && character.tts_settings) {
             // Cartesia settings - need to load voices first, then select
             loadCartesiaVoices().then(() => {
-                const settings = character.tts_settings;
-                const voiceId = settings.voice_id || '';
+                const settings = character.tts_settings as unknown as Record<string, unknown>;
+                const voiceId = (settings.voice_id as string) || '';
                 // Set the manual voice ID field
-                document.getElementById('cartesia-voice-id').value = voiceId;
+                $input('cartesia-voice-id').value = voiceId;
                 // Try to select in dropdown if it exists
-                const select = document.getElementById('cartesia-voice-select');
+                const select = $select('cartesia-voice-select');
                 if (select && voiceId) {
                     const option = Array.from(select.options).find(o => o.value === voiceId);
                     if (option) {
                         select.value = voiceId;
                     }
                 }
-                document.getElementById('cartesia-model-id').value = settings.model_id || 'sonic-2024-12-12';
-                document.getElementById('cartesia-language').value = settings.language || 'en';
+                $input('cartesia-model-id').value = (settings.model_id as string) || 'sonic-2024-12-12';
+                $select('cartesia-language').value = (settings.language as string) || 'en';
                 // Clamp speed to valid Cartesia range (0.6-1.5)
-                const rawSpeed = settings.speed || 1.0;
+                const rawSpeed = (settings.speed as number) || 1.0;
                 const speed = Math.max(0.6, Math.min(1.5, rawSpeed));
-                document.getElementById('cartesia-speed').value = Math.round(speed * 100);
-                document.getElementById('cartesia-speed-value').textContent = speed.toFixed(1);
+                $input('cartesia-speed').value = String(Math.round(speed * 100));
+                $('cartesia-speed-value').textContent = speed.toFixed(1);
                 if (rawSpeed !== speed) {
                     console.warn(`Cartesia speed ${rawSpeed} was clamped to ${speed} (valid: 0.6-1.5)`);
                 }
@@ -989,66 +1065,66 @@ const historyList = document.getElementById('history-list')!
             });
         } else {
             // ElevenLabs settings (legacy or from tts_settings)
-            const settings = character.tts_settings || {};
-            document.getElementById('character-voice-id').value = settings.voice_id || character.elevenlabs_voice_id;
-            const modelId = settings.model_id || character.elevenlabs_model_id || 'eleven_multilingual_v2';
-            document.getElementById('character-tts-model').value = modelId;
+            const settings = (character.tts_settings || {}) as unknown as Record<string, unknown>;
+            $input('character-voice-id').value = (settings.voice_id as string) || (charData.elevenlabs_voice_id as string);
+            const modelId = (settings.model_id as string) || (charData.elevenlabs_model_id as string) || 'eleven_multilingual_v2';
+            $select('character-tts-model').value = modelId;
             updateModelInfo(modelId);
-            loadVoiceModels(settings.voice_id || character.elevenlabs_voice_id);
+            loadVoiceModels((settings.voice_id as string) || (charData.elevenlabs_voice_id as string));
 
-            const stability = settings.stability ?? character.voice_stability;
-            document.getElementById('character-stability').value = Math.round(stability * 100);
-            document.getElementById('character-stability-value').textContent = stability.toFixed(2);
+            const stability = (settings.stability as number) ?? (charData.voice_stability as number);
+            $input('character-stability').value = String(Math.round(stability * 100));
+            $('character-stability-value').textContent = stability.toFixed(2);
 
-            const similarity = settings.similarity_boost ?? character.voice_similarity_boost;
-            document.getElementById('character-similarity').value = Math.round(similarity * 100);
-            document.getElementById('character-similarity-value').textContent = similarity.toFixed(2);
+            const similarity = (settings.similarity_boost as number) ?? (charData.voice_similarity_boost as number);
+            $input('character-similarity').value = String(Math.round(similarity * 100));
+            $('character-similarity-value').textContent = similarity.toFixed(2);
 
-            const style = settings.style ?? character.voice_style;
-            document.getElementById('character-voice-style').value = Math.round(style * 100);
-            document.getElementById('character-style-value').textContent = style.toFixed(2);
+            const style = (settings.style as number) ?? (charData.voice_style as number);
+            $input('character-voice-style').value = String(Math.round(style * 100));
+            $('character-style-value').textContent = style.toFixed(2);
 
-            const speed = settings.speed ?? character.voice_speed;
-            document.getElementById('character-voice-speed').value = Math.round(speed * 100);
-            document.getElementById('character-speed-value').textContent = speed.toFixed(1);
+            const speed = (settings.speed as number) ?? (charData.voice_speed as number);
+            $input('character-voice-speed').value = String(Math.round(speed * 100));
+            $('character-speed-value').textContent = speed.toFixed(1);
         }
 
         // Audio settings
-        document.getElementById('character-volume').value = Math.round(character.default_volume * 100);
-        document.getElementById('character-volume-value').textContent = Math.round(character.default_volume * 100);
-        document.getElementById('character-muted').checked = character.mute_state;
+        $input('character-volume').value = String(Math.round((charData.default_volume as number) * 100));
+        $('character-volume-value').textContent = String(Math.round((charData.default_volume as number) * 100));
+        $input('character-muted').checked = charData.mute_state as boolean;
 
         // Text style settings
-        document.getElementById('character-text-style').value = character.default_text_style;
-        document.getElementById('character-font-family').value = character.text_font_family;
-        document.getElementById('character-font-size').value = character.text_font_size;
-        document.getElementById('character-text-duration').value = character.text_duration;
-        document.getElementById('character-text-color').value = character.text_color;
-        document.getElementById('character-stroke-color').value = character.text_stroke_color || '#000000';
-        document.getElementById('character-stroke-width').value = character.text_stroke_width;
-        document.getElementById('character-stroke-width-value').textContent = character.text_stroke_width;
-        document.getElementById('character-position-x').value = Math.round(character.text_position_x * 100);
-        document.getElementById('character-pos-x-value').textContent = Math.round(character.text_position_x * 100);
-        document.getElementById('character-position-y').value = Math.round(character.text_position_y * 100);
-        document.getElementById('character-pos-y-value').textContent = Math.round(character.text_position_y * 100);
+        $select('character-text-style').value = charData.default_text_style as string;
+        $input('character-font-family').value = character.text_font_family || 'Arial';
+        $input('character-font-size').value = String(character.text_font_size || 48);
+        $input('character-text-duration').value = String(charData.text_duration as number);
+        $input('character-text-color').value = character.text_color || '#ffffff';
+        $input('character-stroke-color').value = character.text_stroke_color || '#000000';
+        $input('character-stroke-width').value = String(character.text_stroke_width || 0);
+        $('character-stroke-width-value').textContent = String(character.text_stroke_width || 0);
+        $input('character-position-x').value = String(Math.round((character.text_position_x || 0.5) * 100));
+        $('character-pos-x-value').textContent = String(Math.round((character.text_position_x || 0.5) * 100));
+        $input('character-position-y').value = String(Math.round((character.text_position_y || 0.5) * 100));
+        $('character-pos-y-value').textContent = String(Math.round((character.text_position_y || 0.5) * 100));
 
         // AI settings
-        document.getElementById('character-prompt').value = character.system_prompt || '';
-        document.getElementById('character-model').value = character.model;
+        $textarea('character-prompt').value = character.system_prompt || '';
+        $input('character-model').value = character.openrouter_model || '';
         // Fetch providers for this model and set current value
-        updateProviderDropdown(character.model).then(() => {
-            document.getElementById('character-provider').value = character.provider || '';
+        updateProviderDropdown(character.openrouter_model || '').then(() => {
+            $select('character-provider').value = (charData.provider as string) || '';
         });
-        document.getElementById('character-temperature').value = Math.round(character.temperature * 100);
-        document.getElementById('character-temp-value').textContent = character.temperature.toFixed(1);
-        document.getElementById('character-max-tokens').value = character.max_tokens;
+        $input('character-temperature').value = String(Math.round((charData.temperature as number) * 100));
+        $('character-temp-value').textContent = (charData.temperature as number).toFixed(1);
+        $input('character-max-tokens').value = String(charData.max_tokens as number);
 
         // Memory & Twitch settings
-        document.getElementById('character-memory-enabled').checked = character.memory_enabled || false;
-        document.getElementById('character-persist-memory').checked = character.persist_memory || false;
-        document.getElementById('character-twitch-chat-enabled').checked = character.twitch_chat_enabled || false;
-        document.getElementById('character-twitch-chat-seconds').value = character.twitch_chat_window_seconds || 60;
-        document.getElementById('character-twitch-chat-max').value = character.twitch_chat_max_messages || 20;
+        $input('character-memory-enabled').checked = (charData.memory_enabled as boolean) || false;
+        $input('character-persist-memory').checked = character.persist_memory || false;
+        $input('character-twitch-chat-enabled').checked = (charData.twitch_chat_enabled as boolean) || false;
+        $input('character-twitch-chat-seconds').value = String((charData.twitch_chat_window_seconds as number) || 60);
+        $input('character-twitch-chat-max').value = String((charData.twitch_chat_max_messages as number) || 20);
 
         characterModal.classList.add('active');
     }
@@ -1059,81 +1135,81 @@ const historyList = document.getElementById('history-list')!
         stopCharacterTextPreview();
     }
 
-    async function handleCharacterFormSubmit(e) {
+    async function handleCharacterFormSubmit(e: Event) {
         e.preventDefault();
 
-        const ttsProvider = document.getElementById('character-tts-provider').value;
+        const ttsProvider = $select('character-tts-provider').value;
 
         // Build TTS settings based on provider
-        let ttsSettings = null;
+        let ttsSettings: Record<string, unknown> | null = null;
         if (ttsProvider === 'cartesia') {
             ttsSettings = {
-                voice_id: document.getElementById('cartesia-voice-id').value,
-                model_id: document.getElementById('cartesia-model-id').value,
-                language: document.getElementById('cartesia-language').value,
-                speed: parseInt(document.getElementById('cartesia-speed').value) / 100,
+                voice_id: $input('cartesia-voice-id').value,
+                model_id: $input('cartesia-model-id').value,
+                language: $select('cartesia-language').value,
+                speed: parseInt($input('cartesia-speed').value) / 100,
             };
         } else {
             // ElevenLabs - store in tts_settings for new abstraction
             ttsSettings = {
-                voice_id: document.getElementById('character-voice-id').value,
-                model_id: document.getElementById('character-tts-model').value,
-                stability: parseInt(document.getElementById('character-stability').value) / 100,
-                similarity_boost: parseInt(document.getElementById('character-similarity').value) / 100,
-                style: parseInt(document.getElementById('character-voice-style').value) / 100,
-                speed: parseInt(document.getElementById('character-voice-speed').value) / 100,
+                voice_id: $input('character-voice-id').value,
+                model_id: $select('character-tts-model').value,
+                stability: parseInt($input('character-stability').value) / 100,
+                similarity_boost: parseInt($input('character-similarity').value) / 100,
+                style: parseInt($input('character-voice-style').value) / 100,
+                speed: parseInt($input('character-voice-speed').value) / 100,
             };
         }
 
         const data = {
-            name: document.getElementById('character-name').value,
-            description: document.getElementById('character-description').value || null,
-            color: document.getElementById('character-color').value,
-            icon: document.getElementById('character-icon').value,
+            name: $input('character-name').value,
+            description: $textarea('character-description').value || null,
+            color: $input('character-color').value,
+            icon: $input('character-icon').value,
             // TTS provider abstraction
             tts_provider: ttsProvider,
             tts_settings: ttsSettings,
             // Legacy ElevenLabs fields (for backwards compatibility)
-            elevenlabs_voice_id: document.getElementById('character-voice-id').value,
-            elevenlabs_model_id: document.getElementById('character-tts-model').value,
-            voice_stability: parseInt(document.getElementById('character-stability').value) / 100,
-            voice_similarity_boost: parseInt(document.getElementById('character-similarity').value) / 100,
-            voice_style: parseInt(document.getElementById('character-voice-style').value) / 100,
-            voice_speed: parseInt(document.getElementById('character-voice-speed').value) / 100,
-            default_volume: parseInt(document.getElementById('character-volume').value) / 100,
-            mute_state: document.getElementById('character-muted').checked,
-            default_text_style: document.getElementById('character-text-style').value,
-            text_font_family: document.getElementById('character-font-family').value,
-            text_font_size: parseInt(document.getElementById('character-font-size').value),
-            text_duration: parseInt(document.getElementById('character-text-duration').value),
-            text_color: document.getElementById('character-text-color').value,
-            text_stroke_color: parseInt(document.getElementById('character-stroke-width').value) > 0
-                ? document.getElementById('character-stroke-color').value : null,
-            text_stroke_width: parseInt(document.getElementById('character-stroke-width').value),
-            text_position_x: parseInt(document.getElementById('character-position-x').value) / 100,
-            text_position_y: parseInt(document.getElementById('character-position-y').value) / 100,
-            system_prompt: document.getElementById('character-prompt').value || null,
-            model: document.getElementById('character-model').value,
-            provider: document.getElementById('character-provider').value || null,
-            temperature: parseInt(document.getElementById('character-temperature').value) / 100,
-            max_tokens: parseInt(document.getElementById('character-max-tokens').value),
-            memory_enabled: document.getElementById('character-memory-enabled').checked,
-            persist_memory: document.getElementById('character-persist-memory').checked,
-            twitch_chat_enabled: document.getElementById('character-twitch-chat-enabled').checked,
-            twitch_chat_window_seconds: parseInt(document.getElementById('character-twitch-chat-seconds').value),
-            twitch_chat_max_messages: parseInt(document.getElementById('character-twitch-chat-max').value),
+            elevenlabs_voice_id: $input('character-voice-id').value,
+            elevenlabs_model_id: $select('character-tts-model').value,
+            voice_stability: parseInt($input('character-stability').value) / 100,
+            voice_similarity_boost: parseInt($input('character-similarity').value) / 100,
+            voice_style: parseInt($input('character-voice-style').value) / 100,
+            voice_speed: parseInt($input('character-voice-speed').value) / 100,
+            default_volume: parseInt($input('character-volume').value) / 100,
+            mute_state: $input('character-muted').checked,
+            default_text_style: $select('character-text-style').value,
+            text_font_family: $input('character-font-family').value,
+            text_font_size: parseInt($input('character-font-size').value),
+            text_duration: parseInt($input('character-text-duration').value),
+            text_color: $input('character-text-color').value,
+            text_stroke_color: parseInt($input('character-stroke-width').value) > 0
+                ? $input('character-stroke-color').value : null,
+            text_stroke_width: parseInt($input('character-stroke-width').value),
+            text_position_x: parseInt($input('character-position-x').value) / 100,
+            text_position_y: parseInt($input('character-position-y').value) / 100,
+            system_prompt: $textarea('character-prompt').value || null,
+            model: $input('character-model').value,
+            provider: $select('character-provider').value || null,
+            temperature: parseInt($input('character-temperature').value) / 100,
+            max_tokens: parseInt($input('character-max-tokens').value),
+            memory_enabled: $input('character-memory-enabled').checked,
+            persist_memory: $input('character-persist-memory').checked,
+            twitch_chat_enabled: $input('character-twitch-chat-enabled').checked,
+            twitch_chat_window_seconds: parseInt($input('character-twitch-chat-seconds').value),
+            twitch_chat_max_messages: parseInt($input('character-twitch-chat-max').value),
             // Optimistic concurrency control - send timestamp to detect conflicts
             expected_updated_at: editingCharacter?.updated_at || null,
         };
 
         try {
             if (editingCharacter) {
-                const result = await updateCharacter(editingCharacter.name, data, false);
+                const result = await updateCharacter(editingCharacter.name, data, false) as { status?: number } | null;
                 // Handle 409 conflict - character was modified by another client
                 if (result && result.status === 409) {
                     // Fetch fresh data and refresh the modal
-                    const freshCharacter = await apiCall(`/api/characters/${encodeURIComponent(editingCharacter.name)}`, 'GET', null, false);
-                    if (freshCharacter && !freshCharacter.error) {
+                    const freshCharacter = await apiCall(`/api/characters/${encodeURIComponent(editingCharacter.name)}`, 'GET', null, false) as Character | { error: string } | null;
+                    if (freshCharacter && !('error' in freshCharacter)) {
                         openEditCharacterModal(freshCharacter);
                         showToast('Someone else modified this character. Please review the updated values and try again.', 'warning');
                     } else {
@@ -1156,18 +1232,18 @@ const historyList = document.getElementById('history-list')!
     // Speak Modal Functions
     // =========================================================================
 
-    const speakModal = document.getElementById('speak-modal');
+    const speakModal = $('speak-modal');
 
-    function openSpeakModal(characterName) {
+    function openSpeakModal(characterName: string) {
         const character = characters.find(c => c.name === characterName);
         if (!character) return;
 
         speakCharacter = character;
-        document.getElementById('speak-modal-title').textContent = `Speak as ${character.name}`;
-        document.getElementById('speak-text').value = '';
-        document.getElementById('speak-show-text').checked = true;
-        document.getElementById('speak-status').style.display = 'none';
-        document.getElementById('speak-send-btn').disabled = false;
+        $('speak-modal-title').textContent = `Speak as ${character.name}`;
+        $textarea('speak-text').value = '';
+        $input('speak-show-text').checked = true;
+        $('speak-status').style.display = 'none';
+        $button('speak-send-btn').disabled = false;
 
         speakModal.classList.add('active');
     }
@@ -1180,18 +1256,18 @@ const historyList = document.getElementById('history-list')!
     async function sendSpeak() {
         if (!speakCharacter) return;
 
-        const text = document.getElementById('speak-text').value.trim();
-        const showText = document.getElementById('speak-show-text').checked;
+        const text = $textarea('speak-text').value.trim();
+        const showText = $input('speak-show-text').checked;
 
         if (!text) {
             alert('Please enter text to speak');
             return;
         }
 
-        const statusDiv = document.getElementById('speak-status');
-        const statusText = document.getElementById('speak-status-text');
-        const sendBtn = document.getElementById('speak-send-btn');
-        const stopBtn = document.getElementById('speak-stop-btn');
+        const statusDiv = $('speak-status');
+        const statusText = $('speak-status-text');
+        const sendBtn = $button('speak-send-btn');
+        const stopBtn = $button('speak-stop-btn');
 
         statusDiv.style.display = 'block';
         statusText.textContent = 'Speaking...';
@@ -1204,7 +1280,7 @@ const historyList = document.getElementById('history-list')!
         sawStreamingStart = false;
 
         try {
-            const result = await sendCharacterSpeak(speakCharacter.name, text, showText);
+            const result = await sendCharacterSpeak(speakCharacter.name, text, showText) as { error?: string; detail?: string };
             if (result.error || result.detail) {
                 statusText.textContent = `Error: ${result.error || result.detail}`;
                 // Error - hide stop button immediately
@@ -1213,13 +1289,13 @@ const historyList = document.getElementById('history-list')!
                 activeGenerationModal = null;
             } else {
                 statusText.textContent = 'Playing audio...';
-                document.getElementById('speak-text').value = '';
+                $textarea('speak-text').value = '';
                 loadHistory();
                 // Stop button will be hidden by handleMessage when streaming ends
             }
         } catch (error) {
             console.error('Speak error:', error);
-            statusText.textContent = `Error: ${error.message || 'Unknown error'}`;
+            statusText.textContent = `Error: ${(error as Error).message || 'Unknown error'}`;
             // Error - hide stop button immediately
             stopBtn.style.display = 'none';
             activeGenerationCharacter = null;
@@ -1229,18 +1305,27 @@ const historyList = document.getElementById('history-list')!
         }
     }
 
-    async function stopGeneration(modalType) {
+    interface StopResult {
+        was_active?: boolean;
+    }
+
+    interface MemoryInfo {
+        message_count: number;
+        messages: Array<{ role: string; content: string }>;
+    }
+
+    async function stopGeneration(modalType: 'speak' | 'chat') {
         const characterName = modalType === 'speak' ? speakCharacter?.name : chatCharacter?.name;
         if (!characterName) return;
 
         const statusText = document.getElementById(`${modalType}-status-text`);
-        const stopBtn = document.getElementById(`${modalType}-stop-btn`);
+        const stopBtn = document.getElementById(`${modalType}-stop-btn`) as HTMLButtonElement | null;
 
         if (statusText) statusText.textContent = 'Stopping...';
         if (stopBtn) stopBtn.disabled = true;
 
         try {
-            const result = await apiCall(`/api/characters/${characterName}/stop`, 'POST');
+            const result = await apiCall(`/api/characters/${characterName}/stop`, 'POST') as StopResult;
             if (statusText) {
                 if (result.was_active) {
                     statusText.textContent = 'Stopped';
@@ -1253,8 +1338,8 @@ const historyList = document.getElementById('history-list')!
             if (modalType === 'chat' && result.was_active) {
                 setTimeout(async () => {
                     try {
-                        const memoryInfo = await getCharacterMemory(characterName);
-                        document.getElementById('chat-memory-count').textContent =
+                        const memoryInfo = await getCharacterMemory(characterName) as MemoryInfo;
+                        $('chat-memory-count').textContent =
                             `Memory: ${memoryInfo.message_count} messages`;
                         renderChatHistory(memoryInfo.messages, characterName);
                     } catch (e) {
@@ -1264,7 +1349,7 @@ const historyList = document.getElementById('history-list')!
             }
         } catch (error) {
             console.error('Stop error:', error);
-            if (statusText) statusText.textContent = `Stop failed: ${error.message}`;
+            if (statusText) statusText.textContent = `Stop failed: ${(error as Error).message}`;
         } finally {
             if (stopBtn) {
                 stopBtn.disabled = false;
@@ -1275,7 +1360,7 @@ const historyList = document.getElementById('history-list')!
             activeGenerationModal = null;
             sawStreamingStart = false;
             // Re-enable send button
-            const sendBtn = document.getElementById(`${modalType}-send-btn`);
+            const sendBtn = document.getElementById(`${modalType}-send-btn`) as HTMLButtonElement | null;
             if (sendBtn) sendBtn.disabled = false;
         }
     }
@@ -1303,7 +1388,7 @@ const historyList = document.getElementById('history-list')!
         }
     }
 
-    function addImagePreview(data, mediaType) {
+    function addImagePreview(data: string, mediaType: string) {
         if (pendingImages.length >= MAX_IMAGES) {
             showToast(`Maximum ${MAX_IMAGES} images allowed`, 'warning');
             return;
@@ -1311,10 +1396,10 @@ const historyList = document.getElementById('history-list')!
 
         pendingImages.push({ data, mediaType });
 
-        const previewsDiv = document.getElementById('chat-image-previews');
+        const previewsDiv = $('chat-image-previews');
         const thumb = document.createElement('div');
         thumb.className = 'image-preview-thumb';
-        thumb.dataset.index = pendingImages.length - 1;
+        thumb.dataset.index = String(pendingImages.length - 1);
 
         const img = document.createElement('img');
         img.src = `data:${mediaType};base64,${data}`;
@@ -1323,12 +1408,12 @@ const historyList = document.getElementById('history-list')!
         removeBtn.className = 'remove-btn';
         removeBtn.textContent = '×';
         removeBtn.onclick = function() {
-            const idx = parseInt(thumb.dataset.index);
+            const idx = parseInt(thumb.dataset.index || '0');
             pendingImages.splice(idx, 1);
             thumb.remove();
             // Re-index remaining thumbs
-            document.querySelectorAll('#chat-image-previews .image-preview-thumb').forEach((t, i) => {
-                t.dataset.index = i;
+            document.querySelectorAll<HTMLElement>('#chat-image-previews .image-preview-thumb').forEach((t, i) => {
+                t.dataset.index = String(i);
             });
         };
 
@@ -1337,7 +1422,7 @@ const historyList = document.getElementById('history-list')!
         previewsDiv.appendChild(thumb);
     }
 
-    async function processImageFile(file) {
+    async function processImageFile(file: File) {
         // Validate file type
         if (!file.type.startsWith('image/')) {
             showToast('Only image files are supported', 'error');
@@ -1351,10 +1436,10 @@ const historyList = document.getElementById('history-list')!
         }
 
         // Convert to base64
-        return new Promise((resolve) => {
+        return new Promise<void>((resolve) => {
             const reader = new FileReader();
             reader.onload = (e) => {
-                const result = e.target.result;
+                const result = e.target?.result as string;
                 // Extract base64 data (remove data:image/xxx;base64, prefix)
                 const base64 = result.split(',')[1];
                 const mediaType = file.type || 'image/png';
@@ -1367,16 +1452,19 @@ const historyList = document.getElementById('history-list')!
 
     // Attach Image button handler
     function attachImage() {
-        document.getElementById('chat-image-input').click();
+        $input('chat-image-input').click();
     }
 
     // File input change handler
-    async function handleImageSelect(event) {
-        const files = event.target.files;
-        for (const file of files) {
-            await processImageFile(file);
+    async function handleImageSelect(event: Event) {
+        const input = event.target as HTMLInputElement;
+        const files = input.files;
+        if (files) {
+            for (const file of files) {
+                await processImageFile(file);
+            }
         }
-        event.target.value = '';  // Reset input for re-selection
+        input.value = '';  // Reset input for re-selection
     }
 
     // Screen capture handler
@@ -1384,7 +1472,7 @@ const historyList = document.getElementById('history-list')!
         try {
             // Request screen capture permission
             const stream = await navigator.mediaDevices.getDisplayMedia({
-                video: { mediaSource: 'screen' }
+                video: true
             });
 
             // Create video element to capture frame
@@ -1393,11 +1481,11 @@ const historyList = document.getElementById('history-list')!
             await video.play();
 
             // Wait for video to be ready
-            await new Promise(resolve => {
+            await new Promise<void>(resolve => {
                 if (video.readyState >= 2) {
                     resolve();
                 } else {
-                    video.onloadeddata = resolve;
+                    video.onloadeddata = () => resolve();
                 }
             });
 
@@ -1405,7 +1493,7 @@ const historyList = document.getElementById('history-list')!
             const canvas = document.createElement('canvas');
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
-            const ctx = canvas.getContext('2d');
+            const ctx = canvas.getContext('2d')!;
             ctx.drawImage(video, 0, 0);
 
             // Stop stream (important!)
@@ -1443,8 +1531,21 @@ const historyList = document.getElementById('history-list')!
         }
     }
 
-    async function openChatModal(characterName) {
-        const character = characters.find(c => c.name === characterName);
+    // Character data type for extended properties
+    interface CharacterData extends Character {
+        memory_enabled?: boolean;
+    }
+
+    // Chat API response type
+    interface ChatResponse {
+        error?: string;
+        detail?: string;
+        twitch_chat_context?: string;
+        response_text?: string;
+    }
+
+    async function openChatModal(characterName: string) {
+        const character = characters.find(c => c.name === characterName) as CharacterData | undefined;
         if (!character) return;
 
         // Check if character has system_prompt set
@@ -1454,31 +1555,31 @@ const historyList = document.getElementById('history-list')!
         }
 
         chatCharacter = character;
-        document.getElementById('chat-modal-title').textContent = `Chat with ${character.name}`;
-        document.getElementById('chat-message').value = '';
-        document.getElementById('chat-show-text').checked = true;
-        document.getElementById('chat-include-twitch').checked = true;
-        document.getElementById('chat-twitch-seconds').value = '';
-        document.getElementById('chat-status').style.display = 'none';
-        document.getElementById('chat-twitch-details').style.display = 'none';
-        document.getElementById('chat-send-btn').disabled = false;
+        $('chat-modal-title').textContent = `Chat with ${character.name}`;
+        $textarea('chat-message').value = '';
+        $input('chat-show-text').checked = true;
+        $input('chat-include-twitch').checked = true;
+        $input('chat-twitch-seconds').value = '';
+        $('chat-status').style.display = 'none';
+        $('chat-twitch-details').style.display = 'none';
+        $button('chat-send-btn').disabled = false;
 
         // Clear pending images from previous chat
         clearPendingImages();
 
         // Add paste listener for images
-        const chatMessage = document.getElementById('chat-message');
+        const chatMessage = $textarea('chat-message');
         chatMessage.removeEventListener('paste', handleChatPaste);  // Remove if exists
         chatMessage.addEventListener('paste', handleChatPaste);
 
         // Load and display memory/history
         try {
-            const memoryInfo = await getCharacterMemory(characterName);
-            document.getElementById('chat-memory-count').textContent =
+            const memoryInfo = await getCharacterMemory(characterName) as MemoryInfo;
+            $('chat-memory-count').textContent =
                 `Memory: ${memoryInfo.message_count} messages${character.memory_enabled ? '' : ' (disabled)'}`;
             renderChatHistory(memoryInfo.messages, characterName);
         } catch (e) {
-            document.getElementById('chat-memory-count').textContent = 'Memory: 0 messages';
+            $('chat-memory-count').textContent = 'Memory: 0 messages';
             renderChatHistory([], characterName);
         }
 
@@ -1494,10 +1595,10 @@ const historyList = document.getElementById('history-list')!
     async function sendChat() {
         if (!chatCharacter) return;
 
-        const message = document.getElementById('chat-message').value.trim();
-        const showText = document.getElementById('chat-show-text').checked;
-        const includeTwitch = document.getElementById('chat-include-twitch').checked;
-        let twitchSeconds = document.getElementById('chat-twitch-seconds').value;
+        const message = $textarea('chat-message').value.trim();
+        const showText = $input('chat-show-text').checked;
+        const includeTwitch = $input('chat-include-twitch').checked;
+        let twitchSeconds = $input('chat-twitch-seconds').value;
 
         // If Include Twitch is unchecked, force twitch_chat_seconds to 0
         if (!includeTwitch) {
@@ -1509,10 +1610,10 @@ const historyList = document.getElementById('history-list')!
             return;
         }
 
-        const statusDiv = document.getElementById('chat-status');
-        const statusText = document.getElementById('chat-status-text');
-        const sendBtn = document.getElementById('chat-send-btn');
-        const stopBtn = document.getElementById('chat-stop-btn');
+        const statusDiv = $('chat-status');
+        const statusText = $('chat-status-text');
+        const sendBtn = $button('chat-send-btn');
+        const stopBtn = $button('chat-stop-btn');
 
         statusDiv.style.display = 'block';
         statusText.textContent = 'Generating...';
@@ -1529,13 +1630,13 @@ const historyList = document.getElementById('history-list')!
             const hasImages = pendingImages.length > 0;
             const displayMessage = hasImages ? `[${pendingImages.length} image(s)] ${message}` : message;
             addChatBubble('user', displayMessage, chatCharacter.name);
-            document.getElementById('chat-message').value = '';
+            $textarea('chat-message').value = '';
 
             // Capture images before clearing
             const imagesToSend = hasImages ? [...pendingImages] : null;
             clearPendingImages();
 
-            const result = await sendCharacterChat(chatCharacter.name, message, showText, twitchSeconds, imagesToSend);
+            const result = await sendCharacterChat(chatCharacter.name, message, showText, twitchSeconds, imagesToSend) as ChatResponse;
             if (result.error || result.detail) {
                 statusText.textContent = `Error: ${result.error || result.detail}`;
                 // Error - hide stop button immediately
@@ -1552,7 +1653,7 @@ const historyList = document.getElementById('history-list')!
                 }
 
                 // Add assistant response bubble
-                addChatBubble('assistant', result.response_text, chatCharacter.name);
+                addChatBubble('assistant', result.response_text || '', chatCharacter.name);
 
                 let statusMsg = 'Playing audio...';
                 const twitchDetails = document.getElementById('chat-twitch-details');
@@ -1571,9 +1672,10 @@ const historyList = document.getElementById('history-list')!
                 statusText.textContent = statusMsg;
                 loadHistory();
                 // Update memory count
-                const memoryInfo = await getCharacterMemory(chatCharacter.name);
-                document.getElementById('chat-memory-count').textContent =
-                    `Memory: ${memoryInfo.message_count} messages${chatCharacter.memory_enabled ? '' : ' (not saving)'}`;
+                const memoryInfo = await getCharacterMemory(chatCharacter.name) as MemoryInfo;
+                const charData = chatCharacter as CharacterData;
+                $('chat-memory-count').textContent =
+                    `Memory: ${memoryInfo.message_count} messages${charData.memory_enabled ? '' : ' (not saving)'}`;
                 // Stop button will be hidden by handleMessage when streaming ends
             }
         } catch (error) {
@@ -1719,10 +1821,10 @@ const historyList = document.getElementById('history-list')!
     // Character modal exports
     window.openCreateCharacterModal = openCreateCharacterModal;
     window.closeCharacterModal = closeCharacterModal;
-    window.editCharacter = async function(characterName) {
+    window.editCharacter = async function(characterName: string) {
         // Fetch fresh data from API to avoid stale cached data
-        const character = await apiCall(`/api/characters/${encodeURIComponent(characterName)}`);
-        if (character && !character.error) {
+        const character = await apiCall(`/api/characters/${encodeURIComponent(characterName)}`) as Character | { error: string } | null;
+        if (character && !('error' in character)) {
             openEditCharacterModal(character);
         } else {
             showToast('Failed to load character', 'error');
@@ -1766,9 +1868,9 @@ const historyList = document.getElementById('history-list')!
     window.onCartesiaManualIdChange = onCartesiaManualIdChange;
 
     // Copy URL function (browser source URL with auth token)
-    window.copyCharacterUrl = async function(characterName) {
+    window.copyCharacterUrl = async function(characterName: string) {
         const character = characters.find(c => c.name === characterName);
-        if (!character || !character.ws_token) {
+        if (!character?.ws_token) {
             showToast('Character token not found', 'error');
             return;
         }
@@ -1793,16 +1895,22 @@ const historyList = document.getElementById('history-list')!
     };
 
     // Rotate token function (invalidates existing browser source URLs)
-    window.rotateCharacterToken = async function(characterName) {
+    interface RotateTokenResult {
+        success?: boolean;
+        ws_token?: string;
+        detail?: string;
+    }
+
+    window.rotateCharacterToken = async function(characterName: string) {
         if (!confirm(`Rotate token for "${characterName}"?\n\nThis will invalidate any existing OBS browser source URLs. You'll need to update your OBS sources with the new URL.`)) {
             return;
         }
         try {
-            const result = await apiCall(`/api/characters/${encodeURIComponent(characterName)}/rotate-token`, { method: 'POST' });
-            if (result && result.success) {
+            const result = await apiCall(`/api/characters/${encodeURIComponent(characterName)}/rotate-token`, 'POST') as RotateTokenResult | null;
+            if (result?.success) {
                 // Update local character data
                 const character = characters.find(c => c.name === characterName);
-                if (character) {
+                if (character && result.ws_token) {
                     character.ws_token = result.ws_token;
                 }
                 showToast('Token rotated. Copy new URL for OBS.', 'success');
@@ -1880,7 +1988,8 @@ const historyList = document.getElementById('history-list')!
     // Event delegation for character action buttons (prevents XSS via onclick)
     if (charactersContainer) {
         charactersContainer.addEventListener('click', (e) => {
-            const button = e.target.closest('button[data-action]');
+            const target = e.target as HTMLElement;
+            const button = target.closest('button[data-action]') as HTMLButtonElement | null;
             if (!button) return;
 
             const action = button.dataset.action;
