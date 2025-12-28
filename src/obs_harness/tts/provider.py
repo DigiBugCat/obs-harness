@@ -17,6 +17,7 @@ class TTSProviderType(str, Enum):
 
     ELEVENLABS = "elevenlabs"
     CARTESIA = "cartesia"
+    KOKORO = "kokoro"
 
 
 # -----------------------------------------------------------------------------
@@ -65,6 +66,18 @@ class CartesiaSettings(BaseModel):
     language: str = "en"
     speed: float = Field(default=1.0, ge=0.6, le=1.5)  # Cartesia valid range: 0.6-1.5
     emotion: str | None = None  # Optional emotion control
+
+
+class KokoroSettings(BaseModel):
+    """Kokoro-specific voice settings.
+
+    Kokoro is a local/self-hosted TTS model via Kokoro-FastAPI.
+    See: https://github.com/remsky/Kokoro-FastAPI
+    """
+
+    voice: str = "af_heart"  # Default voice (54 voices available)
+    speed: float = Field(default=1.0, ge=0.5, le=2.0)
+    # Language is inferred from voice prefix: a=American, b=British, j=Japanese, etc.
 
 
 # -----------------------------------------------------------------------------
@@ -120,12 +133,14 @@ class TTSProviderClient(Protocol):
 def create_tts_client(
     provider: TTSProviderType,
     settings: dict[str, Any],
+    api_key: str | None = None,
 ) -> TTSProviderClient:
     """Create a TTS client for the specified provider.
 
     Args:
         provider: The TTS provider type
         settings: Provider-specific settings dict
+        api_key: Optional API key (falls back to global env var if not provided)
 
     Returns:
         Configured TTS client implementing TTSProviderClient
@@ -141,6 +156,7 @@ def create_tts_client(
             voice_id=validated.voice_id,
             model_id=validated.model_id,
             sync_alignment=True,
+            api_key=api_key,
         )
     elif provider == TTSProviderType.CARTESIA:
         from .cartesia_ws import CartesiaWSClient
@@ -150,6 +166,15 @@ def create_tts_client(
             voice_id=validated.voice_id,
             model_id=validated.model_id,
             language=validated.language,
+            api_key=api_key,
+        )
+    elif provider == TTSProviderType.KOKORO:
+        from .kokoro import KokoroClient
+
+        validated = KokoroSettings(**settings)
+        return KokoroClient(
+            voice=validated.voice,
+            # base_url comes from config, api_key not needed
         )
     else:
         raise ValueError(f"Unsupported TTS provider: {provider}")
@@ -181,6 +206,11 @@ def get_connect_kwargs(
         return {
             "speed": validated.speed,
             "emotion": validated.emotion,
+        }
+    elif provider == TTSProviderType.KOKORO:
+        validated = KokoroSettings(**settings)
+        return {
+            "speed": validated.speed,
         }
     else:
         return {}

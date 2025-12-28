@@ -16,10 +16,8 @@ from sqlmodel import select
 from ..auth import is_allowed
 from ..config import settings
 from ..database import get_session
-from ..helpers.santa import create_santa_state_callback
 from ..helpers.twitch import create_chat_callback
-from ..models import SantaConfig, TwitchConfig
-from ..santa_session import SantaSessionManager
+from ..models import TwitchConfig
 from . import get_state
 
 logger = logging.getLogger(__name__)
@@ -173,22 +171,7 @@ async def auth_callback(
 
                 await session.commit()
 
-            # Get or create Santa config for this tenant
-            santa_config = None
-            async with get_session() as session:
-                santa_result = await session.execute(
-                    select(SantaConfig).where(SantaConfig.tenant_id == tenant_id).limit(1)
-                )
-                santa_config = santa_result.scalar_one_or_none()
-
-                if state.feature_santa_enabled and not santa_config:
-                    # Create default Santa config for new tenant
-                    santa_config = SantaConfig(tenant_id=tenant_id)
-                    session.add(santa_config)
-                    await session.commit()
-                    await session.refresh(santa_config)
-
-            # Get EventSub manager reference (needed for Santa manager)
+            # Get EventSub manager reference
             eventsub_mgr = state.get_eventsub_manager(tenant_id)
 
             # Initialize EventSub in background so auth callback returns quickly
@@ -202,27 +185,12 @@ async def auth_callback(
                         user_id=user_id,
                         refresh_token=refresh_token,
                         subscribe_to_chat=True,
-                        subscribe_to_redemptions=False,
                     )
                     logger.info(f"EventSub started successfully for {username}")
                 except Exception as e:
                     logger.error(f"Background EventSub start failed for {username}: {e}")
 
             asyncio.create_task(start_eventsub_background())
-
-            # Initialize Santa manager if config exists (only if feature is enabled)
-            if state.feature_santa_enabled and santa_config:
-                santa_mgr = SantaSessionManager(
-                    harness=state.harness,
-                    eventsub=eventsub_mgr,
-                    character_name=santa_config.character_name,
-                    max_followups=santa_config.max_followups,
-                    response_timeout=santa_config.response_timeout_seconds,
-                    debounce_seconds=santa_config.debounce_seconds,
-                    chat_vote_seconds=santa_config.chat_vote_seconds,
-                )
-                santa_mgr.set_state_callback(create_santa_state_callback(state, tenant_id))
-                state.set_santa_manager(tenant_id, santa_mgr)
 
             logger.info(f"OAuth complete for {username} (tenant: {tenant_id})")
 

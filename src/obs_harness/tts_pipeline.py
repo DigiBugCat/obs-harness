@@ -30,6 +30,9 @@ class TTSStreamConfig:
     provider: TTSProviderType = TTSProviderType.ELEVENLABS
     settings: dict[str, Any] = field(default_factory=dict)
 
+    # API key (optional - falls back to global env var)
+    api_key: str | None = None
+
     # Legacy ElevenLabs fields (used if settings is empty)
     voice_id: str = ""
     model_id: str = "eleven_multilingual_v2"
@@ -158,6 +161,7 @@ class TTSStreamer:
             self._tts_client = create_tts_client(
                 provider=self._tts_config.provider,
                 settings=settings,
+                api_key=self._tts_config.api_key,
             )
 
             try:

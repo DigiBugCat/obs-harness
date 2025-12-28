@@ -10,8 +10,31 @@ services:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - CARTESIA_API_KEY=${CARTESIA_API_KEY:-}
       - TWITCH_CLIENT_ID=${TWITCH_CLIENT_ID:-}
+      - TWITCH_CLIENT_SECRET=${TWITCH_CLIENT_SECRET:-}
+      - TWITCH_REDIRECT_URI=${TWITCH_REDIRECT_URI:-}
+      - KOKORO_BASE_URL=http://kokoro:8880
     volumes:
       - ./data:/app/data
+    depends_on:
+      - kokoro
+
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    # For NVIDIA GPU: ghcr.io/remsky/kokoro-fastapi-gpu:latest
+    container_name: ${TUNNEL_NAME:-obs-harness}-kokoro
+    restart: unless-stopped
+    environment:
+      - KOKORO_DEFAULT_VOICE=af_heart
+    volumes:
+      - kokoro-models:/app/api/src/models
+    # Uncomment for NVIDIA GPU support:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
 
   cloudflared:
     image: cloudflare/cloudflared:latest
@@ -24,3 +47,6 @@ services:
       - ./cloudflare/cloudflared/credentials.json:/home/nonroot/.cloudflared/credentials.json:ro
     depends_on:
       - app
+
+volumes:
+  kokoro-models:

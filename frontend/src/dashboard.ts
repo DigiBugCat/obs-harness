@@ -661,6 +661,13 @@ const historyList = document.getElementById('history-list')!
 
     let cartesiaVoices: CartesiaVoice[] = [];
 
+    interface KokoroVoice {
+        id: string;
+        name: string;
+    }
+
+    let kokoroVoices: KokoroVoice[] = [];
+
     async function loadCartesiaVoices() {
         try {
             cartesiaVoices = await apiCall('/api/cartesia/voices', 'GET', null, false) as CartesiaVoice[];
@@ -727,20 +734,69 @@ const historyList = document.getElementById('history-list')!
         }
     }
 
+    // =========================================================================
+    // Kokoro TTS Functions
+    // =========================================================================
+
+    async function loadKokoroVoices() {
+        try {
+            kokoroVoices = await apiCall('/api/kokoro/voices', 'GET', null, false) as KokoroVoice[];
+            const select = document.getElementById('kokoro-voice-select') as HTMLSelectElement | null;
+            if (!select) return;
+
+            select.innerHTML = '';
+            kokoroVoices.forEach(voice => {
+                const option = document.createElement('option');
+                option.value = voice.id;
+                option.textContent = voice.name;
+                select.appendChild(option);
+            });
+
+            // Select default voice (af_heart if available, otherwise first)
+            const defaultVoice = kokoroVoices.find(v => v.id === 'af_heart') || kokoroVoices[0];
+            if (defaultVoice) {
+                select.value = defaultVoice.id;
+            }
+        } catch (e) {
+            console.error('Error loading Kokoro voices:', e);
+            const select = document.getElementById('kokoro-voice-select') as HTMLSelectElement | null;
+            if (select) {
+                select.innerHTML = '<option value="">Failed to load voices</option>';
+            }
+        }
+    }
+
     function toggleTTSProvider(provider: string) {
         const elevenlabsSettings = document.getElementById('elevenlabs-settings');
         const cartesiaSettings = document.getElementById('cartesia-settings');
+        const kokoroSettings = document.getElementById('kokoro-settings');
 
         if (provider === 'cartesia') {
             if (elevenlabsSettings) elevenlabsSettings.style.display = 'none';
             if (cartesiaSettings) cartesiaSettings.style.display = 'block';
+            if (kokoroSettings) kokoroSettings.style.display = 'none';
             // Load voices on first switch
             if (cartesiaVoices.length === 0) {
                 loadCartesiaVoices();
             }
+        } else if (provider === 'kokoro') {
+            if (elevenlabsSettings) elevenlabsSettings.style.display = 'none';
+            if (cartesiaSettings) cartesiaSettings.style.display = 'none';
+            if (kokoroSettings) kokoroSettings.style.display = 'block';
+
+            // Sync speed display with slider value
+            const speedSlider = $input('kokoro-speed');
+            $('kokoro-speed-value').textContent = (parseInt(speedSlider.value) / 100).toFixed(1);
+
+            // Load voices on first switch
+            if (kokoroVoices.length === 0) {
+                loadKokoroVoices();
+            }
         } else {
+            // ElevenLabs (default)
             if (elevenlabsSettings) elevenlabsSettings.style.display = 'block';
             if (cartesiaSettings) cartesiaSettings.style.display = 'none';
+            if (kokoroSettings) kokoroSettings.style.display = 'none';
         }
     }
 
@@ -1044,6 +1100,10 @@ const historyList = document.getElementById('history-list')!
         $('tts-model-info').textContent = '';
         updateModelInfo('eleven_multilingual_v2');
 
+        // Kokoro defaults
+        $input('kokoro-speed').value = '100';
+        $('kokoro-speed-value').textContent = '1.0';
+
         // Memory & Twitch settings
         $input('character-memory-enabled').checked = false;
         $input('character-persist-memory').checked = false;
@@ -1099,6 +1159,19 @@ const historyList = document.getElementById('history-list')!
                     console.warn(`Cartesia speed ${rawSpeed} was clamped to ${speed} (valid: 0.6-1.5)`);
                 }
                 updateCartesiaVoiceInfo(voiceId);
+            });
+        } else if (ttsProvider === 'kokoro' && character.tts_settings) {
+            // Kokoro settings - need to load voices first, then select
+            loadKokoroVoices().then(() => {
+                const settings = character.tts_settings as unknown as Record<string, unknown>;
+                const voice = (settings.voice as string) || 'af_heart';
+                const select = $select('kokoro-voice-select');
+                if (select && voice) {
+                    select.value = voice;
+                }
+                const speed = (settings.speed as number) || 1.0;
+                $input('kokoro-speed').value = String(Math.round(speed * 100));
+                $('kokoro-speed-value').textContent = speed.toFixed(1);
             });
         } else {
             // ElevenLabs settings (legacy or from tts_settings)
@@ -1185,6 +1258,11 @@ const historyList = document.getElementById('history-list')!
                 model_id: $input('cartesia-model-id').value,
                 language: $select('cartesia-language').value,
                 speed: parseInt($input('cartesia-speed').value) / 100,
+            };
+        } else if (ttsProvider === 'kokoro') {
+            ttsSettings = {
+                voice: $select('kokoro-voice-select').value,
+                speed: parseInt($input('kokoro-speed').value) / 100,
             };
         } else {
             // ElevenLabs - store in tts_settings for new abstraction
@@ -1825,9 +1903,14 @@ const historyList = document.getElementById('history-list')!
         const safeIcon = escapeHtml(character.icon);
         const safeColor = sanitizeColor(character.color);
         const safeModel = escapeHtml(character.model ? character.model.split('/').pop() : '');
-        const safeTtsModel = escapeHtml(character.tts_provider === 'cartesia'
-            ? (character.tts_settings?.model_id || 'sonic').replace('sonic-', '')
-            : (character.elevenlabs_model_id || 'multilingual_v2').replace('eleven_', '').replace('_', ' '));
+        let safeTtsModel: string;
+        if (character.tts_provider === 'cartesia') {
+            safeTtsModel = escapeHtml(((character.tts_settings as { model_id?: string })?.model_id || 'sonic').replace('sonic-', ''));
+        } else if (character.tts_provider === 'kokoro') {
+            safeTtsModel = escapeHtml((character.tts_settings as { voice?: string })?.voice || 'af_heart');
+        } else {
+            safeTtsModel = escapeHtml((character.elevenlabs_model_id || 'multilingual_v2').replace('eleven_', '').replace('_', ' '));
+        }
 
         return `
             <div class="channel-card ${connectedClass}" data-character="${safeName}" style="border-left-color: ${safeColor}">
@@ -1842,7 +1925,7 @@ const historyList = document.getElementById('history-list')!
                 <p class="channel-description">${descriptionText}</p>
                 <div class="channel-controls">
                     <div class="control-row" style="font-size: 0.75rem; color: var(--text-secondary);">
-                        <span>TTS: ${character.tts_provider === 'cartesia' ? 'Cartesia' : 'ElevenLabs'}</span>
+                        <span>TTS: ${character.tts_provider === 'cartesia' ? 'Cartesia' : character.tts_provider === 'kokoro' ? 'Kokoro' : 'ElevenLabs'}</span>
                         <span>${safeTtsModel}</span>
                     </div>
                     ${character.system_prompt ? `<div class="control-row" style="font-size: 0.75rem; color: var(--text-secondary);"><span>AI: ${safeModel}</span></div>` : ''}

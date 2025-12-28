@@ -233,7 +233,7 @@ export type WSClientEvent =
 // =============================================================================
 
 /** TTS Provider type */
-export type TTSProvider = 'elevenlabs' | 'cartesia';
+export type TTSProvider = 'elevenlabs' | 'cartesia' | 'kokoro';
 
 /** ElevenLabs TTS settings */
 export interface ElevenLabsSettings {
@@ -254,8 +254,14 @@ export interface CartesiaSettings {
   emotion?: string;
 }
 
+/** Kokoro TTS settings */
+export interface KokoroSettings {
+  voice: string;
+  speed?: number;
+}
+
 /** TTS settings union */
-export type TTSSettings = ElevenLabsSettings | CartesiaSettings;
+export type TTSSettings = ElevenLabsSettings | CartesiaSettings | KokoroSettings;
 
 /** Character configuration */
 export interface Character {
@@ -320,6 +326,12 @@ export interface CartesiaVoice {
   name: string;
   description?: string;
   language?: string;
+}
+
+/** Kokoro voice */
+export interface KokoroVoice {
+  id: string;
+  name: string;
 }
 
 /** Playback log entry */

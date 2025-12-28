@@ -65,6 +65,20 @@ class TwitchConfig(SQLModel, table=True):
     updated_at: datetime = SQLField(default_factory=datetime.utcnow)
 
 
+class UserSettings(SQLModel, table=True):
+    """Per-tenant user settings including API keys (BYOK)."""
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    tenant_id: str = SQLField(unique=True, index=True)
+
+    # API Keys (Bring Your Own Key)
+    elevenlabs_api_key: str | None = SQLField(default=None)
+    cartesia_api_key: str | None = SQLField(default=None)
+    openrouter_api_key: str | None = SQLField(default=None)
+
+    updated_at: datetime = SQLField(default_factory=datetime.utcnow)
+
+
 class ConversationMessage(SQLModel, table=True):
     """A message in a character's conversation history."""
 
@@ -646,47 +660,16 @@ class TwitchStatusResponse(BaseModel):
 
 
 # =============================================================================
-# Santa Timmy Feature Models
+# Moderator Models
 # =============================================================================
 
 
-class SantaConfig(SQLModel, table=True):
-    """Santa feature configuration (one per tenant)."""
+class Moderator(SQLModel, table=True):
+    """Moderator allowlist for dashboard access.
 
-    id: int | None = SQLField(default=None, primary_key=True)
-    tenant_id: str = SQLField(default="default", unique=True, index=True)  # Multi-tenancy
-    enabled: bool = SQLField(default=False)
-    character_name: str = SQLField(default="santa_timmy")
-    reward_id: str | None = SQLField(default=None)  # Channel point reward UUID
-    chat_vote_seconds: int = SQLField(default=15)
-    max_followups: int = SQLField(default=2)
-    response_timeout_seconds: int = SQLField(default=60)
-    debounce_seconds: int = SQLField(default=4)  # Wait for additional messages
-    updated_at: datetime = SQLField(default_factory=datetime.utcnow)
-
-
-class SantaSession(SQLModel, table=True):
-    """Active/historical wish session with Santa Timmy."""
-
-    id: int | None = SQLField(default=None, primary_key=True)
-    tenant_id: str = SQLField(default="default", index=True)  # Multi-tenancy
-    redeemer_user_id: str = SQLField(index=True)  # Twitch user ID (stable identifier)
-    redeemer_username: str
-    redeemer_display_name: str
-    wish_text: str
-    state: str = SQLField(default="idle")  # idle, processing, ask_followup, await_chat, complete
-    followup_count: int = SQLField(default=0)
-    outcome: str | None = SQLField(default=None)  # grant, deny, cancelled, timeout
-    conversation_history: str = SQLField(default="[]")  # JSON array of messages
-    started_at: datetime = SQLField(default_factory=datetime.utcnow)
-    ended_at: datetime | None = SQLField(default=None)
-
-
-class SantaModerator(SQLModel, table=True):
-    """Moderator allowlist for Santa dashboard access.
-
-    Allows broadcasters to grant moderators access to their Santa dashboard.
-    Moderators can control sessions but cannot create/delete rewards.
+    Allows broadcasters to grant moderators access to their dashboard.
+    Moderators can control playback and characters but cannot create/delete
+    characters or modify configuration.
     """
 
     id: int | None = SQLField(default=None, primary_key=True)
@@ -696,63 +679,13 @@ class SantaModerator(SQLModel, table=True):
     created_at: datetime = SQLField(default_factory=datetime.utcnow)
 
 
-# Santa API Models (Pydantic)
-
-
-class SantaConfigResponse(BaseModel):
-    """Response for Santa config."""
-
-    enabled: bool
-    character_name: str
-    reward_id: str | None
-    chat_vote_seconds: int
-    max_followups: int
-    response_timeout_seconds: int
-    debounce_seconds: int
-
-
-class SantaConfigUpdate(BaseModel):
-    """Request to update Santa config."""
-
-    enabled: bool | None = None
-    reward_id: str | None = None
-    chat_vote_seconds: int | None = Field(default=None, ge=5, le=60)
-    max_followups: int | None = Field(default=None, ge=0, le=5)
-    response_timeout_seconds: int | None = Field(default=None, ge=10, le=120)
-    debounce_seconds: int | None = Field(default=None, ge=1, le=10)
-
-
-class SantaSessionStatus(BaseModel):
-    """Current state of Santa session."""
-
-    active: bool
-    session_id: int | None = None
-    redeemer_display_name: str | None = None
-    wish_text: str | None = None
-    state: str | None = None
-    followup_count: int = 0
-    started_at: datetime | None = None
-
-
-class SantaMessageRequest(BaseModel):
-    """Send a message to active Santa session (dashboard override)."""
-
-    message: str
-
-
-class SantaVerdictRequest(BaseModel):
-    """Force a verdict (skip chat voting)."""
-
-    verdict: Literal["grant", "deny"]
-
-
-class SantaModeratorAdd(BaseModel):
+class ModeratorAdd(BaseModel):
     """Request to add a moderator to the allowlist."""
 
     username: str  # Twitch username to add
 
 
-class SantaModeratorResponse(BaseModel):
+class ModeratorResponse(BaseModel):
     """Moderator information in responses."""
 
     user_id: str
@@ -760,9 +693,11 @@ class SantaModeratorResponse(BaseModel):
     added_at: datetime
 
 
-class SantaAccessibleChannel(BaseModel):
+class AccessibleChannel(BaseModel):
     """A channel the user can access (own or as moderator)."""
 
     tenant_id: str
     username: str
     is_own: bool
+
+

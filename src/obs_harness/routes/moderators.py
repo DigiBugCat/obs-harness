@@ -1,6 +1,6 @@
 """Moderator management API routes.
 
-Handles moderator access control for Santa dashboard.
+Handles moderator access control for dashboard.
 """
 
 import logging
@@ -14,8 +14,8 @@ from ..config import settings
 from ..database import get_session
 from ..helpers.twitch import refresh_twitch_token
 from ..models import (
-    SantaModerator,
-    SantaModeratorAdd,
+    Moderator,
+    ModeratorAdd,
     TwitchConfig,
 )
 
@@ -31,8 +31,8 @@ async def list_moderators(
     """List moderators for the current channel."""
     async with get_session() as session:
         result = await session.execute(
-            select(SantaModerator).where(
-                SantaModerator.broadcaster_tenant_id == tenant_id
+            select(Moderator).where(
+                Moderator.broadcaster_tenant_id == tenant_id
             )
         )
         mods = result.scalars().all()
@@ -51,7 +51,7 @@ async def list_moderators(
 
 @router.post("")
 async def add_moderator(
-    request: SantaModeratorAdd,
+    request: ModeratorAdd,
     tenant_id: str = Depends(require_auth),
 ) -> dict:
     """Add a moderator by Twitch username."""
@@ -107,15 +107,15 @@ async def add_moderator(
     async with get_session() as session:
         # Check if already exists
         existing = await session.execute(
-            select(SantaModerator).where(
-                SantaModerator.broadcaster_tenant_id == tenant_id,
-                SantaModerator.moderator_user_id == mod_user_id,
+            select(Moderator).where(
+                Moderator.broadcaster_tenant_id == tenant_id,
+                Moderator.moderator_user_id == mod_user_id,
             ).limit(1)
         )
         if existing.scalar_one_or_none():
             raise HTTPException(status_code=400, detail="User is already a moderator")
 
-        mod = SantaModerator(
+        mod = Moderator(
             broadcaster_tenant_id=tenant_id,
             moderator_user_id=mod_user_id,
             moderator_username=mod_username,
@@ -135,9 +135,9 @@ async def remove_moderator(
     """Remove a moderator."""
     async with get_session() as session:
         result = await session.execute(
-            select(SantaModerator).where(
-                SantaModerator.broadcaster_tenant_id == tenant_id,
-                SantaModerator.moderator_user_id == user_id,
+            select(Moderator).where(
+                Moderator.broadcaster_tenant_id == tenant_id,
+                Moderator.moderator_user_id == user_id,
             ).limit(1)
         )
         mod = result.scalar_one_or_none()
@@ -174,9 +174,9 @@ async def get_accessible_channels(
 
         # Get channels where user is a moderator
         mod_result = await session.execute(
-            select(SantaModerator, TwitchConfig)
-            .join(TwitchConfig, SantaModerator.broadcaster_tenant_id == TwitchConfig.tenant_id)
-            .where(SantaModerator.moderator_user_id == tenant_id)
+            select(Moderator, TwitchConfig)
+            .join(TwitchConfig, Moderator.broadcaster_tenant_id == TwitchConfig.tenant_id)
+            .where(Moderator.moderator_user_id == tenant_id)
         )
         for mod, broadcaster_config in mod_result:
             channels.append({

@@ -1,6 +1,6 @@
 """WebSocket route handlers.
 
-Handles real-time connections for dashboard, Santa, Twitch chat, and browser sources.
+Handles real-time connections for dashboard, Twitch chat, and browser sources.
 """
 
 import json
@@ -12,12 +12,11 @@ from sqlmodel import select
 
 from .. import __version__
 from ..database import get_session
-from ..models import Character, SantaModerator, TwitchConfig
+from ..models import Character, Moderator, TwitchConfig
 from .system import BUILD_ID
 from . import get_state
 from ..state import AppState
 from ..helpers.conversation import update_interrupted_message
-from ..helpers.santa import broadcast_santa_status
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +52,9 @@ async def dashboard_websocket(
     if effective_channel != user_id:
         async with get_session() as session:
             result = await session.execute(
-                select(SantaModerator).where(
-                    SantaModerator.broadcaster_tenant_id == effective_channel,
-                    SantaModerator.moderator_user_id == user_id,
+                select(Moderator).where(
+                    Moderator.broadcaster_tenant_id == effective_channel,
+                    Moderator.moderator_user_id == user_id,
                 ).limit(1)
             )
             if not result.scalar_one_or_none():
@@ -83,63 +82,6 @@ async def dashboard_websocket(
                 pass
     except WebSocketDisconnect:
         state.manager.disconnect_dashboard(websocket)
-
-
-@router.websocket("/ws/santa")
-async def santa_websocket(
-    websocket: WebSocket,
-    channel: str | None = Query(default=None, description="Channel to view (tenant_id)"),
-):
-    """WebSocket endpoint for Santa dashboard live updates (requires auth).
-
-    Supports moderator access via ?channel= parameter.
-    """
-    state = await get_app_state(websocket)
-
-    if not state.feature_santa_enabled:
-        await websocket.close(code=4004, reason="Feature not available")
-        return
-
-    # Verify authentication before accepting connection
-    user_id = websocket.cookies.get("tenant_id")
-    if not user_id:
-        await websocket.close(code=4001, reason="Unauthorized")
-        return
-
-    # Determine effective channel (which channel they're viewing)
-    effective_channel = channel or websocket.cookies.get("effective_channel") or user_id
-    is_owner = effective_channel == user_id
-
-    # If not owner, verify moderator access
-    if not is_owner:
-        async with get_session() as session:
-            result = await session.execute(
-                select(SantaModerator).where(
-                    SantaModerator.broadcaster_tenant_id == effective_channel,
-                    SantaModerator.moderator_user_id == user_id,
-                ).limit(1)
-            )
-            if not result.scalar_one_or_none():
-                await websocket.close(code=4003, reason="Access denied")
-                return
-
-    await websocket.accept()
-    state.santa_dashboard_connections[websocket] = effective_channel
-
-    # Send initial status for this tenant
-    await broadcast_santa_status(state, effective_channel)
-
-    try:
-        while True:
-            data = await websocket.receive_text()
-            try:
-                event = json.loads(data)
-                if event.get("event") == "pong":
-                    pass  # Could track pongs if needed
-            except json.JSONDecodeError:
-                pass
-    except WebSocketDisconnect:
-        state.santa_dashboard_connections.pop(websocket, None)
 
 
 @router.websocket("/ws/twitch/chat")

@@ -259,6 +259,98 @@
             padding: 0.25rem 0.75rem;
             font-size: 0.75rem;
         }
+
+        /* API Keys styles */
+        .api-key-item {
+            margin-bottom: 1.25rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--bg-secondary);
+        }
+
+        .api-key-item:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+
+        .api-key-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .api-key-label {
+            font-weight: 500;
+        }
+
+        .api-key-status {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+        }
+
+        .api-key-status.user {
+            background: rgba(78, 204, 163, 0.2);
+            color: var(--success);
+        }
+
+        .api-key-status.global {
+            background: rgba(145, 70, 255, 0.2);
+            color: var(--accent);
+        }
+
+        .api-key-status.none {
+            background: rgba(255, 193, 7, 0.2);
+            color: var(--warning);
+        }
+
+        .api-key-input-row {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        .api-key-input-row input {
+            flex: 1;
+        }
+
+        input[type="password"] {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid var(--bg-secondary);
+            border-radius: 6px;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            font-size: 1rem;
+            font-family: monospace;
+        }
+
+        input[type="password"]:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .btn-icon {
+            padding: 0.5rem;
+            min-width: 40px;
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #3dab88;
+        }
+
+        .masked-key {
+            font-family: monospace;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            margin-top: 0.25rem;
+        }
     </style>
 </head>
 <body>
@@ -328,9 +420,9 @@
 
         <!-- Moderator Access -->
         <div class="card">
-            <div class="card-title">3. Santa Dashboard Moderators</div>
+            <div class="card-title">3. Moderators</div>
             <p class="section-description">
-                Add moderators who can control Santa sessions on your channel. Moderators can control sessions and change configuration, but cannot create or delete rewards.
+                Add moderators who can control your dashboard. Moderators can trigger playback and edit characters, but cannot create or delete characters or modify configuration.
             </p>
 
             <div class="form-group">
@@ -343,6 +435,58 @@
 
             <div id="moderator-list">
                 <p style="color: var(--text-secondary); font-size: 0.875rem;">No moderators added yet.</p>
+            </div>
+        </div>
+
+        <!-- API Keys Section -->
+        <div class="card">
+            <div class="card-title">4. API Keys</div>
+            <p class="section-description">
+                Add your own API keys for TTS and LLM services. Keys are stored securely and take precedence over global environment variables.
+            </p>
+
+            <div id="api-keys-container">
+                <!-- ElevenLabs -->
+                <div class="api-key-item" data-provider="elevenlabs">
+                    <div class="api-key-header">
+                        <span class="api-key-label">ElevenLabs</span>
+                        <span class="api-key-status none" id="elevenlabs-status">Not set</span>
+                    </div>
+                    <div class="masked-key" id="elevenlabs-masked"></div>
+                    <div class="api-key-input-row">
+                        <input type="password" id="elevenlabs-key" placeholder="Enter ElevenLabs API key">
+                        <button class="btn btn-success btn-icon" onclick="saveApiKey('elevenlabs')" title="Save">&#10003;</button>
+                        <button class="btn btn-danger btn-icon" onclick="deleteApiKey('elevenlabs')" title="Delete">&#10005;</button>
+                    </div>
+                </div>
+
+                <!-- Cartesia -->
+                <div class="api-key-item" data-provider="cartesia">
+                    <div class="api-key-header">
+                        <span class="api-key-label">Cartesia</span>
+                        <span class="api-key-status none" id="cartesia-status">Not set</span>
+                    </div>
+                    <div class="masked-key" id="cartesia-masked"></div>
+                    <div class="api-key-input-row">
+                        <input type="password" id="cartesia-key" placeholder="Enter Cartesia API key">
+                        <button class="btn btn-success btn-icon" onclick="saveApiKey('cartesia')" title="Save">&#10003;</button>
+                        <button class="btn btn-danger btn-icon" onclick="deleteApiKey('cartesia')" title="Delete">&#10005;</button>
+                    </div>
+                </div>
+
+                <!-- OpenRouter -->
+                <div class="api-key-item" data-provider="openrouter">
+                    <div class="api-key-header">
+                        <span class="api-key-label">OpenRouter</span>
+                        <span class="api-key-status none" id="openrouter-status">Not set</span>
+                    </div>
+                    <div class="masked-key" id="openrouter-masked"></div>
+                    <div class="api-key-input-row">
+                        <input type="password" id="openrouter-key" placeholder="Enter OpenRouter API key">
+                        <button class="btn btn-success btn-icon" onclick="saveApiKey('openrouter')" title="Save">&#10003;</button>
+                        <button class="btn btn-danger btn-icon" onclick="deleteApiKey('openrouter')" title="Delete">&#10005;</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -695,10 +839,96 @@
             if (e.key === 'Enter') addModerator();
         });
 
+        // API Key Management
+        async function loadApiKeys() {
+            try {
+                const response = await fetch('/api/settings');
+                if (!response.ok) {
+                    console.error('Failed to load API key settings');
+                    return;
+                }
+
+                const data = await response.json();
+                const apiKeys = data.api_keys || {};
+
+                // Update each provider's status
+                ['elevenlabs', 'cartesia', 'openrouter'].forEach(provider => {
+                    const keyInfo = apiKeys[provider] || {};
+                    const statusEl = document.getElementById(`${provider}-status`);
+                    const maskedEl = document.getElementById(`${provider}-masked`);
+
+                    if (keyInfo.has_key) {
+                        if (keyInfo.source === 'user') {
+                            statusEl.textContent = 'Your key';
+                            statusEl.className = 'api-key-status user';
+                        } else {
+                            statusEl.textContent = 'Global';
+                            statusEl.className = 'api-key-status global';
+                        }
+                        maskedEl.textContent = keyInfo.masked || '';
+                    } else {
+                        statusEl.textContent = 'Not set';
+                        statusEl.className = 'api-key-status none';
+                        maskedEl.textContent = '';
+                    }
+                });
+            } catch (e) {
+                console.error('Failed to load API keys:', e);
+            }
+        }
+
+        async function saveApiKey(provider) {
+            const input = document.getElementById(`${provider}-key`);
+            const key = input.value.trim();
+
+            if (!key) {
+                showError('Please enter an API key');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/settings/api-keys', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ provider, key }),
+                });
+
+                if (response.ok) {
+                    showMessage(`${provider} API key saved`);
+                    input.value = '';
+                    loadApiKeys();
+                } else {
+                    const error = await response.json();
+                    showError('Failed to save API key: ' + error.detail);
+                }
+            } catch (e) {
+                showError('Failed to save API key: ' + e.message);
+            }
+        }
+
+        async function deleteApiKey(provider) {
+            try {
+                const response = await fetch(`/api/settings/api-keys/${provider}`, {
+                    method: 'DELETE',
+                });
+
+                if (response.ok) {
+                    showMessage(`${provider} API key removed`);
+                    loadApiKeys();
+                } else {
+                    const error = await response.json();
+                    showError('Failed to remove API key: ' + error.detail);
+                }
+            } catch (e) {
+                showError('Failed to remove API key: ' + e.message);
+            }
+        }
+
         // Initialize
         handleOAuthCallback();
         checkStatus();
         loadModerators();
+        loadApiKeys();
 
         // WebSocket handles real-time updates, no polling needed
         // Keep refresh button for manual refresh of historical messages

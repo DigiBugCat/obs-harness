@@ -183,3 +183,23 @@ async def get_cartesia_voice(voice_id: str, tenant_id: str = Depends(require_aut
     except ValueError as e:
         # API key not configured
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------------------------------------------------------------------------
+# Kokoro API endpoints
+# -------------------------------------------------------------------------
+
+
+@router.get("/api/kokoro/voices")
+async def list_kokoro_voices(tenant_id: str = Depends(require_auth)) -> list[dict]:
+    """Get list of available Kokoro voices.
+
+    Kokoro is a self-hosted TTS model, so no API key is required.
+    """
+    from ..tts.kokoro import KokoroClient, KokoroError
+
+    try:
+        voices = await KokoroClient.get_voices()
+        return voices
+    except KokoroError as e:
+        raise HTTPException(status_code=502, detail=str(e))

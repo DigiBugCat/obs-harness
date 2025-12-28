@@ -23,6 +23,7 @@ class ChatPipelineConfig:
     twitch_chat_context: str | None = None  # Recent Twitch chat to inject
     conversation_history: list[dict] | None = None  # Past messages for memory
     images: list[dict] | None = None  # Images for vision: [{data, media_type}]
+    api_key: str | None = None  # OpenRouter API key (falls back to env var)
 
 
 class ChatPipeline:
@@ -89,7 +90,7 @@ Recent Twitch chat (you can see what viewers are saying):
             messages.append({"role": "user", "content": user_message})
 
         # Create LLM client (kept alive to access usage after streaming)
-        llm_client = OpenRouterClient()
+        llm_client = OpenRouterClient(api_key=self.config.api_key)
 
         # Create async generator that yields LLM tokens
         async def llm_tokens() -> AsyncIterator[str]:

@@ -48,8 +48,6 @@ async def init_db(db_url: str = "sqlite+aiosqlite:///obs_harness.db") -> None:
             "ALTER TABLE playbacklog ADD COLUMN tenant_id TEXT DEFAULT 'default'",
             "ALTER TABLE twitchconfig ADD COLUMN tenant_id TEXT DEFAULT 'default'",
             "ALTER TABLE conversationmessage ADD COLUMN tenant_id TEXT DEFAULT 'default'",
-            "ALTER TABLE santaconfig ADD COLUMN tenant_id TEXT DEFAULT 'default'",
-            "ALTER TABLE santasession ADD COLUMN tenant_id TEXT DEFAULT 'default'",
         ]
         for migration in migrations:
             try:
@@ -69,13 +67,11 @@ async def init_db(db_url: str = "sqlite+aiosqlite:///obs_harness.db") -> None:
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_character_tenant_name ON character(tenant_id, name)",
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_textpreset_tenant_name ON textpreset(tenant_id, name)",
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_twitchconfig_tenant ON twitchconfig(tenant_id)",
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_santaconfig_tenant ON santaconfig(tenant_id)",
             # Standard indexes for tenant_id filtering
             "CREATE INDEX IF NOT EXISTS ix_character_tenant ON character(tenant_id)",
             "CREATE INDEX IF NOT EXISTS ix_textpreset_tenant ON textpreset(tenant_id)",
             "CREATE INDEX IF NOT EXISTS ix_playbacklog_tenant ON playbacklog(tenant_id)",
             "CREATE INDEX IF NOT EXISTS ix_conversationmessage_tenant ON conversationmessage(tenant_id)",
-            "CREATE INDEX IF NOT EXISTS ix_santasession_tenant ON santasession(tenant_id)",
         ]
         for migration in index_migrations:
             try:

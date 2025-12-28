@@ -54,9 +54,7 @@ FastAPI application for pushing audio and animated text to OBS via browser sourc
 
 **`twitch_chat.py`** - IRC-based Twitch chat (uses TwitchIO)
 
-**`twitch_eventsub.py`** - EventSub WebSocket client for channel points and chat events
-
-**`santa_session.py`** - Mall Santa feature: state machine for multi-turn wish-granting conversations triggered by channel point redemptions
+**`twitch_eventsub.py`** - EventSub WebSocket client for chat events
 
 **`routes/moderators.py`** - Moderator management API for multi-tenant access control
 
@@ -107,9 +105,7 @@ SQLite via SQLModel (async with aiosqlite). Tables:
 - `PlaybackLog` - History of audio/text playback
 - `TwitchConfig` - OAuth tokens and channel settings
 - `ConversationMessage` - Persisted conversation history (when `persist_memory=True`)
-- `SantaModerator` - Cross-channel moderator permissions
-- `SantaConfig` - Per-channel Santa feature configuration
-- `SantaSession` - Active Santa session state
+- `Moderator` - Cross-channel moderator permissions
 
 ### Frontend
 
@@ -118,7 +114,6 @@ TypeScript sources in `frontend/src/`, built outputs in `static/js/` (don't edit
 - `frontend/src/channel.ts` → `static/js/channel.js` - Browser source handler (Web Audio API)
 - `frontend/src/text-animator.ts` → `static/js/text-animator.js` - Canvas-based text animations
 - `frontend/src/dashboard.ts` → `static/js/dashboard.js` - Dashboard WebSocket client
-- `frontend/src/santa.ts` → `static/js/santa.js` - Santa dashboard client
 
 ### Multi-Tenant Auth
 
@@ -126,12 +121,12 @@ Cookie-based authentication with `tenant_id` (Twitch user ID):
 - `/api/auth/twitch/callback` sets `tenant_id` cookie after OAuth
 - `require_auth` dependency extracts tenant from cookie
 - `?channel=` query param allows viewing another channel (with moderator access)
-- `SantaModerator` table stores cross-channel permissions
+- `Moderator` table stores cross-channel permissions
+- Moderators can do everything except create/delete characters and modify configuration
 
 ### Web Pages
 
 - `/` - Main dashboard (characters, playback controls)
 - `/configuration` - Twitch OAuth, channel settings, moderator management
-- `/santa` - Santa Timmy dashboard (channel point redemptions)
 - `/editor` - Text animation preset editor
 - `/channel/{name}` - Browser source for OBS

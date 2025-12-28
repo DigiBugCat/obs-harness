@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     elevenlabs_api_key: str | None = None
     cartesia_api_key: str | None = None
 
+    # Kokoro TTS (self-hosted, no API key required)
+    kokoro_base_url: str = Field(default="http://kokoro:8880")
+
     # Twitch OAuth
     twitch_client_id: str = Field(default="h1x5odjr6qy1m8sesgev1p9wcssz63")
     twitch_client_secret: str | None = None
@@ -33,7 +36,6 @@ class Settings(BaseSettings):
     allowed_twitch_ids: str = Field(default="")
 
     # Feature flags
-    feature_santa_enabled: bool = Field(default=False)
     dev_mode: bool = Field(default=False)  # Enables dev login button on login page
 
     @property

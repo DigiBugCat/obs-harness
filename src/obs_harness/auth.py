@@ -12,11 +12,11 @@ from .config import settings
 
 
 @dataclass
-class SantaAuthContext:
-    """Authentication context for Santa dashboard access.
+class AuthContext:
+    """Authentication context for dashboard access with moderator support.
 
     Contains information about the authenticated user and which channel
-    they are viewing. Used by Santa routes to determine permissions.
+    they are viewing. Used by routes to determine permissions.
     """
 
     user_id: str  # Logged-in user's Twitch ID
@@ -133,8 +133,8 @@ class RequireAuthRedirect:
 require_auth_redirect = RequireAuthRedirect()
 
 
-class RequireSantaAuth:
-    """FastAPI dependency for Santa dashboard authentication.
+class RequireModeratorAuth:
+    """FastAPI dependency for dashboard authentication with moderator support.
 
     Checks:
     1. User is authenticated (has valid tenant_id cookie)
@@ -152,10 +152,10 @@ class RequireSantaAuth:
         self,
         request: Request,
         channel: str | None = Query(default=None, description="Channel to view (tenant_id)"),
-    ) -> SantaAuthContext:
+    ) -> AuthContext:
         from sqlmodel import select
         from .database import get_session
-        from .models import TwitchConfig, SantaModerator
+        from .models import TwitchConfig, Moderator
 
         # Get authenticated user
         tenant_id = await get_session_tenant(request)
@@ -185,9 +185,9 @@ class RequireSantaAuth:
             # Check if user is a moderator for this broadcaster
             async with get_session() as session:
                 mod_result = await session.execute(
-                    select(SantaModerator).where(
-                        SantaModerator.broadcaster_tenant_id == effective_tenant_id,
-                        SantaModerator.moderator_user_id == tenant_id,
+                    select(Moderator).where(
+                        Moderator.broadcaster_tenant_id == effective_tenant_id,
+                        Moderator.moderator_user_id == tenant_id,
                     ).limit(1)
                 )
                 if not mod_result.scalar_one_or_none():
@@ -196,7 +196,7 @@ class RequireSantaAuth:
                         detail="Access denied. You are not a moderator for this channel.",
                     )
 
-        return SantaAuthContext(
+        return AuthContext(
             user_id=tenant_id,
             username=user_config.username or tenant_id,
             effective_tenant_id=effective_tenant_id,
@@ -204,17 +204,17 @@ class RequireSantaAuth:
         )
 
 
-# Singleton instance for Santa auth
-require_santa_auth = RequireSantaAuth()
+# Singleton instance for moderator auth
+require_moderator_auth = RequireModeratorAuth()
 
 
 async def require_owner_only(
-    auth: SantaAuthContext = Depends(require_santa_auth),
-) -> SantaAuthContext:
+    auth: AuthContext = Depends(require_moderator_auth),
+) -> AuthContext:
     """Require that the user is the owner (not just a mod).
 
     Used for routes that only channel owners can access,
-    such as creating/deleting rewards or managing moderators.
+    such as creating/deleting characters or modifying configuration.
     """
     if not auth.is_owner:
         raise HTTPException(

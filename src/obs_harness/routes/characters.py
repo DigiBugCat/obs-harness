@@ -14,9 +14,7 @@ from pydantic import ValidationError
 from sqlmodel import select
 
 from ..auth import require_auth
-from ..models import SantaModerator
 from ..chat_pipeline import ChatPipeline, ChatPipelineConfig
-from ..config import settings
 from ..database import get_session
 from ..helpers.conversation import (
     clear_conversation_messages,
@@ -24,6 +22,7 @@ from ..helpers.conversation import (
     save_conversation_message,
 )
 from ..helpers.generation import cancel_active_generation
+from ..helpers.keys import get_api_key
 from ..models import (
     Character,
     CharacterCreate,
@@ -31,6 +30,7 @@ from ..models import (
     CharacterUpdate,
     ChatRequest,
     ChatResponse,
+    Moderator,
     SpeakRequest,
     get_character_tts_config,
 )
@@ -38,8 +38,10 @@ from ..tts import (
     TTSProviderType,
     ElevenLabsWSError,
     CartesiaWSError,
+    KokoroError,
     ElevenLabsSettings,
     CartesiaSettings,
+    KokoroSettings,
 )
 from ..tts_pipeline import TTSStreamer, TTSStreamConfig, TextDisplayConfig
 from . import get_state
@@ -72,9 +74,9 @@ async def get_effective_tenant(
     # Verify user has moderator access to this channel
     async with get_session() as session:
         result = await session.execute(
-            select(SantaModerator).where(
-                SantaModerator.broadcaster_tenant_id == channel,
-                SantaModerator.moderator_user_id == tenant_id,
+            select(Moderator).where(
+                Moderator.broadcaster_tenant_id == channel,
+                Moderator.moderator_user_id == tenant_id,
             )
         )
         if not result.scalar_one_or_none():
@@ -99,6 +101,8 @@ def _validate_tts_settings(provider: str | None, tts_settings: dict | None) -> N
             ElevenLabsSettings(**tts_settings)
         elif provider_type == TTSProviderType.CARTESIA:
             CartesiaSettings(**tts_settings)
+        elif provider_type == TTSProviderType.KOKORO:
+            KokoroSettings(**tts_settings)
     except ValidationError as e:
         raise HTTPException(
             status_code=400,
@@ -374,17 +378,13 @@ async def character_speak(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Check appropriate API key
-    if provider == TTSProviderType.ELEVENLABS:
-        if not settings.has_elevenlabs():
-            raise HTTPException(
-                status_code=500, detail="ELEVENLABS_API_KEY environment variable not set"
-            )
-    elif provider == TTSProviderType.CARTESIA:
-        if not settings.has_cartesia():
-            raise HTTPException(
-                status_code=500, detail="CARTESIA_API_KEY environment variable not set"
-            )
+    # Get tenant-specific API key (falls back to global)
+    tts_api_key = await get_api_key(tenant_id, provider.value)
+    if not tts_api_key:
+        raise HTTPException(
+            status_code=500,
+            detail=f"{provider.value.upper()}_API_KEY not configured. Add it in Settings or set environment variable.",
+        )
 
     # Use tenant-scoped channel key for WebSocket operations
     channel_key = state.tenant_key(tenant_id, name)
@@ -399,6 +399,7 @@ async def character_speak(
     tts_config = TTSStreamConfig(
         provider=provider,
         settings=tts_settings,
+        api_key=tts_api_key,
     )
     text_config = TextDisplayConfig(
         font_family=character.text_font_family,
@@ -448,7 +449,7 @@ async def character_speak(
             elapsed = time.time() - start_time
             logger.info(f"POST /api/characters/{name}/speak - completed in {elapsed:.2f}s")
             return {"success": True, "character": name}
-        except (ElevenLabsWSError, CartesiaWSError) as e:
+        except (ElevenLabsWSError, CartesiaWSError, KokoroError) as e:
             await harness.stop_stream(channel_key)
             logger.error(f"POST /api/characters/{name}/speak - TTS error: {e}")
             raise HTTPException(status_code=500, detail=str(e))
@@ -479,10 +480,12 @@ async def character_chat(
     msg_preview = request.message[:50] + "..." if len(request.message) > 50 else request.message
     logger.info(f"POST /api/characters/{name}/chat - \"{msg_preview}\"")
 
-    # Check OpenRouter API key (required for LLM)
-    if not settings.has_openrouter():
+    # Get tenant-specific OpenRouter API key (required for LLM)
+    openrouter_api_key = await get_api_key(tenant_id, "openrouter")
+    if not openrouter_api_key:
         raise HTTPException(
-            status_code=500, detail="OPENROUTER_API_KEY environment variable not set"
+            status_code=500,
+            detail="OPENROUTER_API_KEY not configured. Add it in Settings or set environment variable.",
         )
 
     # Look up character
@@ -510,17 +513,13 @@ async def character_chat(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Check appropriate TTS API key
-    if provider == TTSProviderType.ELEVENLABS:
-        if not settings.has_elevenlabs():
-            raise HTTPException(
-                status_code=500, detail="ELEVENLABS_API_KEY environment variable not set"
-            )
-    elif provider == TTSProviderType.CARTESIA:
-        if not settings.has_cartesia():
-            raise HTTPException(
-                status_code=500, detail="CARTESIA_API_KEY environment variable not set"
-            )
+    # Get tenant-specific TTS API key (falls back to global)
+    tts_api_key = await get_api_key(tenant_id, provider.value)
+    if not tts_api_key:
+        raise HTTPException(
+            status_code=500,
+            detail=f"{provider.value.upper()}_API_KEY not configured. Add it in Settings or set environment variable.",
+        )
 
     # Use tenant-scoped channel key for WebSocket operations
     channel_key = state.tenant_key(tenant_id, name)
@@ -566,6 +565,7 @@ async def character_chat(
     tts_config = TTSStreamConfig(
         provider=provider,
         settings=tts_settings,
+        api_key=tts_api_key,
     )
     text_config = TextDisplayConfig(
         font_family=character.text_font_family,
@@ -615,6 +615,7 @@ async def character_chat(
         twitch_chat_context=twitch_chat_context,
         conversation_history=history,
         images=images,
+        api_key=openrouter_api_key,
     )
 
     # Create and run pipeline

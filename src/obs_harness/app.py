@@ -19,7 +19,6 @@ from . import __version__
 from .config import settings
 from .database import close_db, get_session, init_db
 from .helpers.conversation import load_persisted_memory_on_startup
-from .helpers.santa import create_redemption_callback, create_santa_state_callback
 from .helpers.twitch import create_chat_callback
 from .models import (
     Character,
@@ -27,7 +26,6 @@ from .models import (
     ClearTextCommand,
     PlaybackLog,
     PlayCommand,
-    SantaConfig,
     StopCommand,
     StopStreamCommand,
     StreamEndCommand,
@@ -40,8 +38,7 @@ from .models import (
     VolumeCommand,
     WordTimingCommand,
 )
-from .routes import auth, characters, moderators, pages, presets, santa, system, tts_providers, twitch, websockets
-from .santa_session import SantaSessionManager
+from .routes import auth, characters, moderators, pages, presets, settings as settings_routes, system, tts_providers, twitch, websockets
 from .state import AppState
 
 logger = logging.getLogger(__name__)
@@ -397,15 +394,13 @@ def create_app(
     app_state = AppState(
         manager=manager,
         harness=harness,
-        feature_santa_enabled=settings.feature_santa_enabled,
     )
 
     async def initialize_tenant(
         tenant_id: str,
         twitch_config: TwitchConfig,
-        santa_config: SantaConfig | None,
     ) -> None:
-        """Initialize EventSub and Santa managers for a tenant."""
+        """Initialize EventSub for a tenant."""
         # Look up channel's user ID if different from logged-in user
         channel_user_id = twitch_config.user_id
         if twitch_config.channel and twitch_config.channel.lower() != (twitch_config.username or "").lower():
@@ -429,10 +424,6 @@ def create_app(
         # Initialize EventSub manager for this tenant
         eventsub_mgr = app_state.get_eventsub_manager(tenant_id)
 
-        # Check if Santa is enabled
-        santa_enabled = santa_config and santa_config.enabled
-        reward_id = santa_config.reward_id if santa_config else None
-
         # Set callbacks and start EventSub
         eventsub_mgr.set_chat_callback(create_chat_callback(app_state, tenant_id))
         await eventsub_mgr.start(
@@ -441,27 +432,9 @@ def create_app(
             broadcaster_user_id=channel_user_id,
             user_id=twitch_config.user_id,
             refresh_token=twitch_config.refresh_token,
-            reward_id=reward_id if santa_enabled else None,
-            on_redemption=create_redemption_callback(app_state, tenant_id) if santa_enabled else None,
             subscribe_to_chat=True,
-            subscribe_to_redemptions=santa_enabled,
         )
         logger.info(f"EventSub connected for tenant {tenant_id} (channel: {twitch_config.channel})")
-
-        # Initialize Santa manager for this tenant (only if feature is enabled)
-        if app_state.feature_santa_enabled and santa_config:
-            santa_mgr = SantaSessionManager(
-                harness=harness,
-                eventsub=eventsub_mgr,
-                character_name=santa_config.character_name,
-                max_followups=santa_config.max_followups,
-                response_timeout=santa_config.response_timeout_seconds,
-                debounce_seconds=santa_config.debounce_seconds,
-                chat_vote_seconds=santa_config.chat_vote_seconds,
-            )
-            santa_mgr.set_state_callback(create_santa_state_callback(app_state, tenant_id))
-            app_state.set_santa_manager(tenant_id, santa_mgr)
-            logger.info(f"Santa manager initialized for tenant {tenant_id}")
 
     async def ping_all_connections():
         """Background task: Send pings to all WebSocket clients and close stale connections."""
@@ -483,13 +456,6 @@ def create_app(
                     await ws.send_json({"type": "ping", "ts": now})
                 except Exception:
                     manager.disconnect_dashboard(ws)
-
-            # Ping Santa dashboard connections
-            for ws in list(app_state.santa_dashboard_connections.keys()):
-                try:
-                    await ws.send_json({"type": "ping", "ts": now})
-                except Exception:
-                    app_state.santa_dashboard_connections.pop(ws, None)
 
             # Ping Twitch chat connections
             for ws in list(app_state.twitch_chat_connections.keys()):
@@ -542,13 +508,6 @@ def create_app(
                         tenant_delays[tenant_id] = INITIAL_DELAY
                         continue
 
-                    # Get Santa config for this tenant
-                    async with get_session() as session:
-                        santa_result = await session.execute(
-                            select(SantaConfig).where(SantaConfig.tenant_id == tenant_id).limit(1)
-                        )
-                        santa_config = santa_result.scalar_one_or_none()
-
                     # Look up channel's user ID if different from logged-in user
                     channel_user_id = twitch_config.user_id
                     if twitch_config.channel and twitch_config.channel.lower() != (twitch_config.username or "").lower():
@@ -569,10 +528,6 @@ def create_app(
                         except Exception:
                             pass  # Use default user_id
 
-                    # Check if Santa is enabled
-                    santa_enabled = santa_config and santa_config.enabled
-                    reward_id = santa_config.reward_id if santa_config else None
-
                     # Try to reconnect
                     try:
                         logger.info(f"EventSub disconnected for tenant {tenant_id}, attempting auto-reconnect...")
@@ -583,10 +538,7 @@ def create_app(
                             broadcaster_user_id=channel_user_id,
                             user_id=twitch_config.user_id,
                             refresh_token=twitch_config.refresh_token,
-                            reward_id=reward_id if santa_enabled else None,
-                            on_redemption=create_redemption_callback(app_state, tenant_id) if santa_enabled else None,
                             subscribe_to_chat=True,
-                            subscribe_to_redemptions=santa_enabled,
                         )
                         logger.info(f"EventSub auto-reconnect successful for tenant {tenant_id}")
                         tenant_delays[tenant_id] = INITIAL_DELAY  # Reset backoff
@@ -621,14 +573,8 @@ def create_app(
 
                     tenant_id = twitch_config.tenant_id
 
-                    # Get Santa config for this tenant
-                    santa_result = await session.execute(
-                        select(SantaConfig).where(SantaConfig.tenant_id == tenant_id).limit(1)
-                    )
-                    santa_config = santa_result.scalar_one_or_none()
-
                     try:
-                        await initialize_tenant(tenant_id, twitch_config, santa_config)
+                        await initialize_tenant(tenant_id, twitch_config)
                     except Exception as e:
                         logger.warning(f"Failed to initialize tenant {tenant_id}: {e}")
 
@@ -696,7 +642,7 @@ def create_app(
     app.include_router(tts_providers.router)
     app.include_router(presets.router)
     app.include_router(characters.router)
-    app.include_router(santa.router)
     app.include_router(moderators.router)
+    app.include_router(settings_routes.router)
 
     return app

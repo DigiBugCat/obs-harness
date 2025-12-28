@@ -9,7 +9,6 @@ export default defineConfig({
       entry: {
         'channel': resolve(__dirname, 'src/channel.ts'),
         'dashboard': resolve(__dirname, 'src/dashboard.ts'),
-        'santa': resolve(__dirname, 'src/santa.ts'),
         'text-animator': resolve(__dirname, 'src/text-animator.ts'),
       },
       formats: ['es'],

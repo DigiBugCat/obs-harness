@@ -12,9 +12,8 @@ from sqlmodel import select
 from ..auth import require_auth
 from ..config import settings
 from ..database import get_session
-from ..helpers.santa import create_redemption_callback
 from ..helpers.twitch import create_chat_callback, refresh_twitch_token
-from ..models import SantaConfig, TwitchChannelRequest, TwitchConfig, TwitchTokenRequest
+from ..models import TwitchChannelRequest, TwitchConfig, TwitchTokenRequest
 from . import get_state
 from ..state import AppState
 
@@ -217,15 +216,6 @@ async def twitch_set_channel(
                     channel_user_id = data["data"][0]["id"]
                     logger.info(f"Looked up channel {request.channel} -> user_id {channel_user_id}")
 
-        # Check if Santa is enabled - if so, we need to include redemptions
-        async with get_session() as santa_session:
-            santa_result = await santa_session.execute(
-                select(SantaConfig).where(SantaConfig.tenant_id == tenant_id)
-            )
-            santa_config = santa_result.scalar_one_or_none()
-        santa_enabled = santa_config and santa_config.enabled
-        reward_id = santa_config.reward_id if santa_config else None
-
         # Restart EventSub with new broadcaster
         eventsub_mgr = state.get_eventsub_manager(tenant_id)
         eventsub_mgr.set_chat_callback(create_chat_callback(state, tenant_id))
@@ -235,12 +225,9 @@ async def twitch_set_channel(
             broadcaster_user_id=channel_user_id,
             user_id=user_id,
             refresh_token=refresh_token,
-            reward_id=reward_id if santa_enabled else None,
-            on_redemption=create_redemption_callback(state, tenant_id) if santa_enabled else None,
             subscribe_to_chat=True,
-            subscribe_to_redemptions=santa_enabled,
         )
-        logger.info(f"EventSub restarted for chat on #{request.channel} (Santa: {santa_enabled})")
+        logger.info(f"EventSub restarted for chat on #{request.channel}")
     except Exception as e:
         logger.warning(f"Failed to restart EventSub for new channel: {e}")
 

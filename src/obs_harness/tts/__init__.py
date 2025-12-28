@@ -12,12 +12,14 @@ from .provider import (
     AudioChunkWithTiming,
     ElevenLabsSettings,
     CartesiaSettings,
+    KokoroSettings,
     create_tts_client,
     get_connect_kwargs,
 )
 from .elevenlabs_ws import ElevenLabsWSClient, ElevenLabsWSError
 from .cartesia_ws import CartesiaWSClient, CartesiaWSError
 from .cartesia import CartesiaClient, CartesiaError
+from .kokoro import KokoroClient, KokoroError
 
 __all__ = [
     # Provider types and protocol
@@ -29,6 +31,7 @@ __all__ = [
     # Settings schemas
     "ElevenLabsSettings",
     "CartesiaSettings",
+    "KokoroSettings",
     # Factory
     "create_tts_client",
     "get_connect_kwargs",
@@ -40,4 +43,7 @@ __all__ = [
     "CartesiaWSError",
     "CartesiaClient",
     "CartesiaError",
+    # Kokoro client
+    "KokoroClient",
+    "KokoroError",
 ]

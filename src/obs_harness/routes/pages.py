@@ -13,8 +13,6 @@ from sqlmodel import select
 from ..auth import require_auth_redirect
 from ..database import get_session
 from ..models import Character
-from . import get_state, require_santa_feature
-from ..state import AppState
 
 router = APIRouter(tags=["Pages"])
 
@@ -103,16 +101,3 @@ async def configuration_page(
     if config_path.exists():
         return FileResponse(config_path)
     return HTMLResponse("<html><body><h1>Configuration</h1><p>Configuration page not found.</p></body></html>")
-
-
-@router.get("/santa", response_class=HTMLResponse)
-async def santa_page(
-    static_dir: Path = Depends(get_static_dir),
-    tenant_id: str = Depends(require_auth_redirect),
-    _santa: None = Depends(require_santa_feature),
-):
-    """Serve the Santa Timmy dashboard page."""
-    santa_path = static_dir / "santa.html"
-    if santa_path.exists():
-        return FileResponse(santa_path)
-    return HTMLResponse("<html><body><h1>Santa Timmy</h1><p>Santa dashboard not found.</p></body></html>")
