@@ -84,6 +84,7 @@ async def twitch_refresh_token_route(
                 client_id=client_id,
                 broadcaster_user_id=twitch_config.user_id,
                 user_id=twitch_config.user_id,
+                refresh_token=twitch_config.refresh_token,
                 subscribe_to_chat=True,
                 subscribe_to_redemptions=False,
             )
@@ -194,6 +195,7 @@ async def twitch_set_channel(
         await session.commit()
 
         access_token = twitch_config.access_token
+        refresh_token = twitch_config.refresh_token
         user_id = twitch_config.user_id
 
     # Restart EventSub for the new channel
@@ -232,6 +234,7 @@ async def twitch_set_channel(
             client_id=settings.twitch_client_id,
             broadcaster_user_id=channel_user_id,
             user_id=user_id,
+            refresh_token=refresh_token,
             reward_id=reward_id if santa_enabled else None,
             on_redemption=create_redemption_callback(state, tenant_id) if santa_enabled else None,
             subscribe_to_chat=True,

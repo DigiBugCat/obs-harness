@@ -14,6 +14,6 @@ output "tunnel_cname" {
 }
 
 output "access_application_id" {
-  description = "The ID of the Access application"
-  value       = cloudflare_access_application.main.id
+  description = "The ID of the Access application (null if access protection disabled)"
+  value       = var.enable_access_protection ? cloudflare_access_application.main[0].id : null
 }

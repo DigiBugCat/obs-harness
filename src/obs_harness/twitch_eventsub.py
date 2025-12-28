@@ -129,9 +129,10 @@ class TwitchEventSubManager:
         self._seen_message_ids: dict[str, datetime] = {}  # message_id -> first_seen_time
         self._seen_redemption_ids: dict[str, datetime] = {}  # redemption_id -> first_seen_time
         self._cleanup_task: asyncio.Task | None = None
-        self._client_task: asyncio.Task | None = None
         # Store tokens for API calls
         self._access_token: str | None = None
+        # Lock to prevent concurrent start() calls
+        self._start_lock: asyncio.Lock = asyncio.Lock()
 
     @property
     def is_connected(self) -> bool:
@@ -194,6 +195,7 @@ class TwitchEventSubManager:
         client_id: str,
         broadcaster_user_id: str,
         user_id: str | None = None,
+        refresh_token: str | None = None,
         reward_id: str | None = None,
         on_redemption: Callable[[ChannelPointRedemption], Awaitable[None]] | None = None,
         subscribe_to_chat: bool = True,
@@ -206,96 +208,90 @@ class TwitchEventSubManager:
             client_id: Twitch client ID
             broadcaster_user_id: Broadcaster's user ID (whose channel to monitor)
             user_id: The authenticated user's ID (for chat - needs to match token)
+            refresh_token: OAuth refresh token for token refresh
             reward_id: Optional specific reward ID to listen for
             on_redemption: Callback for redemption events
             subscribe_to_chat: Whether to subscribe to chat messages
             subscribe_to_redemptions: Whether to subscribe to redemptions
         """
-        if self._running:
-            await self.stop()
+        async with self._start_lock:
+            if self._running:
+                await self.stop()
 
-        self._reward_id = reward_id
-        self._broadcaster_user_id = broadcaster_user_id
-        self._user_id = user_id or broadcaster_user_id
-        self._on_redemption = on_redemption
-        self._access_token = access_token
+            self._reward_id = reward_id
+            self._broadcaster_user_id = broadcaster_user_id
+            self._user_id = user_id or broadcaster_user_id
+            self._on_redemption = on_redemption
+            self._access_token = access_token
 
-        try:
-            # Get client secret from settings
-            client_secret = settings.twitch_client_secret or ""
+            try:
+                # Get client secret from settings
+                client_secret = settings.twitch_client_secret or ""
 
-            # Create the TwitchIO client
-            self._client = twitchio.Client(
-                client_id=client_id,
-                client_secret=client_secret,
-                bot_id=self._user_id,
-            )
-
-            # Set up event handlers
-            self._setup_event_handlers()
-
-            # Add token to client
-            await self._client.add_token(access_token)
-
-            # Start the client in a background task
-            self._client_task = asyncio.create_task(self._run_client())
-
-            # Wait for client to be ready
-            await self._client.wait_until_ready()
-
-            # Subscribe to events
-            if subscribe_to_chat:
-                chat_sub = eventsub.ChatMessageSubscription(
-                    broadcaster_user_id=broadcaster_user_id,
-                    user_id=self._user_id,
+                # Create the TwitchIO client
+                self._client = twitchio.Client(
+                    client_id=client_id,
+                    client_secret=client_secret,
+                    bot_id=self._user_id,
                 )
-                await self._client.subscribe_websocket(chat_sub)
-                logger.info(f"Subscribed to chat for channel {broadcaster_user_id}")
 
-            if subscribe_to_redemptions:
-                redemption_sub = eventsub.ChannelPointsRedeemAddSubscription(
-                    broadcaster_user_id=broadcaster_user_id,
-                )
-                await self._client.subscribe_websocket(redemption_sub)
-                logger.info(f"Subscribed to redemptions for channel {broadcaster_user_id}")
+                # Set up event handlers
+                self._setup_event_handlers()
 
-            self._running = True
-            self._update_activity()  # Mark as active on start
+                # Add token to client (TwitchIO 3.x requires both access and refresh tokens)
+                await self._client.add_token(access_token, refresh_token or "")
 
-            # Start cleanup task for seen IDs
-            self._cleanup_task = asyncio.create_task(self._cleanup_seen_ids())
+                # Call login directly (not in background task)
+                # Note: Don't use wait_until_ready() - it waits for _ready_event which
+                # is only set by client.start(), not login()
+                await self._client.login()
 
-            logger.info(f"EventSub started for broadcaster {broadcaster_user_id}")
+                # Subscribe to events
+                if subscribe_to_chat:
+                    chat_sub = eventsub.ChatMessageSubscription(
+                        broadcaster_user_id=broadcaster_user_id,
+                        user_id=self._user_id,
+                    )
+                    await self._client.subscribe_websocket(chat_sub, token_for=self._user_id)
+                    logger.info(f"Subscribed to chat for channel {broadcaster_user_id}")
 
-        except Exception as e:
-            await self.stop()
-            raise TwitchEventSubError(f"Failed to start EventSub: {e}")
+                if subscribe_to_redemptions:
+                    redemption_sub = eventsub.ChannelPointsRedeemAddSubscription(
+                        broadcaster_user_id=broadcaster_user_id,
+                    )
+                    await self._client.subscribe_websocket(redemption_sub, token_for=self._user_id)
+                    logger.info(f"Subscribed to redemptions for channel {broadcaster_user_id}")
+
+                self._running = True
+                self._update_activity()  # Mark as active on start
+
+                # Start cleanup task for seen IDs
+                self._cleanup_task = asyncio.create_task(self._cleanup_seen_ids())
+
+                logger.info(f"EventSub started for broadcaster {broadcaster_user_id}")
+
+            except Exception as e:
+                await self.stop()
+                raise TwitchEventSubError(f"Failed to start EventSub: {e}")
 
     def _setup_event_handlers(self) -> None:
         """Set up TwitchIO event handlers."""
         if not self._client:
             return
 
-        @self._client.event()
-        async def event_ready():
+        async def event_ready() -> None:
             logger.info("TwitchIO client ready")
 
-        @self._client.event()
-        async def event_message(event: twitchio.ChatMessage):
+        async def event_message(event: twitchio.ChatMessage) -> None:
             await self._handle_chat_message(event)
 
-        @self._client.event()
-        async def event_custom_redemption_add(event: twitchio.ChannelPointsRedemptionAdd):
+        async def event_custom_redemption_add(event: twitchio.ChannelPointsRedemptionAdd) -> None:
             await self._handle_redemption(event)
 
-    async def _run_client(self) -> None:
-        """Run the TwitchIO client."""
-        try:
-            await self._client.login()
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.error(f"TwitchIO client error: {e}")
+        # TwitchIO 3.x uses add_listener() instead of @client.event()
+        self._client.add_listener(event_ready)
+        self._client.add_listener(event_message)
+        self._client.add_listener(event_custom_redemption_add)
 
     async def stop(self) -> None:
         """Stop the EventSub client."""
@@ -309,15 +305,6 @@ class TwitchEventSubManager:
             except asyncio.CancelledError:
                 pass
             self._cleanup_task = None
-
-        # Cancel client task
-        if self._client_task:
-            self._client_task.cancel()
-            try:
-                await self._client_task
-            except asyncio.CancelledError:
-                pass
-            self._client_task = None
 
         # Close client
         if self._client:

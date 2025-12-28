@@ -3,6 +3,7 @@
 Handles Twitch OAuth authorization code flow.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -53,6 +54,7 @@ async def auth_twitch_start():
         "redirect_uri": redirect_uri,
         "response_type": "code",  # Authorization code flow
         "scope": " ".join(scopes),
+        "force_verify": "true",  # Always show auth prompt
     }
 
     auth_url = f"https://id.twitch.tv/oauth2/authorize?{urlencode(params)}"
@@ -92,7 +94,7 @@ async def auth_callback(
 
     try:
         import httpx
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=10.0) as client:
             # Exchange code for tokens
             token_resp = await client.post(
                 "https://id.twitch.tv/oauth2/token",
@@ -186,17 +188,27 @@ async def auth_callback(
                     await session.commit()
                     await session.refresh(santa_config)
 
-            # Initialize EventSub manager for this tenant
+            # Get EventSub manager reference (needed for Santa manager)
             eventsub_mgr = state.get_eventsub_manager(tenant_id)
-            eventsub_mgr.set_chat_callback(create_chat_callback(state, tenant_id))
-            await eventsub_mgr.start(
-                access_token=access_token,
-                client_id=client_id,
-                broadcaster_user_id=user_id,
-                user_id=user_id,
-                subscribe_to_chat=True,
-                subscribe_to_redemptions=False,
-            )
+
+            # Initialize EventSub in background so auth callback returns quickly
+            async def start_eventsub_background():
+                try:
+                    eventsub_mgr.set_chat_callback(create_chat_callback(state, tenant_id))
+                    await eventsub_mgr.start(
+                        access_token=access_token,
+                        client_id=client_id,
+                        broadcaster_user_id=user_id,
+                        user_id=user_id,
+                        refresh_token=refresh_token,
+                        subscribe_to_chat=True,
+                        subscribe_to_redemptions=False,
+                    )
+                    logger.info(f"EventSub started successfully for {username}")
+                except Exception as e:
+                    logger.error(f"Background EventSub start failed for {username}: {e}")
+
+            asyncio.create_task(start_eventsub_background())
 
             # Initialize Santa manager if config exists (only if feature is enabled)
             if state.feature_santa_enabled and santa_config:
@@ -212,7 +224,7 @@ async def auth_callback(
                 santa_mgr.set_state_callback(create_santa_state_callback(state, tenant_id))
                 state.set_santa_manager(tenant_id, santa_mgr)
 
-            logger.info(f"OAuth complete, EventSub started for {username} (tenant: {tenant_id})")
+            logger.info(f"OAuth complete for {username} (tenant: {tenant_id})")
 
             # Set session cookie and redirect to dashboard
             response = RedirectResponse(url="/", status_code=302)
@@ -229,3 +241,45 @@ async def auth_callback(
     except Exception as e:
         logger.error(f"OAuth callback error: {e}")
         return RedirectResponse(url="/login?error=callback_failed")
+
+
+@router.get("/dev-mode")
+async def get_dev_mode():
+    """Check if dev mode is enabled and get available dev users."""
+    if not settings.dev_mode:
+        return {"enabled": False, "users": []}
+
+    # Get users from database who have logged in before
+    users = []
+    async with get_session() as session:
+        result = await session.execute(select(TwitchConfig))
+        for config in result.scalars():
+            users.append({
+                "id": config.tenant_id,
+                "username": config.username or config.tenant_id,
+            })
+
+    return {"enabled": True, "users": users}
+
+
+@router.post("/dev-login/{user_id}")
+async def dev_login(user_id: str):
+    """Dev mode only - login as a user without OAuth.
+
+    Only works when DEV_MODE=true is set in environment.
+    """
+    if not settings.dev_mode:
+        raise HTTPException(status_code=403, detail="Dev mode not enabled")
+
+    # Set session cookie and redirect to dashboard
+    response = RedirectResponse(url="/", status_code=302)
+    response.set_cookie(
+        "tenant_id",
+        user_id,
+        httponly=True,
+        secure=False,  # Dev mode, allow HTTP
+        samesite="lax",
+        max_age=86400 * 7  # 7 days
+    )
+    logger.info(f"Dev login for tenant: {user_id}")
+    return response

@@ -58,8 +58,9 @@ resource "cloudflare_record" "tunnel_dns" {
   ttl     = 1
 }
 
-# Access application (protected endpoint)
+# Access application (protected endpoint) - only created if enable_access_protection=true
 resource "cloudflare_access_application" "main" {
+  count                     = var.enable_access_protection ? 1 : 0
   zone_id                   = var.cloudflare_zone_id
   name                      = "${var.tunnel_name}-access"
   domain                    = local.full_domain
@@ -70,8 +71,9 @@ resource "cloudflare_access_application" "main" {
 
 # Bypass policy for allowed IPs (no auth required)
 resource "cloudflare_access_policy" "ip_bypass_policy" {
+  count          = var.enable_access_protection && length(var.auth_ip_ranges) > 0 ? 1 : 0
   zone_id        = var.cloudflare_zone_id
-  application_id = cloudflare_access_application.main.id
+  application_id = cloudflare_access_application.main[0].id
   name           = "${var.tunnel_name}-ip-bypass"
   decision       = "bypass"
   precedence     = 1
@@ -83,8 +85,9 @@ resource "cloudflare_access_policy" "ip_bypass_policy" {
 
 # Allow policy for email auth (fallback for non-allowed IPs)
 resource "cloudflare_access_policy" "email_policy" {
+  count          = var.enable_access_protection && length(var.auth_emails) > 0 ? 1 : 0
   zone_id        = var.cloudflare_zone_id
-  application_id = cloudflare_access_application.main.id
+  application_id = cloudflare_access_application.main[0].id
   name           = "${var.tunnel_name}-email-allow"
   decision       = "allow"
   precedence     = 2

@@ -109,6 +109,42 @@
             color: var(--text-secondary);
             font-size: 0.8rem;
         }
+
+        .dev-section {
+            margin-top: 2rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .dev-section.hidden {
+            display: none;
+        }
+
+        .dev-label {
+            font-size: 0.75rem;
+            color: var(--warning);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 0.75rem;
+        }
+
+        .dev-users {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .btn-dev {
+            background: rgba(255, 193, 7, 0.15);
+            border: 1px solid var(--warning);
+            color: var(--warning);
+            padding: 0.75rem 1rem;
+            font-size: 0.9rem;
+        }
+
+        .btn-dev:hover {
+            background: rgba(255, 193, 7, 0.25);
+        }
     </style>
 </head>
 <body>
@@ -129,6 +165,11 @@
             <p class="footer">
                 Only authorized broadcasters can access this application.
             </p>
+
+            <div id="dev-section" class="dev-section hidden">
+                <p class="dev-label">⚠️ Dev Mode</p>
+                <div id="dev-users" class="dev-users"></div>
+            </div>
         </div>
     </div>
 
@@ -152,6 +193,46 @@
             // Clean URL
             history.replaceState(null, '', window.location.pathname);
         }
+
+        // Check for dev mode
+        async function checkDevMode() {
+            try {
+                const response = await fetch('/auth/dev-mode');
+                const data = await response.json();
+
+                if (data.enabled && data.users.length > 0) {
+                    const devSection = document.getElementById('dev-section');
+                    const devUsers = document.getElementById('dev-users');
+
+                    devSection.classList.remove('hidden');
+
+                    data.users.forEach(user => {
+                        const btn = document.createElement('button');
+                        btn.className = 'btn btn-dev';
+                        btn.textContent = `Login as ${user.username}`;
+                        btn.onclick = () => devLogin(user.id);
+                        devUsers.appendChild(btn);
+                    });
+                }
+            } catch (e) {
+                console.log('Dev mode check failed:', e);
+            }
+        }
+
+        async function devLogin(userId) {
+            try {
+                const response = await fetch(`/auth/dev-login/${userId}`, { method: 'POST' });
+                if (response.redirected) {
+                    window.location.href = response.url;
+                } else if (response.ok) {
+                    window.location.href = '/';
+                }
+            } catch (e) {
+                console.error('Dev login failed:', e);
+            }
+        }
+
+        checkDevMode();
     </script>
 </body>
 </html>

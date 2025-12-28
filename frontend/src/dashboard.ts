@@ -146,6 +146,29 @@ let sawStreamingStart = false;  // Track if we've seen streaming=true
 let pendingImages: PendingImage[] = [];  // Images to attach to next chat message
 let currentTenantId: string | null = null;  // Tenant ID from server (for status key matching)
 
+// Channel switching - effective channel when viewing another user's dashboard
+let effectiveChannel: string | null = null;  // null = own channel
+
+// Get effective channel from URL param or localStorage
+function getEffectiveChannel(): string | null {
+    // URL param takes priority
+    const urlParams = new URLSearchParams(window.location.search);
+    const channelParam = urlParams.get('channel');
+    if (channelParam) {
+        localStorage.setItem('effectiveChannel', channelParam);
+        return channelParam;
+    }
+    // Fall back to localStorage
+    return localStorage.getItem('effectiveChannel');
+}
+
+// Build URL with channel param if needed
+function withChannel(url: string): string {
+    if (!effectiveChannel) return url;
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}channel=${encodeURIComponent(effectiveChannel)}`;
+}
+
 // DOM elements
 const wsStatus = document.getElementById('ws-status')!;
 const wsStatusText = document.getElementById('ws-status-text')!;
@@ -194,7 +217,11 @@ const historyList = document.getElementById('history-list')!
 
     function connect() {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws/dashboard`;
+        let wsUrl = `${protocol}//${window.location.host}/ws/dashboard`;
+        // Add channel param if viewing another user's channel
+        if (effectiveChannel) {
+            wsUrl += `?channel=${encodeURIComponent(effectiveChannel)}`;
+        }
 
         ws = new WebSocket(wsUrl);
 
@@ -462,7 +489,7 @@ const historyList = document.getElementById('history-list')!
 
     // Character CRUD
     async function getAllCharacters() {
-        const result = await apiCall('/api/characters');
+        const result = await apiCall(withChannel('/api/characters'));
         if (Array.isArray(result)) {
             characters = result;
             renderCharacters();
@@ -1969,6 +1996,79 @@ const historyList = document.getElementById('history-list')!
     }
 
     // =========================================================================
+    // Channel Switching
+    // =========================================================================
+
+    interface AccessibleChannel {
+        tenant_id: string;
+        username: string;
+        is_own: boolean;
+    }
+
+    const channelSwitcher = document.getElementById('channel-switcher') as HTMLSelectElement | null;
+
+    async function loadAccessibleChannels() {
+        if (!channelSwitcher) return;
+
+        try {
+            const response = await fetch('/api/moderators/accessible-channels');
+            const data = await response.json();
+
+            if (!data.channels || data.channels.length <= 1) {
+                // Only own channel or no channels - hide switcher
+                channelSwitcher.style.display = 'none';
+                // Clear effectiveChannel if it was set but user no longer has access
+                if (effectiveChannel && data.channels && !data.channels.find((c: AccessibleChannel) => c.tenant_id === effectiveChannel)) {
+                    effectiveChannel = null;
+                    localStorage.removeItem('effectiveChannel');
+                }
+                return;
+            }
+
+            // Multiple channels - show switcher
+            channelSwitcher.innerHTML = '';
+            data.channels.forEach((channel: AccessibleChannel) => {
+                const option = document.createElement('option');
+                option.value = channel.tenant_id;
+                option.textContent = channel.is_own ? `${channel.username} (You)` : channel.username;
+                channelSwitcher.appendChild(option);
+            });
+
+            // Set current selection
+            if (effectiveChannel) {
+                channelSwitcher.value = effectiveChannel;
+            } else {
+                // Default to own channel
+                const ownChannel = data.channels.find((c: AccessibleChannel) => c.is_own);
+                if (ownChannel) {
+                    channelSwitcher.value = ownChannel.tenant_id;
+                }
+            }
+
+            channelSwitcher.style.display = 'inline-flex';
+
+            // Handle selection change
+            channelSwitcher.onchange = () => {
+                const selectedTenantId = channelSwitcher.value;
+                const ownChannel = data.channels.find((c: AccessibleChannel) => c.is_own);
+
+                if (selectedTenantId === ownChannel?.tenant_id) {
+                    // Switching to own channel - clear effective channel
+                    localStorage.removeItem('effectiveChannel');
+                    window.location.href = '/';
+                } else {
+                    // Switching to another channel
+                    localStorage.setItem('effectiveChannel', selectedTenantId);
+                    window.location.href = `/?channel=${encodeURIComponent(selectedTenantId)}`;
+                }
+            };
+        } catch (e) {
+            console.error('Error loading accessible channels:', e);
+            channelSwitcher.style.display = 'none';
+        }
+    }
+
+    // =========================================================================
     // Initialize
     // =========================================================================
 
@@ -2038,12 +2138,16 @@ const historyList = document.getElementById('history-list')!
         });
     }
 
+    // Initialize effective channel before connecting
+    effectiveChannel = getEffectiveChannel();
+
     connect();
     getAllCharacters();
     loadPresets();
     loadHistory();
     checkTwitchStatus();
     loadElevenLabsModels();
+    loadAccessibleChannels();
 
 // Refresh history periodically
 setInterval(loadHistory, 10000);

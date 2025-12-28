@@ -1,6 +1,6 @@
 """Moderator management API routes.
 
-Handles Santa dashboard moderator access control.
+Handles moderator access control for Santa dashboard.
 """
 
 import logging
@@ -9,15 +9,15 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import select
 
-from ..auth import require_auth, require_santa_auth, SantaAuthContext
+from ..auth import require_auth
 from ..config import settings
 from ..database import get_session
+from ..helpers.twitch import refresh_twitch_token
 from ..models import (
     SantaModerator,
     SantaModeratorAdd,
     TwitchConfig,
 )
-from . import require_santa_feature
 
 logger = logging.getLogger(__name__)
 
@@ -26,17 +26,13 @@ router = APIRouter(prefix="/api/moderators", tags=["Moderators"])
 
 @router.get("")
 async def list_moderators(
-    auth: SantaAuthContext = Depends(require_santa_auth),
-    _santa: None = Depends(require_santa_feature),
+    tenant_id: str = Depends(require_auth),
 ) -> dict:
-    """List moderators for the current channel (owner only)."""
-    if not auth.is_owner:
-        raise HTTPException(status_code=403, detail="Only owners can view moderators")
-
+    """List moderators for the current channel."""
     async with get_session() as session:
         result = await session.execute(
             select(SantaModerator).where(
-                SantaModerator.broadcaster_tenant_id == auth.effective_tenant_id
+                SantaModerator.broadcaster_tenant_id == tenant_id
             )
         )
         mods = result.scalars().all()
@@ -56,18 +52,14 @@ async def list_moderators(
 @router.post("")
 async def add_moderator(
     request: SantaModeratorAdd,
-    auth: SantaAuthContext = Depends(require_santa_auth),
-    _santa: None = Depends(require_santa_feature),
+    tenant_id: str = Depends(require_auth),
 ) -> dict:
-    """Add a moderator by Twitch username (owner only)."""
-    if not auth.is_owner:
-        raise HTTPException(status_code=403, detail="Only owners can add moderators")
-
+    """Add a moderator by Twitch username."""
     # Get owner's access token for API call
     async with get_session() as session:
         result = await session.execute(
             select(TwitchConfig).where(
-                TwitchConfig.tenant_id == auth.effective_tenant_id
+                TwitchConfig.tenant_id == tenant_id
             ).limit(1)
         )
         twitch_config = result.scalar_one_or_none()
@@ -75,30 +67,48 @@ async def add_moderator(
             raise HTTPException(status_code=400, detail="Twitch not configured")
 
     # Look up user via Twitch API
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"https://api.twitch.tv/helix/users?login={request.username}",
-            headers={
-                "Authorization": f"Bearer {twitch_config.access_token}",
-                "Client-Id": settings.twitch_client_id,
-            },
-        )
-        if resp.status_code != 200 or not resp.json().get("data"):
-            raise HTTPException(
-                status_code=404,
-                detail=f"Twitch user '{request.username}' not found",
+    async def lookup_user(access_token: str):
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"https://api.twitch.tv/helix/users?login={request.username}",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Client-Id": settings.twitch_client_id,
+                },
             )
+            return resp
 
-        user_data = resp.json()["data"][0]
-        mod_user_id = user_data["id"]
-        mod_username = user_data["login"]
+    resp = await lookup_user(twitch_config.access_token)
+
+    # If token expired, try refreshing
+    if resp.status_code == 401:
+        logger.info(f"Token expired for tenant {tenant_id}, attempting refresh...")
+        if await refresh_twitch_token(tenant_id):
+            # Re-fetch config with new token
+            async with get_session() as session:
+                result = await session.execute(
+                    select(TwitchConfig).where(TwitchConfig.tenant_id == tenant_id).limit(1)
+                )
+                twitch_config = result.scalar_one_or_none()
+            if twitch_config:
+                resp = await lookup_user(twitch_config.access_token)
+
+    if resp.status_code != 200 or not resp.json().get("data"):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Twitch user '{request.username}' not found (API status: {resp.status_code})",
+        )
+
+    user_data = resp.json()["data"][0]
+    mod_user_id = user_data["id"]
+    mod_username = user_data["login"]
 
     # Add to database
     async with get_session() as session:
         # Check if already exists
         existing = await session.execute(
             select(SantaModerator).where(
-                SantaModerator.broadcaster_tenant_id == auth.effective_tenant_id,
+                SantaModerator.broadcaster_tenant_id == tenant_id,
                 SantaModerator.moderator_user_id == mod_user_id,
             ).limit(1)
         )
@@ -106,31 +116,27 @@ async def add_moderator(
             raise HTTPException(status_code=400, detail="User is already a moderator")
 
         mod = SantaModerator(
-            broadcaster_tenant_id=auth.effective_tenant_id,
+            broadcaster_tenant_id=tenant_id,
             moderator_user_id=mod_user_id,
             moderator_username=mod_username,
         )
         session.add(mod)
         await session.commit()
 
-    logger.info(f"Added moderator {mod_username} ({mod_user_id}) for tenant {auth.effective_tenant_id}")
+    logger.info(f"Added moderator {mod_username} ({mod_user_id}) for tenant {tenant_id}")
     return {"success": True, "moderator": {"user_id": mod_user_id, "username": mod_username}}
 
 
 @router.delete("/{user_id}")
 async def remove_moderator(
     user_id: str,
-    auth: SantaAuthContext = Depends(require_santa_auth),
-    _santa: None = Depends(require_santa_feature),
+    tenant_id: str = Depends(require_auth),
 ) -> dict:
-    """Remove a moderator (owner only)."""
-    if not auth.is_owner:
-        raise HTTPException(status_code=403, detail="Only owners can remove moderators")
-
+    """Remove a moderator."""
     async with get_session() as session:
         result = await session.execute(
             select(SantaModerator).where(
-                SantaModerator.broadcaster_tenant_id == auth.effective_tenant_id,
+                SantaModerator.broadcaster_tenant_id == tenant_id,
                 SantaModerator.moderator_user_id == user_id,
             ).limit(1)
         )
@@ -142,14 +148,13 @@ async def remove_moderator(
         await session.delete(mod)
         await session.commit()
 
-    logger.info(f"Removed moderator {username} ({user_id}) from tenant {auth.effective_tenant_id}")
+    logger.info(f"Removed moderator {username} ({user_id}) from tenant {tenant_id}")
     return {"success": True}
 
 
 @router.get("/accessible-channels")
 async def get_accessible_channels(
     tenant_id: str = Depends(require_auth),
-    _santa: None = Depends(require_santa_feature),
 ) -> dict:
     """Get list of channels the current user can access (own + channels they mod for)."""
     channels: list[dict] = []

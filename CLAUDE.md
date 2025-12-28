@@ -14,6 +14,12 @@ uv run obs-harness --host 0.0.0.0 --port 8080 --reload
 
 # Run with Python directly
 uv run python -m obs_harness
+
+# Build TypeScript frontend (required after changing frontend/src/*.ts)
+cd frontend && npm install && npm run build
+
+# Type check TypeScript without building
+cd frontend && npm run typecheck
 ```
 
 ## Environment Variables
@@ -51,6 +57,8 @@ FastAPI application for pushing audio and animated text to OBS via browser sourc
 **`twitch_eventsub.py`** - EventSub WebSocket client for channel points and chat events
 
 **`santa_session.py`** - Mall Santa feature: state machine for multi-turn wish-granting conversations triggered by channel point redemptions
+
+**`routes/moderators.py`** - Moderator management API for multi-tenant access control
 
 **Data Flow:**
 ```
@@ -99,9 +107,31 @@ SQLite via SQLModel (async with aiosqlite). Tables:
 - `PlaybackLog` - History of audio/text playback
 - `TwitchConfig` - OAuth tokens and channel settings
 - `ConversationMessage` - Persisted conversation history (when `persist_memory=True`)
+- `SantaModerator` - Cross-channel moderator permissions
+- `SantaConfig` - Per-channel Santa feature configuration
+- `SantaSession` - Active Santa session state
 
 ### Frontend
 
-- `static/js/channel.js` - Browser source handler (audio + text + streaming via Web Audio API)
-- `static/js/text-animator.js` - Canvas-based text animations
-- `static/js/dashboard.js` - Dashboard WebSocket client
+TypeScript sources in `frontend/src/`, built outputs in `static/js/` (don't edit JS files directly):
+
+- `frontend/src/channel.ts` → `static/js/channel.js` - Browser source handler (Web Audio API)
+- `frontend/src/text-animator.ts` → `static/js/text-animator.js` - Canvas-based text animations
+- `frontend/src/dashboard.ts` → `static/js/dashboard.js` - Dashboard WebSocket client
+- `frontend/src/santa.ts` → `static/js/santa.js` - Santa dashboard client
+
+### Multi-Tenant Auth
+
+Cookie-based authentication with `tenant_id` (Twitch user ID):
+- `/api/auth/twitch/callback` sets `tenant_id` cookie after OAuth
+- `require_auth` dependency extracts tenant from cookie
+- `?channel=` query param allows viewing another channel (with moderator access)
+- `SantaModerator` table stores cross-channel permissions
+
+### Web Pages
+
+- `/` - Main dashboard (characters, playback controls)
+- `/configuration` - Twitch OAuth, channel settings, moderator management
+- `/santa` - Santa Timmy dashboard (channel point redemptions)
+- `/editor` - Text animation preset editor
+- `/channel/{name}` - Browser source for OBS

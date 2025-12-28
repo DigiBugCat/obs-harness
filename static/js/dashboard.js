@@ -1,176 +1,185 @@
-import { TextAnimator as De } from "./text-animator.js";
+import { TextAnimator as Re } from "./text-animator.js";
 function l(e) {
   return document.getElementById(e);
 }
-function o(e) {
+function r(e) {
   return document.getElementById(e);
 }
 function m(e) {
   return document.getElementById(e);
 }
-function A(e) {
+function D(e) {
   return document.getElementById(e);
 }
-function b(e) {
+function _(e) {
   return document.getElementById(e);
 }
-function be(e) {
+function Ce(e) {
   return document.getElementById(e);
 }
-function Ue(e) {
+function Ne(e) {
   return document.getElementById(e);
 }
-let y = null, M = null, T = 0;
-const Ne = 1e3, Re = 3e4, O = 10, de = 6e4, Fe = 3e4;
-let z = Date.now(), U = null, D = null, ue = [], w = [], C = null, p = null, $ = null, q = [], x = null, g = null, B = !1, S = [], ee = null;
-const he = document.getElementById("ws-status"), me = document.getElementById("ws-status-text"), N = document.getElementById("characters-container"), pe = document.getElementById("history-list");
-function I(e) {
+let y = null, L = null, B = 0;
+const Fe = 1e3, He = 3e4, z = 10, he = 6e4, Oe = 3e4;
+let W = Date.now(), N = null, R = null, me = [], w = [], k = null, p = null, M = null, j = [], E = null, g = null, A = !1, T = [], ae = null, x = null;
+function Ge() {
+  const t = new URLSearchParams(window.location.search).get("channel");
+  return t ? (localStorage.setItem("effectiveChannel", t), t) : localStorage.getItem("effectiveChannel");
+}
+function ze(e) {
+  if (!x) return e;
+  const t = e.includes("?") ? "&" : "?";
+  return `${e}${t}channel=${encodeURIComponent(x)}`;
+}
+const pe = document.getElementById("ws-status"), fe = document.getElementById("ws-status-text"), F = document.getElementById("characters-container"), ve = document.getElementById("history-list");
+function $(e) {
   if (e == null) return "";
   const t = document.createElement("div");
   return t.textContent = String(e), t.innerHTML;
 }
-function He(e, t = "#9146ff") {
+function qe(e, t = "#9146ff") {
   return e && /^#[0-9a-fA-F]{3,4}$|^#[0-9a-fA-F]{6}$|^#[0-9a-fA-F]{8}$/.test(e) ? e : t;
 }
-function Oe() {
-  return ee;
+function We() {
+  return ae;
 }
-function _e() {
-  const t = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws/dashboard`;
-  y = new WebSocket(t), y.onopen = () => {
-    he.classList.add("connected"), me.textContent = "Connected", T = 0, z = Date.now(), qe(), M && (clearTimeout(M), M = null);
+function xe() {
+  let t = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws/dashboard`;
+  x && (t += `?channel=${encodeURIComponent(x)}`), y = new WebSocket(t), y.onopen = () => {
+    pe.classList.add("connected"), fe.textContent = "Connected", B = 0, W = Date.now(), Ye(), L && (clearTimeout(L), L = null);
   }, y.onclose = () => {
-    he.classList.remove("connected"), me.textContent = "Disconnected", ze(), Ge();
-  }, y.onerror = (n) => {
-    console.error("Dashboard WebSocket error:", n);
-  }, y.onmessage = (n) => {
+    pe.classList.remove("connected"), fe.textContent = "Disconnected", Ve(), je();
+  }, y.onerror = (a) => {
+    console.error("Dashboard WebSocket error:", a);
+  }, y.onmessage = (a) => {
     try {
-      const a = JSON.parse(n.data);
-      We(a);
-    } catch (a) {
-      console.error("Error parsing message:", a);
+      const n = JSON.parse(a.data);
+      Xe(n);
+    } catch (n) {
+      console.error("Error parsing message:", n);
     }
   };
 }
-function Ge() {
-  if (!M) {
-    if (T >= O) {
-      console.log(`[dashboard] Max reconnect attempts (${O}) reached, reloading page...`), location.reload();
+function je() {
+  if (!L) {
+    if (B >= z) {
+      console.log(`[dashboard] Max reconnect attempts (${z}) reached, reloading page...`), location.reload();
       return;
     }
     const e = Math.min(
-      Ne * Math.pow(2, T),
-      Re
+      Fe * Math.pow(2, B),
+      He
     );
-    T++, console.log(`[dashboard] Reconnecting in ${e}ms (attempt ${T}/${O})...`), M = setTimeout(() => {
-      M = null, _e();
+    B++, console.log(`[dashboard] Reconnecting in ${e}ms (attempt ${B}/${z})...`), L = setTimeout(() => {
+      L = null, xe();
     }, e);
   }
 }
-function ze() {
-  U || (U = setInterval(async () => {
+function Ve() {
+  N || (N = setInterval(async () => {
     if (!(y && y.readyState === WebSocket.OPEN))
       try {
-        (await fetch("/health", { signal: AbortSignal.timeout(5e3) })).ok && T >= O / 2 && (console.log("[dashboard] Server healthy but WebSocket failing, reloading page..."), location.reload());
+        (await fetch("/health", { signal: AbortSignal.timeout(5e3) })).ok && B >= z / 2 && (console.log("[dashboard] Server healthy but WebSocket failing, reloading page..."), location.reload());
       } catch {
       }
-  }, Fe));
+  }, Oe));
 }
-function qe() {
-  U && (clearInterval(U), U = null);
+function Ye() {
+  N && (clearInterval(N), N = null);
 }
 setInterval(() => {
-  y && y.readyState === WebSocket.OPEN && Date.now() - z > de && (console.log(`[dashboard] No ping received in ${de}ms, connection stale - reconnecting...`), z = Date.now(), y.close());
+  y && y.readyState === WebSocket.OPEN && Date.now() - W > he && (console.log(`[dashboard] No ping received in ${he}ms, connection stale - reconnecting...`), W = Date.now(), y.close());
 }, 1e4);
-function We(e) {
+function Xe(e) {
   if (e.type === "ping") {
-    y && y.readyState === WebSocket.OPEN && y.send(JSON.stringify({ event: "pong", ts: e.ts })), z = Date.now();
+    y && y.readyState === WebSocket.OPEN && y.send(JSON.stringify({ event: "pong", ts: e.ts })), W = Date.now();
     return;
   }
   if (e.type === "hello") {
     const t = e.build_id;
-    if (e.tenant_id && (ee = e.tenant_id, console.log(`[dashboard] Tenant ID: ${ee}`)), D === null)
-      D = t ?? null, console.log(`[dashboard] Server build ID: ${D}`);
-    else if (D !== t) {
-      console.log(`[dashboard] Server version changed (${D} -> ${t}), refreshing page...`), location.reload();
+    if (e.tenant_id && (ae = e.tenant_id, console.log(`[dashboard] Tenant ID: ${ae}`)), R === null)
+      R = t ?? null, console.log(`[dashboard] Server build ID: ${R}`);
+    else if (R !== t) {
+      console.log(`[dashboard] Server version changed (${R} -> ${t}), refreshing page...`), location.reload();
       return;
     } else
       console.log("[dashboard] Reconnected to same server version");
     return;
   }
   if (e.type === "characters") {
-    const t = Oe(), n = e.characters, a = new Map(n.map((r) => [r.name, r]));
-    if (w = w.map((r) => {
+    const t = We(), a = e.characters, n = new Map(a.map((o) => [o.name, o]));
+    if (w = w.map((o) => {
       var s, i;
-      const c = `${t}:${r.name}`;
+      const c = `${t}:${o.name}`;
       return {
-        ...r,
-        connected: a.has(c),
-        playing: ((s = a.get(c)) == null ? void 0 : s.playing) || !1,
-        streaming: ((i = a.get(c)) == null ? void 0 : i.streaming) || !1
+        ...o,
+        connected: n.has(c),
+        playing: ((s = n.get(c)) == null ? void 0 : s.playing) || !1,
+        streaming: ((i = n.get(c)) == null ? void 0 : i.streaming) || !1
       };
-    }), ae(), x && g) {
-      const r = `${t}:${x}`, c = a.get(r);
-      if (c && (c.streaming && (B = !0), B && !c.streaming)) {
+    }), oe(), E && g) {
+      const o = `${t}:${E}`, c = n.get(o);
+      if (c && (c.streaming && (A = !0), A && !c.streaming)) {
         const s = document.getElementById(`${g}-stop-btn`), i = document.getElementById(`${g}-status-text`);
-        s && (s.style.display = "none"), i && (i.textContent = "Complete!"), x = null, g = null, B = !1;
+        s && (s.style.display = "none"), i && (i.textContent = "Complete!"), E = null, g = null, A = !1;
       }
     }
-  } else e.type === "character_sync" && (w = e.characters, ae(), F || console.log("Character data synced from server"), F = !1);
+  } else e.type === "character_sync" && (w = e.characters, oe(), O || console.log("Character data synced from server"), O = !1);
 }
-let F = !1;
-function f(e, t = "info", n = 4e3) {
-  const a = document.querySelector(".toast-notification");
-  a && a.remove();
-  const r = document.createElement("div");
-  r.className = `toast-notification toast-${t}`, r.textContent = e, document.body.appendChild(r), setTimeout(() => {
-    r.classList.add("hiding"), setTimeout(() => r.remove(), 300);
-  }, n);
+let O = !1;
+function f(e, t = "info", a = 4e3) {
+  const n = document.querySelector(".toast-notification");
+  n && n.remove();
+  const o = document.createElement("div");
+  o.className = `toast-notification toast-${t}`, o.textContent = e, document.body.appendChild(o), setTimeout(() => {
+    o.classList.add("hiding"), setTimeout(() => o.remove(), 300);
+  }, a);
 }
-async function u(e, t = "GET", n = null, a = !0) {
-  const r = {
+async function u(e, t = "GET", a = null, n = !0) {
+  const o = {
     method: t,
     headers: { "Content-Type": "application/json" }
   };
-  n && (r.body = JSON.stringify(n));
+  a && (o.body = JSON.stringify(a));
   try {
-    const c = await fetch(e, r), s = await c.json();
+    const c = await fetch(e, o), s = await c.json();
     if (!c.ok) {
       const i = s.detail || s.error || `HTTP ${c.status}`;
-      return a && f(`API Error: ${i}`, "error"), console.error(`API Error [${t} ${e}]:`, i), { error: i, status: c.status };
+      return n && f(`API Error: ${i}`, "error"), console.error(`API Error [${t} ${e}]:`, i), { error: i, status: c.status };
     }
     return s;
   } catch (c) {
     const s = c.message || "Network error";
-    return a && f(`Connection Error: ${s}`, "error"), console.error(`Fetch Error [${t} ${e}]:`, c), { error: s, networkError: !0 };
+    return n && f(`Connection Error: ${s}`, "error"), console.error(`Fetch Error [${t} ${e}]:`, c), { error: s, networkError: !0 };
   }
 }
-async function je() {
+async function Je() {
   const e = await u("/api/presets");
-  return Array.isArray(e) && (ue = e), ue;
+  return Array.isArray(e) && (me = e), me;
 }
-async function X() {
+async function K() {
   const e = await u("/api/history");
-  Array.isArray(e) && vt(e);
+  Array.isArray(e) && _t(e);
 }
-async function J() {
-  const e = await u("/api/characters");
-  return Array.isArray(e) && (w = e, ae()), w;
+async function Q() {
+  const e = await u(ze("/api/characters"));
+  return Array.isArray(e) && (w = e, oe()), w;
 }
-async function Ve(e) {
-  F = !0;
+async function Ke(e) {
+  O = !0;
   const t = await u("/api/characters", "POST", e);
-  return await J(), t;
+  return await Q(), t;
 }
-async function Ye(e, t, n = !0) {
-  F = !0;
-  const a = await u(`/api/characters/${e}`, "PUT", t, n);
-  return await J(), a;
+async function Qe(e, t, a = !0) {
+  O = !0;
+  const n = await u(`/api/characters/${e}`, "PUT", t, a);
+  return await Q(), n;
 }
-async function Xe(e) {
-  confirm(`Delete character "${e}"? This cannot be undone.`) && (F = !0, await u(`/api/characters/${e}`, "DELETE"), await J());
+async function Ze(e) {
+  confirm(`Delete character "${e}"? This cannot be undone.`) && (O = !0, await u(`/api/characters/${e}`, "DELETE"), await Q());
 }
-async function xe(e) {
+async function Ee(e) {
   const t = document.getElementById("character-provider");
   if (t) {
     if (t.innerHTML = '<option value="">Loading providers...</option>', t.disabled = !0, !e || e.trim() === "") {
@@ -178,56 +187,56 @@ async function xe(e) {
       return;
     }
     try {
-      const n = await u(`/api/openrouter/models/${encodeURIComponent(e)}/providers`, "GET", null, !1);
-      if (t.innerHTML = '<option value="">Default (auto)</option>', n.providers && n.providers.length > 0)
-        for (const a of n.providers) {
-          const r = document.createElement("option");
-          r.value = a, r.textContent = a, t.appendChild(r);
+      const a = await u(`/api/openrouter/models/${encodeURIComponent(e)}/providers`, "GET", null, !1);
+      if (t.innerHTML = '<option value="">Default (auto)</option>', a.providers && a.providers.length > 0)
+        for (const n of a.providers) {
+          const o = document.createElement("option");
+          o.value = n, o.textContent = n, t.appendChild(o);
         }
-    } catch (n) {
-      console.error("Error fetching providers:", n), t.innerHTML = '<option value="">Default (auto)</option>';
+    } catch (a) {
+      console.error("Error fetching providers:", a), t.innerHTML = '<option value="">Default (auto)</option>';
     } finally {
       t.disabled = !1;
     }
   }
 }
-async function Je() {
+async function et() {
   const e = document.getElementById("character-tts-model");
   if (e)
     try {
       const t = await u("/api/elevenlabs/models", "GET", null, !1);
-      Array.isArray(t) && (q = t, e.innerHTML = t.map((n) => {
-        const a = n.name || n.model_id;
-        return `<option value="${n.model_id}">${a}</option>`;
+      Array.isArray(t) && (j = t, e.innerHTML = t.map((a) => {
+        const n = a.name || a.model_id;
+        return `<option value="${a.model_id}">${n}</option>`;
       }).join(""));
     } catch (t) {
       console.error("Error fetching ElevenLabs models:", t);
     }
 }
-async function Ce(e) {
-  const t = m("character-tts-model"), n = document.getElementById("tts-model-info");
+async function ke(e) {
+  const t = m("character-tts-model"), a = document.getElementById("tts-model-info");
   if (!(!t || !e)) {
-    n && (n.textContent = "");
+    a && (a.textContent = "");
     try {
-      const a = await u(`/api/elevenlabs/voices/${e}`, "GET", null, !1);
-      if (a != null && a.high_quality_base_model_ids && a.high_quality_base_model_ids.length > 0) {
-        const r = new Set(a.high_quality_base_model_ids);
+      const n = await u(`/api/elevenlabs/voices/${e}`, "GET", null, !1);
+      if (n != null && n.high_quality_base_model_ids && n.high_quality_base_model_ids.length > 0) {
+        const o = new Set(n.high_quality_base_model_ids);
         Array.from(t.options).forEach((c) => {
-          if (r.has(c.value)) {
-            const s = q.find((i) => i.model_id === c.value);
+          if (o.has(c.value)) {
+            const s = j.find((i) => i.model_id === c.value);
             c.textContent = `${(s == null ? void 0 : s.name) || c.value} (Recommended)`;
           } else {
-            const s = q.find((i) => i.model_id === c.value);
+            const s = j.find((i) => i.model_id === c.value);
             c.textContent = (s == null ? void 0 : s.name) || c.value;
           }
-        }), n && (n.textContent = `Voice "${a.name}" is optimized for: ${a.high_quality_base_model_ids.join(", ")}`);
+        }), a && (a.textContent = `Voice "${n.name}" is optimized for: ${n.high_quality_base_model_ids.join(", ")}`);
       }
-    } catch (a) {
-      console.error("Error fetching voice info:", a), n && (n.textContent = "Could not fetch voice info");
+    } catch (n) {
+      console.error("Error fetching voice info:", n), a && (a.textContent = "Could not fetch voice info");
     }
   }
 }
-const Ke = {
+const tt = {
   eleven_v3: "Latest flagship model with emotionally rich, expressive speech. 70+ languages. Best for audiobooks & dramatic content. Not optimized for real-time.",
   eleven_multilingual_v2: "Advanced emotionally-aware synthesis. 29 languages. Most stable for long-form. Higher latency but best quality.",
   eleven_flash_v2_5: "Fastest model (~75ms latency). 32 languages. 50% lower cost. Best for real-time agents & bulk processing.",
@@ -237,19 +246,19 @@ const Ke = {
   eleven_multilingual_v1: "Legacy multilingual model. Use v2 for better results.",
   eleven_monolingual_v1: "Legacy English model. Use newer models for better quality."
 };
-function ne(e) {
-  const t = document.getElementById("tts-model-info"), n = document.getElementById("voice-style-row"), a = document.getElementById("voice-similarity-row"), r = q.find((c) => c.model_id === e);
-  r && (n && (n.style.display = r.can_use_style ? "" : "none"), a && (a.style.display = r.can_use_speaker_boost ? "" : "none"), t && (t.textContent = Ke[e] || ""));
+function re(e) {
+  const t = document.getElementById("tts-model-info"), a = document.getElementById("voice-style-row"), n = document.getElementById("voice-similarity-row"), o = j.find((c) => c.model_id === e);
+  o && (a && (a.style.display = o.can_use_style ? "" : "none"), n && (n.style.display = o.can_use_speaker_boost ? "" : "none"), t && (t.textContent = tt[e] || ""));
 }
-let W = [];
-async function oe() {
+let V = [];
+async function ce() {
   try {
-    W = await u("/api/cartesia/voices", "GET", null, !1);
+    V = await u("/api/cartesia/voices", "GET", null, !1);
     const e = document.getElementById("cartesia-voice-select");
     if (!e) return;
-    e.innerHTML = '<option value="">-- Select a voice --</option>', W.forEach((t) => {
-      const n = document.createElement("option");
-      n.value = t.voice_id, n.textContent = `${t.name} (${t.language})`, e.appendChild(n);
+    e.innerHTML = '<option value="">-- Select a voice --</option>', V.forEach((t) => {
+      const a = document.createElement("option");
+      a.value = t.voice_id, a.textContent = `${t.name} (${t.language})`, e.appendChild(a);
     });
   } catch (e) {
     console.error("Error loading Cartesia voices:", e);
@@ -257,370 +266,370 @@ async function oe() {
     t && (t.innerHTML = '<option value="">Failed to load voices</option>');
   }
 }
-function Qe(e) {
+function at(e) {
   const t = document.getElementById("cartesia-voice-id");
-  t && e && (t.value = e), K(e);
+  t && e && (t.value = e), Z(e);
 }
-function Ze(e) {
+function nt(e) {
   const t = document.getElementById("cartesia-voice-select");
   if (t && e)
-    if (Array.from(t.options).find((a) => a.value === e))
-      t.value = e, K(e);
+    if (Array.from(t.options).find((n) => n.value === e))
+      t.value = e, Z(e);
     else {
       t.value = "";
-      const a = document.getElementById("cartesia-voice-info");
-      a && (a.textContent = "Custom voice ID");
+      const n = document.getElementById("cartesia-voice-info");
+      n && (n.textContent = "Custom voice ID");
     }
 }
-function K(e) {
+function Z(e) {
   const t = document.getElementById("cartesia-voice-info");
   if (!t) return;
   if (!e) {
     t.textContent = "";
     return;
   }
-  const n = W.find((a) => a.voice_id === e);
-  n && n.description ? t.textContent = n.description : t.textContent = "";
+  const a = V.find((n) => n.voice_id === e);
+  a && a.description ? t.textContent = a.description : t.textContent = "";
 }
-function Ee(e) {
-  const t = document.getElementById("elevenlabs-settings"), n = document.getElementById("cartesia-settings");
-  e === "cartesia" ? (t && (t.style.display = "none"), n && (n.style.display = "block"), W.length === 0 && oe()) : (t && (t.style.display = "block"), n && (n.style.display = "none"));
+function Ie(e) {
+  const t = document.getElementById("elevenlabs-settings"), a = document.getElementById("cartesia-settings");
+  e === "cartesia" ? (t && (t.style.display = "none"), a && (a.style.display = "block"), V.length === 0 && ce()) : (t && (t.style.display = "block"), a && (a.style.display = "none"));
 }
-async function et(e, t, n) {
+async function ot(e, t, a) {
   return u(`/api/characters/${e}/speak`, "POST", {
     text: t,
-    show_text: n
+    show_text: a
   });
 }
-async function tt(e, t, n, a = null, r = null) {
+async function rt(e, t, a, n = null, o = null) {
   const c = {
     message: t,
-    show_text: n
+    show_text: a
   };
-  return a !== null && a !== "" && (c.twitch_chat_seconds = parseInt(a)), r && r.length > 0 && (c.images = r.map((s) => ({
+  return n !== null && n !== "" && (c.twitch_chat_seconds = parseInt(n)), o && o.length > 0 && (c.images = o.map((s) => ({
     data: s.data,
     media_type: s.mediaType
   }))), u(`/api/characters/${e}/chat`, "POST", c);
 }
-async function re(e) {
+async function se(e) {
   return u(`/api/characters/${e}/memory`);
 }
-async function at(e) {
+async function ct(e) {
   return u(`/api/characters/${e}/memory`, "DELETE");
 }
-function j(e, t) {
-  const n = document.getElementById("chat-history"), a = document.getElementById("chat-history-empty");
+function Y(e, t) {
+  const a = document.getElementById("chat-history"), n = document.getElementById("chat-history-empty");
   if (!e || e.length === 0) {
-    a && (a.style.display = "block"), n == null || n.querySelectorAll(".chat-bubble").forEach((r) => r.remove());
+    n && (n.style.display = "block"), a == null || a.querySelectorAll(".chat-bubble").forEach((o) => o.remove());
     return;
   }
-  a && (a.style.display = "none"), n == null || n.querySelectorAll(".chat-bubble").forEach((r) => r.remove()), e.forEach((r) => {
-    if (r.role === "context") {
-      const c = r.content.split(`
+  n && (n.style.display = "none"), a == null || a.querySelectorAll(".chat-bubble").forEach((o) => o.remove()), e.forEach((o) => {
+    if (o.role === "context") {
+      const c = o.content.split(`
 `), s = c.slice(-4).map((v) => v.length > 60 ? v.substring(0, 57) + "..." : v).join(" | "), i = document.createElement("div");
       i.className = "chat-bubble context";
       const d = document.createElement("div");
-      d.className = "chat-bubble-content", d.textContent = `📺 Twitch (${c.length}): ${s}`, i.appendChild(d), n == null || n.appendChild(i);
+      d.className = "chat-bubble-content", d.textContent = `📺 Twitch (${c.length}): ${s}`, i.appendChild(d), a == null || a.appendChild(i);
     } else {
       const c = document.createElement("div");
-      c.className = `chat-bubble ${r.role}`;
+      c.className = `chat-bubble ${o.role}`;
       const s = document.createElement("div");
-      s.className = "chat-bubble-label", s.textContent = r.role === "user" ? "You" : t;
+      s.className = "chat-bubble-label", s.textContent = o.role === "user" ? "You" : t;
       const i = document.createElement("div");
-      if (i.className = "chat-bubble-content", r.interrupted && r.generated_text) {
-        const d = r.content || "", v = r.generated_text || "";
+      if (i.className = "chat-bubble-content", o.interrupted && o.generated_text) {
+        const d = o.content || "", v = o.generated_text || "";
         if (d) {
-          const _ = document.createElement("span");
-          _.textContent = d, i.appendChild(_);
+          const b = document.createElement("span");
+          b.textContent = d, i.appendChild(b);
         }
-        let k = "";
-        if ((v.startsWith(d) || v.length > d.length) && (k = v.substring(d.length).trim()), k) {
-          const _ = document.createElement("span");
-          _.style.textDecoration = "line-through", _.style.opacity = "0.6", _.textContent = " " + k, i.appendChild(_);
+        let S = "";
+        if ((v.startsWith(d) || v.length > d.length) && (S = v.substring(d.length).trim()), S) {
+          const b = document.createElement("span");
+          b.style.textDecoration = "line-through", b.style.opacity = "0.6", b.textContent = " " + S, i.appendChild(b);
         }
         const h = document.createElement("span");
         h.style.cssText = "display: inline-block; margin-left: 8px; padding: 2px 6px; background: #ff6b6b33; color: #ff6b6b; border-radius: 4px; font-size: 0.7rem;", h.textContent = "⚡ interrupted", i.appendChild(h);
       } else
-        i.textContent = r.content;
-      c.appendChild(s), c.appendChild(i), n == null || n.appendChild(c);
+        i.textContent = o.content;
+      c.appendChild(s), c.appendChild(i), a == null || a.appendChild(c);
     }
-  }), n && (n.scrollTop = n.scrollHeight);
+  }), a && (a.scrollTop = a.scrollHeight);
 }
-function fe(e, t, n) {
-  const a = document.getElementById("chat-history"), r = document.getElementById("chat-history-empty");
-  r && (r.style.display = "none");
+function ye(e, t, a) {
+  const n = document.getElementById("chat-history"), o = document.getElementById("chat-history-empty");
+  o && (o.style.display = "none");
   const c = document.createElement("div");
   c.className = `chat-bubble ${e}`;
   const s = document.createElement("div");
-  s.className = "chat-bubble-label", s.textContent = e === "user" ? "You" : n;
+  s.className = "chat-bubble-label", s.textContent = e === "user" ? "You" : a;
   const i = document.createElement("div");
-  i.className = "chat-bubble-content", i.textContent = t, c.appendChild(s), c.appendChild(i), a == null || a.appendChild(c), a && (a.scrollTop = a.scrollHeight);
+  i.className = "chat-bubble-content", i.textContent = t, c.appendChild(s), c.appendChild(i), n == null || n.appendChild(c), n && (n.scrollTop = n.scrollHeight);
 }
-function nt(e) {
-  const t = document.getElementById("chat-history"), n = document.getElementById("chat-history-empty");
-  n && (n.style.display = "none");
-  const a = document.createElement("div");
-  a.className = "chat-bubble context";
-  const r = document.createElement("div");
-  r.className = "chat-bubble-content", r.textContent = e, a.appendChild(r), t == null || t.appendChild(a), t && (t.scrollTop = t.scrollHeight);
+function st(e) {
+  const t = document.getElementById("chat-history"), a = document.getElementById("chat-history-empty");
+  a && (a.style.display = "none");
+  const n = document.createElement("div");
+  n.className = "chat-bubble context";
+  const o = document.createElement("div");
+  o.className = "chat-bubble-content", o.textContent = e, n.appendChild(o), t == null || t.appendChild(n), t && (t.scrollTop = t.scrollHeight);
 }
-let V = null, G = null;
-function ot() {
-  ce();
-  const e = be("character-preview-canvas");
+let X = null, q = null;
+function it() {
+  ie();
+  const e = Ce("character-preview-canvas");
   if (!e) return;
   const t = e.getContext("2d");
-  V = new De(t, e.width, e.height);
-  const n = V, a = {
-    style: o("character-text-style").value,
-    fontFamily: o("character-font-family").value,
-    fontSize: parseInt(o("character-font-size").value),
-    duration: parseInt(o("character-text-duration").value),
-    color: o("character-text-color").value,
-    strokeColor: o("character-stroke-color").value,
-    strokeWidth: parseInt(o("character-stroke-width").value),
-    positionX: parseInt(o("character-position-x").value) / 100,
-    positionY: parseInt(o("character-position-y").value) / 100
-  }, r = e.width / 800;
-  n.show({
+  X = new Re(t, e.width, e.height);
+  const a = X, n = {
+    style: r("character-text-style").value,
+    fontFamily: r("character-font-family").value,
+    fontSize: parseInt(r("character-font-size").value),
+    duration: parseInt(r("character-text-duration").value),
+    color: r("character-text-color").value,
+    strokeColor: r("character-stroke-color").value,
+    strokeWidth: parseInt(r("character-stroke-width").value),
+    positionX: parseInt(r("character-position-x").value) / 100,
+    positionY: parseInt(r("character-position-y").value) / 100
+  }, o = e.width / 800;
+  a.show({
     text: "Sample Text",
-    style: a.style,
-    duration: a.duration,
-    x: a.positionX,
-    y: a.positionY,
-    fontFamily: a.fontFamily,
-    fontSize: Math.round(a.fontSize * r),
-    color: a.color,
-    strokeColor: a.strokeWidth > 0 ? a.strokeColor : null,
-    strokeWidth: Math.round(a.strokeWidth * r)
+    style: n.style,
+    duration: n.duration,
+    x: n.positionX,
+    y: n.positionY,
+    fontFamily: n.fontFamily,
+    fontSize: Math.round(n.fontSize * o),
+    color: n.color,
+    strokeColor: n.strokeWidth > 0 ? n.strokeColor : null,
+    strokeWidth: Math.round(n.strokeWidth * o)
   });
   function c() {
-    t.clearRect(0, 0, e.width, e.height), n.update(), n.draw(), n.isAnimating() && (G = requestAnimationFrame(c));
+    t.clearRect(0, 0, e.width, e.height), a.update(), a.draw(), a.isAnimating() && (q = requestAnimationFrame(c));
   }
   c();
 }
-function ce() {
-  G && (cancelAnimationFrame(G), G = null), V && V.clear();
-  const e = be("character-preview-canvas");
+function ie() {
+  q && (cancelAnimationFrame(q), q = null), X && X.clear();
+  const e = Ce("character-preview-canvas");
   if (e) {
     const t = e.getContext("2d");
     t == null || t.clearRect(0, 0, e.width, e.height);
   }
 }
-const L = l("character-modal"), te = Ue("character-form"), ke = l("character-modal-title");
-function rt() {
-  C = null, ke.textContent = "Create Character", te.reset(), o("character-name").disabled = !1, o("character-color").value = "#e94560", o("character-icon").value = "🔊", o("character-stability").value = "50", l("character-stability-value").textContent = "0.50", o("character-similarity").value = "75", l("character-similarity-value").textContent = "0.75", o("character-voice-style").value = "0", l("character-style-value").textContent = "0.00", o("character-voice-speed").value = "100", l("character-speed-value").textContent = "1.0", o("character-volume").value = "100", l("character-volume-value").textContent = "100", m("character-text-style").value = "typewriter", o("character-font-family").value = "Arial", o("character-font-size").value = "48", o("character-text-duration").value = "3000", o("character-text-color").value = "#ffffff", o("character-stroke-color").value = "#000000", o("character-stroke-width").value = "0", l("character-stroke-width-value").textContent = "0", o("character-position-x").value = "50", l("character-pos-x-value").textContent = "50", o("character-position-y").value = "50", l("character-pos-y-value").textContent = "50", o("character-model").value = "anthropic/claude-sonnet-4.5", m("character-provider").innerHTML = '<option value="">Default (auto)</option>', m("character-provider").value = "", o("character-temperature").value = "70", l("character-temp-value").textContent = "0.7", o("character-max-tokens").value = "1024", m("character-tts-model").value = "eleven_multilingual_v2", l("tts-model-info").textContent = "", ne("eleven_multilingual_v2"), o("character-memory-enabled").checked = !1, o("character-persist-memory").checked = !1, o("character-twitch-chat-enabled").checked = !1, o("character-twitch-chat-seconds").value = "60", o("character-twitch-chat-max").value = "20", L.classList.add("active");
+const P = l("character-modal"), ne = Ne("character-form"), Se = l("character-modal-title");
+function lt() {
+  k = null, Se.textContent = "Create Character", ne.reset(), r("character-name").disabled = !1, r("character-color").value = "#e94560", r("character-icon").value = "🔊", r("character-stability").value = "50", l("character-stability-value").textContent = "0.50", r("character-similarity").value = "75", l("character-similarity-value").textContent = "0.75", r("character-voice-style").value = "0", l("character-style-value").textContent = "0.00", r("character-voice-speed").value = "100", l("character-speed-value").textContent = "1.0", r("character-volume").value = "100", l("character-volume-value").textContent = "100", m("character-text-style").value = "typewriter", r("character-font-family").value = "Arial", r("character-font-size").value = "48", r("character-text-duration").value = "3000", r("character-text-color").value = "#ffffff", r("character-stroke-color").value = "#000000", r("character-stroke-width").value = "0", l("character-stroke-width-value").textContent = "0", r("character-position-x").value = "50", l("character-pos-x-value").textContent = "50", r("character-position-y").value = "50", l("character-pos-y-value").textContent = "50", r("character-model").value = "anthropic/claude-sonnet-4.5", m("character-provider").innerHTML = '<option value="">Default (auto)</option>', m("character-provider").value = "", r("character-temperature").value = "70", l("character-temp-value").textContent = "0.7", r("character-max-tokens").value = "1024", m("character-tts-model").value = "eleven_multilingual_v2", l("tts-model-info").textContent = "", re("eleven_multilingual_v2"), r("character-memory-enabled").checked = !1, r("character-persist-memory").checked = !1, r("character-twitch-chat-enabled").checked = !1, r("character-twitch-chat-seconds").value = "60", r("character-twitch-chat-max").value = "20", P.classList.add("active");
 }
-function Ie(e) {
-  C = e, ke.textContent = "Edit Character";
+function $e(e) {
+  k = e, Se.textContent = "Edit Character";
   const t = e;
-  o("character-name").value = e.name, o("character-name").disabled = !0, b("character-description").value = t.description || "", o("character-color").value = t.color, o("character-icon").value = t.icon;
-  const n = e.tts_provider || "elevenlabs";
-  if (m("character-tts-provider").value = n, Ee(n), n === "cartesia" && e.tts_settings)
-    oe().then(() => {
-      const a = e.tts_settings, r = a.voice_id || "";
-      o("cartesia-voice-id").value = r;
+  r("character-name").value = e.name, r("character-name").disabled = !0, _("character-description").value = t.description || "", r("character-color").value = t.color, r("character-icon").value = t.icon;
+  const a = e.tts_provider || "elevenlabs";
+  if (m("character-tts-provider").value = a, Ie(a), a === "cartesia" && e.tts_settings)
+    ce().then(() => {
+      const n = e.tts_settings, o = n.voice_id || "";
+      r("cartesia-voice-id").value = o;
       const c = m("cartesia-voice-select");
-      c && r && Array.from(c.options).find((v) => v.value === r) && (c.value = r), o("cartesia-model-id").value = a.model_id || "sonic-2024-12-12", m("cartesia-language").value = a.language || "en";
-      const s = a.speed || 1, i = Math.max(0.6, Math.min(1.5, s));
-      o("cartesia-speed").value = String(Math.round(i * 100)), l("cartesia-speed-value").textContent = i.toFixed(1), s !== i && console.warn(`Cartesia speed ${s} was clamped to ${i} (valid: 0.6-1.5)`), K(r);
+      c && o && Array.from(c.options).find((v) => v.value === o) && (c.value = o), r("cartesia-model-id").value = n.model_id || "sonic-2024-12-12", m("cartesia-language").value = n.language || "en";
+      const s = n.speed || 1, i = Math.max(0.6, Math.min(1.5, s));
+      r("cartesia-speed").value = String(Math.round(i * 100)), l("cartesia-speed-value").textContent = i.toFixed(1), s !== i && console.warn(`Cartesia speed ${s} was clamped to ${i} (valid: 0.6-1.5)`), Z(o);
     });
   else {
-    const a = e.tts_settings || {};
-    o("character-voice-id").value = a.voice_id || t.elevenlabs_voice_id;
-    const r = a.model_id || t.elevenlabs_model_id || "eleven_multilingual_v2";
-    m("character-tts-model").value = r, ne(r), Ce(a.voice_id || t.elevenlabs_voice_id);
-    const c = a.stability ?? t.voice_stability;
-    o("character-stability").value = String(Math.round(c * 100)), l("character-stability-value").textContent = c.toFixed(2);
-    const s = a.similarity_boost ?? t.voice_similarity_boost;
-    o("character-similarity").value = String(Math.round(s * 100)), l("character-similarity-value").textContent = s.toFixed(2);
-    const i = a.style ?? t.voice_style;
-    o("character-voice-style").value = String(Math.round(i * 100)), l("character-style-value").textContent = i.toFixed(2);
-    const d = a.speed ?? t.voice_speed;
-    o("character-voice-speed").value = String(Math.round(d * 100)), l("character-speed-value").textContent = d.toFixed(1);
+    const n = e.tts_settings || {};
+    r("character-voice-id").value = n.voice_id || t.elevenlabs_voice_id;
+    const o = n.model_id || t.elevenlabs_model_id || "eleven_multilingual_v2";
+    m("character-tts-model").value = o, re(o), ke(n.voice_id || t.elevenlabs_voice_id);
+    const c = n.stability ?? t.voice_stability;
+    r("character-stability").value = String(Math.round(c * 100)), l("character-stability-value").textContent = c.toFixed(2);
+    const s = n.similarity_boost ?? t.voice_similarity_boost;
+    r("character-similarity").value = String(Math.round(s * 100)), l("character-similarity-value").textContent = s.toFixed(2);
+    const i = n.style ?? t.voice_style;
+    r("character-voice-style").value = String(Math.round(i * 100)), l("character-style-value").textContent = i.toFixed(2);
+    const d = n.speed ?? t.voice_speed;
+    r("character-voice-speed").value = String(Math.round(d * 100)), l("character-speed-value").textContent = d.toFixed(1);
   }
-  o("character-volume").value = String(Math.round(t.default_volume * 100)), l("character-volume-value").textContent = String(Math.round(t.default_volume * 100)), o("character-muted").checked = t.mute_state, m("character-text-style").value = t.default_text_style, o("character-font-family").value = e.text_font_family || "Arial", o("character-font-size").value = String(e.text_font_size || 48), o("character-text-duration").value = String(t.text_duration), o("character-text-color").value = e.text_color || "#ffffff", o("character-stroke-color").value = e.text_stroke_color || "#000000", o("character-stroke-width").value = String(e.text_stroke_width || 0), l("character-stroke-width-value").textContent = String(e.text_stroke_width || 0), o("character-position-x").value = String(Math.round((e.text_position_x || 0.5) * 100)), l("character-pos-x-value").textContent = String(Math.round((e.text_position_x || 0.5) * 100)), o("character-position-y").value = String(Math.round((e.text_position_y || 0.5) * 100)), l("character-pos-y-value").textContent = String(Math.round((e.text_position_y || 0.5) * 100)), b("character-prompt").value = e.system_prompt || "", o("character-model").value = e.openrouter_model || "", xe(e.openrouter_model || "").then(() => {
+  r("character-volume").value = String(Math.round(t.default_volume * 100)), l("character-volume-value").textContent = String(Math.round(t.default_volume * 100)), r("character-muted").checked = t.mute_state, m("character-text-style").value = t.default_text_style, r("character-font-family").value = e.text_font_family || "Arial", r("character-font-size").value = String(e.text_font_size || 48), r("character-text-duration").value = String(t.text_duration), r("character-text-color").value = e.text_color || "#ffffff", r("character-stroke-color").value = e.text_stroke_color || "#000000", r("character-stroke-width").value = String(e.text_stroke_width || 0), l("character-stroke-width-value").textContent = String(e.text_stroke_width || 0), r("character-position-x").value = String(Math.round((e.text_position_x || 0.5) * 100)), l("character-pos-x-value").textContent = String(Math.round((e.text_position_x || 0.5) * 100)), r("character-position-y").value = String(Math.round((e.text_position_y || 0.5) * 100)), l("character-pos-y-value").textContent = String(Math.round((e.text_position_y || 0.5) * 100)), _("character-prompt").value = e.system_prompt || "", r("character-model").value = e.openrouter_model || "", Ee(e.openrouter_model || "").then(() => {
     m("character-provider").value = t.provider || "";
-  }), o("character-temperature").value = String(Math.round(t.temperature * 100)), l("character-temp-value").textContent = t.temperature.toFixed(1), o("character-max-tokens").value = String(t.max_tokens), o("character-memory-enabled").checked = t.memory_enabled || !1, o("character-persist-memory").checked = e.persist_memory || !1, o("character-twitch-chat-enabled").checked = t.twitch_chat_enabled || !1, o("character-twitch-chat-seconds").value = String(t.twitch_chat_window_seconds || 60), o("character-twitch-chat-max").value = String(t.twitch_chat_max_messages || 20), L.classList.add("active");
+  }), r("character-temperature").value = String(Math.round(t.temperature * 100)), l("character-temp-value").textContent = t.temperature.toFixed(1), r("character-max-tokens").value = String(t.max_tokens), r("character-memory-enabled").checked = t.memory_enabled || !1, r("character-persist-memory").checked = e.persist_memory || !1, r("character-twitch-chat-enabled").checked = t.twitch_chat_enabled || !1, r("character-twitch-chat-seconds").value = String(t.twitch_chat_window_seconds || 60), r("character-twitch-chat-max").value = String(t.twitch_chat_max_messages || 20), P.classList.add("active");
 }
-function Y() {
-  L.classList.remove("active"), C = null, ce();
+function J() {
+  P.classList.remove("active"), k = null, ie();
 }
-async function ct(e) {
+async function dt(e) {
   e.preventDefault();
   const t = m("character-tts-provider").value;
-  let n = null;
-  t === "cartesia" ? n = {
-    voice_id: o("cartesia-voice-id").value,
-    model_id: o("cartesia-model-id").value,
+  let a = null;
+  t === "cartesia" ? a = {
+    voice_id: r("cartesia-voice-id").value,
+    model_id: r("cartesia-model-id").value,
     language: m("cartesia-language").value,
-    speed: parseInt(o("cartesia-speed").value) / 100
-  } : n = {
-    voice_id: o("character-voice-id").value,
+    speed: parseInt(r("cartesia-speed").value) / 100
+  } : a = {
+    voice_id: r("character-voice-id").value,
     model_id: m("character-tts-model").value,
-    stability: parseInt(o("character-stability").value) / 100,
-    similarity_boost: parseInt(o("character-similarity").value) / 100,
-    style: parseInt(o("character-voice-style").value) / 100,
-    speed: parseInt(o("character-voice-speed").value) / 100
+    stability: parseInt(r("character-stability").value) / 100,
+    similarity_boost: parseInt(r("character-similarity").value) / 100,
+    style: parseInt(r("character-voice-style").value) / 100,
+    speed: parseInt(r("character-voice-speed").value) / 100
   };
-  const a = {
-    name: o("character-name").value,
-    description: b("character-description").value || null,
-    color: o("character-color").value,
-    icon: o("character-icon").value,
+  const n = {
+    name: r("character-name").value,
+    description: _("character-description").value || null,
+    color: r("character-color").value,
+    icon: r("character-icon").value,
     // TTS provider abstraction
     tts_provider: t,
-    tts_settings: n,
+    tts_settings: a,
     // Legacy ElevenLabs fields (for backwards compatibility)
-    elevenlabs_voice_id: o("character-voice-id").value,
+    elevenlabs_voice_id: r("character-voice-id").value,
     elevenlabs_model_id: m("character-tts-model").value,
-    voice_stability: parseInt(o("character-stability").value) / 100,
-    voice_similarity_boost: parseInt(o("character-similarity").value) / 100,
-    voice_style: parseInt(o("character-voice-style").value) / 100,
-    voice_speed: parseInt(o("character-voice-speed").value) / 100,
-    default_volume: parseInt(o("character-volume").value) / 100,
-    mute_state: o("character-muted").checked,
+    voice_stability: parseInt(r("character-stability").value) / 100,
+    voice_similarity_boost: parseInt(r("character-similarity").value) / 100,
+    voice_style: parseInt(r("character-voice-style").value) / 100,
+    voice_speed: parseInt(r("character-voice-speed").value) / 100,
+    default_volume: parseInt(r("character-volume").value) / 100,
+    mute_state: r("character-muted").checked,
     default_text_style: m("character-text-style").value,
-    text_font_family: o("character-font-family").value,
-    text_font_size: parseInt(o("character-font-size").value),
-    text_duration: parseInt(o("character-text-duration").value),
-    text_color: o("character-text-color").value,
-    text_stroke_color: parseInt(o("character-stroke-width").value) > 0 ? o("character-stroke-color").value : null,
-    text_stroke_width: parseInt(o("character-stroke-width").value),
-    text_position_x: parseInt(o("character-position-x").value) / 100,
-    text_position_y: parseInt(o("character-position-y").value) / 100,
-    system_prompt: b("character-prompt").value || null,
-    model: o("character-model").value,
+    text_font_family: r("character-font-family").value,
+    text_font_size: parseInt(r("character-font-size").value),
+    text_duration: parseInt(r("character-text-duration").value),
+    text_color: r("character-text-color").value,
+    text_stroke_color: parseInt(r("character-stroke-width").value) > 0 ? r("character-stroke-color").value : null,
+    text_stroke_width: parseInt(r("character-stroke-width").value),
+    text_position_x: parseInt(r("character-position-x").value) / 100,
+    text_position_y: parseInt(r("character-position-y").value) / 100,
+    system_prompt: _("character-prompt").value || null,
+    model: r("character-model").value,
     provider: m("character-provider").value || null,
-    temperature: parseInt(o("character-temperature").value) / 100,
-    max_tokens: parseInt(o("character-max-tokens").value),
-    memory_enabled: o("character-memory-enabled").checked,
-    persist_memory: o("character-persist-memory").checked,
-    twitch_chat_enabled: o("character-twitch-chat-enabled").checked,
-    twitch_chat_window_seconds: parseInt(o("character-twitch-chat-seconds").value),
-    twitch_chat_max_messages: parseInt(o("character-twitch-chat-max").value),
+    temperature: parseInt(r("character-temperature").value) / 100,
+    max_tokens: parseInt(r("character-max-tokens").value),
+    memory_enabled: r("character-memory-enabled").checked,
+    persist_memory: r("character-persist-memory").checked,
+    twitch_chat_enabled: r("character-twitch-chat-enabled").checked,
+    twitch_chat_window_seconds: parseInt(r("character-twitch-chat-seconds").value),
+    twitch_chat_max_messages: parseInt(r("character-twitch-chat-max").value),
     // Optimistic concurrency control - send timestamp to detect conflicts
-    expected_updated_at: (C == null ? void 0 : C.updated_at) || null
+    expected_updated_at: (k == null ? void 0 : k.updated_at) || null
   };
   try {
-    if (C) {
-      const r = await Ye(C.name, a, !1);
-      if (r && r.status === 409) {
-        const c = await u(`/api/characters/${encodeURIComponent(C.name)}`, "GET", null, !1);
-        c && !("error" in c) ? (Ie(c), f("Someone else modified this character. Please review the updated values and try again.", "warning")) : (Y(), f("Character was modified. Please try again.", "warning"));
+    if (k) {
+      const o = await Qe(k.name, n, !1);
+      if (o && o.status === 409) {
+        const c = await u(`/api/characters/${encodeURIComponent(k.name)}`, "GET", null, !1);
+        c && !("error" in c) ? ($e(c), f("Someone else modified this character. Please review the updated values and try again.", "warning")) : (J(), f("Character was modified. Please try again.", "warning"));
         return;
       }
     } else
-      await Ve(a);
-    Y();
-  } catch (r) {
-    console.error("Error saving character:", r), alert("Error saving character. Check console for details.");
+      await Ke(n);
+    J();
+  } catch (o) {
+    console.error("Error saving character:", o), alert("Error saving character. Check console for details.");
   }
 }
-const R = l("speak-modal");
-function st(e) {
-  const t = w.find((n) => n.name === e);
-  t && ($ = t, l("speak-modal-title").textContent = `Speak as ${t.name}`, b("speak-text").value = "", o("speak-show-text").checked = !0, l("speak-status").style.display = "none", A("speak-send-btn").disabled = !1, R.classList.add("active"));
+const H = l("speak-modal");
+function ut(e) {
+  const t = w.find((a) => a.name === e);
+  t && (M = t, l("speak-modal-title").textContent = `Speak as ${t.name}`, _("speak-text").value = "", r("speak-show-text").checked = !0, l("speak-status").style.display = "none", D("speak-send-btn").disabled = !1, H.classList.add("active"));
 }
-function Se() {
-  R.classList.remove("active"), $ = null;
+function Te() {
+  H.classList.remove("active"), M = null;
 }
-async function it() {
-  if (!$) return;
-  const e = b("speak-text").value.trim(), t = o("speak-show-text").checked;
+async function ht() {
+  if (!M) return;
+  const e = _("speak-text").value.trim(), t = r("speak-show-text").checked;
   if (!e) {
     alert("Please enter text to speak");
     return;
   }
-  const n = l("speak-status"), a = l("speak-status-text"), r = A("speak-send-btn"), c = A("speak-stop-btn");
-  n.style.display = "block", a.textContent = "Speaking...", r.disabled = !0, c.style.display = "inline-block", x = $.name, g = "speak", B = !1;
+  const a = l("speak-status"), n = l("speak-status-text"), o = D("speak-send-btn"), c = D("speak-stop-btn");
+  a.style.display = "block", n.textContent = "Speaking...", o.disabled = !0, c.style.display = "inline-block", E = M.name, g = "speak", A = !1;
   try {
-    const s = await et($.name, e, t);
-    s.error || s.detail ? (a.textContent = `Error: ${s.error || s.detail}`, c.style.display = "none", x = null, g = null) : (a.textContent = "Playing audio...", b("speak-text").value = "", X());
+    const s = await ot(M.name, e, t);
+    s.error || s.detail ? (n.textContent = `Error: ${s.error || s.detail}`, c.style.display = "none", E = null, g = null) : (n.textContent = "Playing audio...", _("speak-text").value = "", K());
   } catch (s) {
-    console.error("Speak error:", s), a.textContent = `Error: ${s.message || "Unknown error"}`, c.style.display = "none", x = null, g = null;
+    console.error("Speak error:", s), n.textContent = `Error: ${s.message || "Unknown error"}`, c.style.display = "none", E = null, g = null;
   } finally {
-    r.disabled = !1;
+    o.disabled = !1;
   }
 }
-async function lt(e) {
-  const t = e === "speak" ? $ == null ? void 0 : $.name : p == null ? void 0 : p.name;
+async function mt(e) {
+  const t = e === "speak" ? M == null ? void 0 : M.name : p == null ? void 0 : p.name;
   if (!t) return;
-  const n = document.getElementById(`${e}-status-text`), a = document.getElementById(`${e}-stop-btn`);
-  n && (n.textContent = "Stopping..."), a && (a.disabled = !0);
+  const a = document.getElementById(`${e}-status-text`), n = document.getElementById(`${e}-stop-btn`);
+  a && (a.textContent = "Stopping..."), n && (n.disabled = !0);
   try {
-    const r = await u(`/api/characters/${t}/stop`, "POST");
-    n && (r.was_active ? n.textContent = "Stopped" : n.textContent = "Nothing to stop"), e === "chat" && r.was_active && setTimeout(async () => {
+    const o = await u(`/api/characters/${t}/stop`, "POST");
+    a && (o.was_active ? a.textContent = "Stopped" : a.textContent = "Nothing to stop"), e === "chat" && o.was_active && setTimeout(async () => {
       try {
-        const c = await re(t);
-        l("chat-memory-count").textContent = `Memory: ${c.message_count} messages`, j(c.messages, t);
+        const c = await se(t);
+        l("chat-memory-count").textContent = `Memory: ${c.message_count} messages`, Y(c.messages, t);
       } catch (c) {
         console.error("Error refreshing memory after stop:", c);
       }
     }, 500);
-  } catch (r) {
-    console.error("Stop error:", r), n && (n.textContent = `Stop failed: ${r.message}`);
+  } catch (o) {
+    console.error("Stop error:", o), a && (a.textContent = `Stop failed: ${o.message}`);
   } finally {
-    a && (a.disabled = !1, a.style.display = "none"), x = null, g = null, B = !1;
-    const r = document.getElementById(`${e}-send-btn`);
-    r && (r.disabled = !1);
+    n && (n.disabled = !1, n.style.display = "none"), E = null, g = null, A = !1;
+    const o = document.getElementById(`${e}-send-btn`);
+    o && (o.disabled = !1);
   }
 }
-const E = document.getElementById("chat-modal"), ve = 20, ye = 5;
-function se() {
-  S = [];
+const I = document.getElementById("chat-modal"), ge = 20, we = 5;
+function le() {
+  T = [];
   const e = document.getElementById("chat-image-previews");
   if (e)
     for (; e.firstChild; )
       e.removeChild(e.firstChild);
 }
-function $e(e, t) {
-  if (S.length >= ye) {
-    f(`Maximum ${ye} images allowed`, "warning");
+function Me(e, t) {
+  if (T.length >= we) {
+    f(`Maximum ${we} images allowed`, "warning");
     return;
   }
-  S.push({ data: e, mediaType: t });
-  const n = l("chat-image-previews"), a = document.createElement("div");
-  a.className = "image-preview-thumb", a.dataset.index = String(S.length - 1);
-  const r = document.createElement("img");
-  r.src = `data:${t};base64,${e}`;
+  T.push({ data: e, mediaType: t });
+  const a = l("chat-image-previews"), n = document.createElement("div");
+  n.className = "image-preview-thumb", n.dataset.index = String(T.length - 1);
+  const o = document.createElement("img");
+  o.src = `data:${t};base64,${e}`;
   const c = document.createElement("button");
   c.className = "remove-btn", c.textContent = "×", c.onclick = function() {
-    const s = parseInt(a.dataset.index || "0");
-    S.splice(s, 1), a.remove(), document.querySelectorAll("#chat-image-previews .image-preview-thumb").forEach((i, d) => {
+    const s = parseInt(n.dataset.index || "0");
+    T.splice(s, 1), n.remove(), document.querySelectorAll("#chat-image-previews .image-preview-thumb").forEach((i, d) => {
       i.dataset.index = String(d);
     });
-  }, a.appendChild(r), a.appendChild(c), n.appendChild(a);
+  }, n.appendChild(o), n.appendChild(c), a.appendChild(n);
 }
-async function Te(e) {
+async function Be(e) {
   if (!e.type.startsWith("image/")) {
     f("Only image files are supported", "error");
     return;
   }
-  if (e.size > ve * 1024 * 1024) {
-    f(`Image too large (max ${ve}MB)`, "error");
+  if (e.size > ge * 1024 * 1024) {
+    f(`Image too large (max ${ge}MB)`, "error");
     return;
   }
   return new Promise((t) => {
-    const n = new FileReader();
-    n.onload = (a) => {
+    const a = new FileReader();
+    a.onload = (n) => {
       var i;
-      const c = ((i = a.target) == null ? void 0 : i.result).split(",")[1], s = e.type || "image/png";
-      $e(c, s), t();
-    }, n.readAsDataURL(e);
+      const c = ((i = n.target) == null ? void 0 : i.result).split(",")[1], s = e.type || "image/png";
+      Me(c, s), t();
+    }, a.readAsDataURL(e);
   });
 }
-function dt() {
-  o("chat-image-input").click();
+function pt() {
+  r("chat-image-input").click();
 }
-async function ut(e) {
-  const t = e.target, n = t.files;
-  if (n)
-    for (const a of n)
-      await Te(a);
+async function ft(e) {
+  const t = e.target, a = t.files;
+  if (a)
+    for (const n of a)
+      await Be(n);
   t.value = "";
 }
-async function ht() {
+async function vt() {
   try {
     const e = await navigator.mediaDevices.getDisplayMedia({
       video: !0
@@ -628,120 +637,120 @@ async function ht() {
     t.srcObject = e, await t.play(), await new Promise((s) => {
       t.readyState >= 2 ? s() : t.onloadeddata = () => s();
     });
-    const n = document.createElement("canvas");
-    n.width = t.videoWidth, n.height = t.videoHeight, n.getContext("2d").drawImage(t, 0, 0), e.getTracks().forEach((s) => s.stop());
-    const c = n.toDataURL("image/png").split(",")[1];
-    $e(c, "image/png"), f("Screen captured!", "success");
+    const a = document.createElement("canvas");
+    a.width = t.videoWidth, a.height = t.videoHeight, a.getContext("2d").drawImage(t, 0, 0), e.getTracks().forEach((s) => s.stop());
+    const c = a.toDataURL("image/png").split(",")[1];
+    Me(c, "image/png"), f("Screen captured!", "success");
   } catch (e) {
     e instanceof Error && e.name === "NotAllowedError" ? f("Screen capture permission denied", "warning") : (console.error("Screen capture error:", e), f("Screen capture failed", "error"));
   }
 }
-function ge(e) {
-  var n;
-  const t = (n = e.clipboardData) == null ? void 0 : n.items;
+function _e(e) {
+  var a;
+  const t = (a = e.clipboardData) == null ? void 0 : a.items;
   if (t) {
-    for (const a of t)
-      if (a.type.startsWith("image/")) {
+    for (const n of t)
+      if (n.type.startsWith("image/")) {
         e.preventDefault();
-        const r = a.getAsFile();
-        r && Te(r);
+        const o = n.getAsFile();
+        o && Be(o);
       }
   }
 }
-async function mt(e) {
-  const t = w.find((a) => a.name === e);
+async function yt(e) {
+  const t = w.find((n) => n.name === e);
   if (!t) return;
   if (!t.system_prompt) {
     alert('This character has no AI system prompt configured. Use "Speak" for direct TTS.');
     return;
   }
-  p = t, l("chat-modal-title").textContent = `Chat with ${t.name}`, b("chat-message").value = "", o("chat-show-text").checked = !0, o("chat-include-twitch").checked = !0, o("chat-twitch-seconds").value = "", l("chat-status").style.display = "none", l("chat-twitch-details").style.display = "none", A("chat-send-btn").disabled = !1, se();
-  const n = b("chat-message");
-  n.removeEventListener("paste", ge), n.addEventListener("paste", ge);
+  p = t, l("chat-modal-title").textContent = `Chat with ${t.name}`, _("chat-message").value = "", r("chat-show-text").checked = !0, r("chat-include-twitch").checked = !0, r("chat-twitch-seconds").value = "", l("chat-status").style.display = "none", l("chat-twitch-details").style.display = "none", D("chat-send-btn").disabled = !1, le();
+  const a = _("chat-message");
+  a.removeEventListener("paste", _e), a.addEventListener("paste", _e);
   try {
-    const a = await re(e);
-    l("chat-memory-count").textContent = `Memory: ${a.message_count} messages${t.memory_enabled ? "" : " (disabled)"}`, j(a.messages, e);
+    const n = await se(e);
+    l("chat-memory-count").textContent = `Memory: ${n.message_count} messages${t.memory_enabled ? "" : " (disabled)"}`, Y(n.messages, e);
   } catch {
-    l("chat-memory-count").textContent = "Memory: 0 messages", j([], e);
+    l("chat-memory-count").textContent = "Memory: 0 messages", Y([], e);
   }
-  E == null || E.classList.add("active");
+  I == null || I.classList.add("active");
 }
-function Me() {
-  E == null || E.classList.remove("active"), p = null, se();
+function Le() {
+  I == null || I.classList.remove("active"), p = null, le();
 }
-async function pt() {
+async function gt() {
   if (!p) return;
-  const e = b("chat-message").value.trim(), t = o("chat-show-text").checked, n = o("chat-include-twitch").checked;
-  let a = o("chat-twitch-seconds").value;
-  if (n || (a = "0"), !e) {
+  const e = _("chat-message").value.trim(), t = r("chat-show-text").checked, a = r("chat-include-twitch").checked;
+  let n = r("chat-twitch-seconds").value;
+  if (a || (n = "0"), !e) {
     alert("Please enter a message");
     return;
   }
-  const r = l("chat-status"), c = l("chat-status-text"), s = A("chat-send-btn"), i = A("chat-stop-btn");
-  r.style.display = "block", c.textContent = "Generating...", s.disabled = !0, i.style.display = "inline-block", x = p.name, g = "chat", B = !1;
+  const o = l("chat-status"), c = l("chat-status-text"), s = D("chat-send-btn"), i = D("chat-stop-btn");
+  o.style.display = "block", c.textContent = "Generating...", s.disabled = !0, i.style.display = "inline-block", E = p.name, g = "chat", A = !1;
   try {
-    const d = S.length > 0, v = d ? `[${S.length} image(s)] ${e}` : e;
-    fe("user", v, p.name), b("chat-message").value = "";
-    const k = d ? [...S] : null;
-    se();
-    const h = await tt(p.name, e, t, a, k);
+    const d = T.length > 0, v = d ? `[${T.length} image(s)] ${e}` : e;
+    ye("user", v, p.name), _("chat-message").value = "";
+    const S = d ? [...T] : null;
+    le();
+    const h = await rt(p.name, e, t, n, S);
     if (h.error || h.detail)
-      c.textContent = `Error: ${h.error || h.detail}`, i.style.display = "none", x = null, g = null;
+      c.textContent = `Error: ${h.error || h.detail}`, i.style.display = "none", E = null, g = null;
     else {
       if (h.twitch_chat_context) {
-        const P = h.twitch_chat_context.split(`
-`), Pe = P.slice(-4).map((Q) => Q.length > 60 ? Q.substring(0, 57) + "..." : Q).join(" | ");
-        nt(`📺 Twitch chat (${P.length}): ${Pe}`);
+        const U = h.twitch_chat_context.split(`
+`), Ue = U.slice(-4).map((ee) => ee.length > 60 ? ee.substring(0, 57) + "..." : ee).join(" | ");
+        st(`📺 Twitch chat (${U.length}): ${Ue}`);
       }
-      fe("assistant", h.response_text || "", p.name);
-      let _ = "Playing audio...";
-      const H = document.getElementById("chat-twitch-details"), ie = document.getElementById("chat-twitch-summary"), le = document.getElementById("chat-twitch-context-text");
+      ye("assistant", h.response_text || "", p.name);
+      let b = "Playing audio...";
+      const G = document.getElementById("chat-twitch-details"), de = document.getElementById("chat-twitch-summary"), ue = document.getElementById("chat-twitch-context-text");
       if (h.twitch_chat_context) {
-        const P = h.twitch_chat_context.split(`
+        const U = h.twitch_chat_context.split(`
 `).length;
-        _ += ` (${P} chat msgs)`, ie && (ie.textContent = `Twitch Chat Context (${P} messages)`), le && (le.textContent = h.twitch_chat_context), H && (H.style.display = "block");
+        b += ` (${U} chat msgs)`, de && (de.textContent = `Twitch Chat Context (${U} messages)`), ue && (ue.textContent = h.twitch_chat_context), G && (G.style.display = "block");
       } else
-        H && (H.style.display = "none");
-      c.textContent = _, X();
-      const Le = await re(p.name), Ae = p;
-      l("chat-memory-count").textContent = `Memory: ${Le.message_count} messages${Ae.memory_enabled ? "" : " (not saving)"}`;
+        G && (G.style.display = "none");
+      c.textContent = b, K();
+      const Pe = await se(p.name), De = p;
+      l("chat-memory-count").textContent = `Memory: ${Pe.message_count} messages${De.memory_enabled ? "" : " (not saving)"}`;
     }
   } catch (d) {
-    console.error("Chat error:", d), c.textContent = `Error: ${d instanceof Error ? d.message : "Unknown error"}`, i.style.display = "none", x = null, g = null;
+    console.error("Chat error:", d), c.textContent = `Error: ${d instanceof Error ? d.message : "Unknown error"}`, i.style.display = "none", E = null, g = null;
   } finally {
     s.disabled = !1;
   }
 }
-async function ft() {
+async function wt() {
   if (p && confirm(`Clear conversation memory for ${p.name}?`))
     try {
-      await at(p.name);
-      const e = document.getElementById("chat-memory-count"), t = document.getElementById("chat-status"), n = document.getElementById("chat-status-text"), a = document.getElementById("chat-twitch-details");
-      e && (e.textContent = "Memory: 0 messages"), t && (t.style.display = "block"), n && (n.textContent = "Memory cleared!"), j([], p.name), a && (a.style.display = "none");
+      await ct(p.name);
+      const e = document.getElementById("chat-memory-count"), t = document.getElementById("chat-status"), a = document.getElementById("chat-status-text"), n = document.getElementById("chat-twitch-details");
+      e && (e.textContent = "Memory: 0 messages"), t && (t.style.display = "block"), a && (a.textContent = "Memory cleared!"), Y([], p.name), n && (n.style.display = "none");
     } catch (e) {
       console.error("Error clearing memory:", e), alert("Error clearing memory");
     }
 }
-function vt(e) {
+function _t(e) {
   if (!e || e.length === 0) {
-    pe.innerHTML = '<div class="history-item"><span class="history-content">No history yet</span></div>';
+    ve.innerHTML = '<div class="history-item"><span class="history-content">No history yet</span></div>';
     return;
   }
-  pe.innerHTML = e.map((t) => {
-    const n = new Date(t.timestamp).toLocaleTimeString();
+  ve.innerHTML = e.map((t) => {
+    const a = new Date(t.timestamp).toLocaleTimeString();
     return `
                 <div class="history-item">
-                    <span class="history-channel">${I(t.channel)}</span>
-                    <span class="history-content">${I(t.content)}</span>
-                    <span class="history-time">${I(n)}</span>
+                    <span class="history-channel">${$(t.channel)}</span>
+                    <span class="history-content">${$(t.content)}</span>
+                    <span class="history-time">${$(a)}</span>
                 </div>
             `;
   }).join("");
 }
-function ae() {
-  if (N) {
+function oe() {
+  if (F) {
     if (w.length === 0) {
-      N.innerHTML = `
+      F.innerHTML = `
                 <div class="no-channels">
                     <p>No characters configured yet.</p>
                     <p>Click "Create Character" to add one.</p>
@@ -749,29 +758,29 @@ function ae() {
             `;
       return;
     }
-    N.innerHTML = w.map((e) => yt(e)).join("");
+    F.innerHTML = w.map((e) => bt(e)).join("");
   }
 }
-function yt(e) {
+function bt(e) {
   var h;
-  let t = "", n = "offline";
-  e.connected ? e.streaming ? (t = "streaming", n = "streaming") : e.playing ? (t = "playing", n = "playing") : n = "ready" : (t = "", n = "offline");
-  const a = e.connected ? "" : "disconnected", r = e.system_prompt ? '<span class="voice-indicator">AI</span>' : "", c = I(e.description || (e.system_prompt ? e.system_prompt.substring(0, 80) + "..." : "No description")), s = I(e.name), i = I(e.icon), d = He(e.color), v = I(e.model ? e.model.split("/").pop() : ""), k = I(e.tts_provider === "cartesia" ? (((h = e.tts_settings) == null ? void 0 : h.model_id) || "sonic").replace("sonic-", "") : (e.elevenlabs_model_id || "multilingual_v2").replace("eleven_", "").replace("_", " "));
+  let t = "", a = "offline";
+  e.connected ? e.streaming ? (t = "streaming", a = "streaming") : e.playing ? (t = "playing", a = "playing") : a = "ready" : (t = "", a = "offline");
+  const n = e.connected ? "" : "disconnected", o = e.system_prompt ? '<span class="voice-indicator">AI</span>' : "", c = $(e.description || (e.system_prompt ? e.system_prompt.substring(0, 80) + "..." : "No description")), s = $(e.name), i = $(e.icon), d = qe(e.color), v = $(e.model ? e.model.split("/").pop() : ""), S = $(e.tts_provider === "cartesia" ? (((h = e.tts_settings) == null ? void 0 : h.model_id) || "sonic").replace("sonic-", "") : (e.elevenlabs_model_id || "multilingual_v2").replace("eleven_", "").replace("_", " "));
   return `
-            <div class="channel-card ${a}" data-character="${s}" style="border-left-color: ${d}">
+            <div class="channel-card ${n}" data-character="${s}" style="border-left-color: ${d}">
                 <div class="channel-header">
                     <div class="channel-name">
                         <span class="channel-icon">${i}</span>
                         ${s}
-                        ${r}
+                        ${o}
                     </div>
-                    <span class="channel-status ${t}">${n}</span>
+                    <span class="channel-status ${t}">${a}</span>
                 </div>
                 <p class="channel-description">${c}</p>
                 <div class="channel-controls">
                     <div class="control-row" style="font-size: 0.75rem; color: var(--text-secondary);">
                         <span>TTS: ${e.tts_provider === "cartesia" ? "Cartesia" : "ElevenLabs"}</span>
-                        <span>${k}</span>
+                        <span>${S}</span>
                     </div>
                     ${e.system_prompt ? `<div class="control-row" style="font-size: 0.75rem; color: var(--text-secondary);"><span>AI: ${v}</span></div>` : ""}
                 </div>
@@ -786,55 +795,55 @@ function yt(e) {
             </div>
         `;
 }
-window.openCreateCharacterModal = rt;
-window.closeCharacterModal = Y;
+window.openCreateCharacterModal = lt;
+window.closeCharacterModal = J;
 window.editCharacter = async function(e) {
   const t = await u(`/api/characters/${encodeURIComponent(e)}`);
-  t && !("error" in t) ? Ie(t) : f("Failed to load character", "error");
+  t && !("error" in t) ? $e(t) : f("Failed to load character", "error");
 };
-window.deleteCharacter = Xe;
-window.openSpeakModal = st;
-window.closeSpeakModal = Se;
-window.sendSpeak = it;
-window.stopGeneration = lt;
-window.openChatModal = mt;
-window.closeChatModal = Me;
-window.sendChat = pt;
-window.clearChatMemory = ft;
-window.attachImage = dt;
-window.handleImageSelect = ut;
-window.captureScreen = ht;
-window.previewCharacterTextStyle = ot;
-window.stopCharacterTextPreview = ce;
-window.updateProviderDropdown = xe;
-window.loadVoiceModels = Ce;
-window.updateModelInfo = ne;
-window.toggleTTSProvider = Ee;
-window.updateCartesiaVoiceInfo = K;
-window.loadCartesiaVoices = oe;
-window.selectCartesiaVoice = Qe;
-window.onCartesiaManualIdChange = Ze;
+window.deleteCharacter = Ze;
+window.openSpeakModal = ut;
+window.closeSpeakModal = Te;
+window.sendSpeak = ht;
+window.stopGeneration = mt;
+window.openChatModal = yt;
+window.closeChatModal = Le;
+window.sendChat = gt;
+window.clearChatMemory = wt;
+window.attachImage = pt;
+window.handleImageSelect = ft;
+window.captureScreen = vt;
+window.previewCharacterTextStyle = it;
+window.stopCharacterTextPreview = ie;
+window.updateProviderDropdown = Ee;
+window.loadVoiceModels = ke;
+window.updateModelInfo = re;
+window.toggleTTSProvider = Ie;
+window.updateCartesiaVoiceInfo = Z;
+window.loadCartesiaVoices = ce;
+window.selectCartesiaVoice = at;
+window.onCartesiaManualIdChange = nt;
 window.copyCharacterUrl = async function(e) {
-  const t = w.find((a) => a.name === e);
+  const t = w.find((n) => n.name === e);
   if (!(t != null && t.ws_token)) {
     f("Character token not found", "error");
     return;
   }
-  const n = `${window.location.origin}/channel/${encodeURIComponent(e)}?token=${encodeURIComponent(t.ws_token)}`;
+  const a = `${window.location.origin}/channel/${encodeURIComponent(e)}?token=${encodeURIComponent(t.ws_token)}`;
   try {
-    await navigator.clipboard.writeText(n);
-    const a = document.querySelector(`[data-character="${CSS.escape(e)}"]`);
-    if (a) {
-      const r = a.querySelector('button[data-action="copy-url"]');
-      if (r) {
-        const c = r.textContent;
-        r.textContent = "Copied!", setTimeout(() => {
-          r.textContent = c;
+    await navigator.clipboard.writeText(a);
+    const n = document.querySelector(`[data-character="${CSS.escape(e)}"]`);
+    if (n) {
+      const o = n.querySelector('button[data-action="copy-url"]');
+      if (o) {
+        const c = o.textContent;
+        o.textContent = "Copied!", setTimeout(() => {
+          o.textContent = c;
         }, 1500);
       }
     }
-  } catch (a) {
-    console.error("Failed to copy URL:", a), prompt("Copy this URL for OBS browser source:", n);
+  } catch (n) {
+    console.error("Failed to copy URL:", n), prompt("Copy this URL for OBS browser source:", a);
   }
 };
 window.rotateCharacterToken = async function(e) {
@@ -844,65 +853,93 @@ This will invalidate any existing OBS browser source URLs. You'll need to update
     try {
       const t = await u(`/api/characters/${encodeURIComponent(e)}/rotate-token`, "POST");
       if (t != null && t.success) {
-        const n = w.find((a) => a.name === e);
-        n && t.ws_token && (n.ws_token = t.ws_token), f("Token rotated. Copy new URL for OBS.", "success");
+        const a = w.find((n) => n.name === e);
+        a && t.ws_token && (a.ws_token = t.ws_token), f("Token rotated. Copy new URL for OBS.", "success");
       } else
         f((t == null ? void 0 : t.detail) || "Failed to rotate token", "error");
     } catch (t) {
       console.error("Failed to rotate token:", t), f("Failed to rotate token", "error");
     }
 };
-const Z = document.getElementById("twitch-user"), we = document.getElementById("twitch-username");
-async function Be() {
-  if (!(!Z || !we))
+const te = document.getElementById("twitch-user"), be = document.getElementById("twitch-username");
+async function Ae() {
+  if (!(!te || !be))
     try {
       const t = await (await fetch("/api/twitch/status")).json();
-      t.connected && t.channel ? (we.textContent = t.channel, Z.style.display = "inline-flex") : Z.style.display = "none";
+      t.connected && t.channel ? (be.textContent = t.channel, te.style.display = "inline-flex") : te.style.display = "none";
     } catch (e) {
       console.error("Error checking Twitch status:", e);
     }
 }
-te && te.addEventListener("submit", ct);
-L && L.addEventListener("click", (e) => {
-  e.target === L && Y();
+const C = document.getElementById("channel-switcher");
+async function Ct() {
+  if (C)
+    try {
+      const t = await (await fetch("/api/moderators/accessible-channels")).json();
+      if (!t.channels || t.channels.length <= 1) {
+        C.style.display = "none", x && t.channels && !t.channels.find((a) => a.tenant_id === x) && (x = null, localStorage.removeItem("effectiveChannel"));
+        return;
+      }
+      if (C.innerHTML = "", t.channels.forEach((a) => {
+        const n = document.createElement("option");
+        n.value = a.tenant_id, n.textContent = a.is_own ? `${a.username} (You)` : a.username, C.appendChild(n);
+      }), x)
+        C.value = x;
+      else {
+        const a = t.channels.find((n) => n.is_own);
+        a && (C.value = a.tenant_id);
+      }
+      C.style.display = "inline-flex", C.onchange = () => {
+        const a = C.value, n = t.channels.find((o) => o.is_own);
+        a === (n == null ? void 0 : n.tenant_id) ? (localStorage.removeItem("effectiveChannel"), window.location.href = "/") : (localStorage.setItem("effectiveChannel", a), window.location.href = `/?channel=${encodeURIComponent(a)}`);
+      };
+    } catch (e) {
+      console.error("Error loading accessible channels:", e), C.style.display = "none";
+    }
+}
+ne && ne.addEventListener("submit", dt);
+P && P.addEventListener("click", (e) => {
+  e.target === P && J();
 });
-R && R.addEventListener("click", (e) => {
-  e.target === R && Se();
+H && H.addEventListener("click", (e) => {
+  e.target === H && Te();
 });
-E && E.addEventListener("click", (e) => {
-  e.target === E && Me();
+I && I.addEventListener("click", (e) => {
+  e.target === I && Le();
 });
-N && N.addEventListener("click", (e) => {
-  const n = e.target.closest("button[data-action]");
-  if (!n) return;
-  const a = n.dataset.action, r = n.dataset.character;
-  if (r)
-    switch (a) {
+F && F.addEventListener("click", (e) => {
+  const a = e.target.closest("button[data-action]");
+  if (!a) return;
+  const n = a.dataset.action, o = a.dataset.character;
+  if (o)
+    switch (n) {
       case "speak":
-        window.openSpeakModal(r);
+        window.openSpeakModal(o);
         break;
       case "chat":
-        window.openChatModal(r);
+        window.openChatModal(o);
         break;
       case "copy-url":
-        window.copyCharacterUrl(r);
+        window.copyCharacterUrl(o);
         break;
       case "rotate-token":
-        window.rotateCharacterToken(r);
+        window.rotateCharacterToken(o);
         break;
       case "edit":
-        window.editCharacter(r);
+        window.editCharacter(o);
         break;
       case "delete":
-        window.deleteCharacter(r);
+        window.deleteCharacter(o);
         break;
     }
 });
-_e();
-J();
-je();
-X();
-Be();
+x = Ge();
+xe();
+Q();
 Je();
-setInterval(X, 1e4);
-setInterval(Be, 15e3);
+K();
+Ae();
+et();
+Ct();
+setInterval(K, 1e4);
+setInterval(Ae, 15e3);

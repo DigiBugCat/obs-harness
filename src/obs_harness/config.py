@@ -34,6 +34,7 @@ class Settings(BaseSettings):
 
     # Feature flags
     feature_santa_enabled: bool = Field(default=False)
+    dev_mode: bool = Field(default=False)  # Enables dev login button on login page
 
     @property
     def allowed_twitch_ids_set(self) -> set[str]:

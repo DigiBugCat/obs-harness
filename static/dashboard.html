@@ -495,6 +495,29 @@
             height: 18px;
         }
 
+        /* Channel switcher */
+        .channel-switcher {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--bg-secondary);
+            border-radius: 6px;
+            font-size: 0.875rem;
+            cursor: pointer;
+        }
+
+        .channel-switcher:hover {
+            border-color: var(--accent);
+        }
+
+        .channel-switcher:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
         /* Chat message bubbles */
         .chat-bubble {
             margin-bottom: 0.75rem;
@@ -623,6 +646,9 @@
         <header>
             <h1>OBS Audio Harness</h1>
             <div class="header-actions">
+                <select id="channel-switcher" class="channel-switcher" style="display: none;">
+                    <!-- Populated dynamically by dashboard.ts -->
+                </select>
                 <div id="twitch-user" class="twitch-user" style="display: none;">
                     <svg viewBox="0 0 24 24" fill="currentColor">
                         <path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714Z"/>

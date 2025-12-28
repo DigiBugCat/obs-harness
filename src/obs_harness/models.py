@@ -682,6 +682,20 @@ class SantaSession(SQLModel, table=True):
     ended_at: datetime | None = SQLField(default=None)
 
 
+class SantaModerator(SQLModel, table=True):
+    """Moderator allowlist for Santa dashboard access.
+
+    Allows broadcasters to grant moderators access to their Santa dashboard.
+    Moderators can control sessions but cannot create/delete rewards.
+    """
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    broadcaster_tenant_id: str = SQLField(index=True)  # Broadcaster who grants access
+    moderator_user_id: str = SQLField(index=True)  # Twitch user ID of moderator
+    moderator_username: str  # Display username for UI
+    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+
+
 # Santa API Models (Pydantic)
 
 
@@ -730,3 +744,25 @@ class SantaVerdictRequest(BaseModel):
     """Force a verdict (skip chat voting)."""
 
     verdict: Literal["grant", "deny"]
+
+
+class SantaModeratorAdd(BaseModel):
+    """Request to add a moderator to the allowlist."""
+
+    username: str  # Twitch username to add
+
+
+class SantaModeratorResponse(BaseModel):
+    """Moderator information in responses."""
+
+    user_id: str
+    username: str
+    added_at: datetime
+
+
+class SantaAccessibleChannel(BaseModel):
+    """A channel the user can access (own or as moderator)."""
+
+    tenant_id: str
+    username: str
+    is_own: bool

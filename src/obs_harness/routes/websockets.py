@@ -5,13 +5,14 @@ Handles real-time connections for dashboard, Santa, Twitch chat, and browser sou
 
 import json
 import logging
+import time
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from sqlmodel import select
 
 from .. import __version__
 from ..database import get_session
-from ..models import Character, TwitchConfig
+from ..models import Character, SantaModerator, TwitchConfig
 from .system import BUILD_ID
 from . import get_state
 from ..state import AppState
@@ -29,23 +30,46 @@ async def get_app_state(websocket: WebSocket) -> AppState:
 
 
 @router.websocket("/ws/dashboard")
-async def dashboard_websocket(websocket: WebSocket):
-    """WebSocket endpoint for dashboard live updates (requires auth)."""
+async def dashboard_websocket(
+    websocket: WebSocket,
+    channel: str | None = Query(default=None, description="Channel to view (tenant_id)"),
+):
+    """WebSocket endpoint for dashboard live updates (requires auth).
+
+    Supports moderator access via ?channel= parameter.
+    """
     state = await get_app_state(websocket)
 
     # Verify authentication before accepting connection
-    tenant_id = websocket.cookies.get("tenant_id")
-    if not tenant_id:
+    user_id = websocket.cookies.get("tenant_id")
+    if not user_id:
         await websocket.close(code=4001, reason="Unauthorized")
         return
 
-    await state.manager.connect_dashboard(websocket, tenant_id)
+    # Determine effective channel (which channel they're viewing)
+    effective_channel = channel or user_id
 
-    # Send hello message with version info for client version checking
+    # If viewing another channel, verify moderator access
+    if effective_channel != user_id:
+        async with get_session() as session:
+            result = await session.execute(
+                select(SantaModerator).where(
+                    SantaModerator.broadcaster_tenant_id == effective_channel,
+                    SantaModerator.moderator_user_id == user_id,
+                ).limit(1)
+            )
+            if not result.scalar_one_or_none():
+                await websocket.close(code=4003, reason="Access denied")
+                return
+
+    await state.manager.connect_dashboard(websocket, effective_channel)
+
+    # Send hello message with version info and effective tenant_id for client
     await websocket.send_json({
         "type": "hello",
         "version": __version__,
         "build_id": BUILD_ID,
+        "tenant_id": effective_channel,  # Use effective channel for status key matching
     })
 
     try:
@@ -62,8 +86,14 @@ async def dashboard_websocket(websocket: WebSocket):
 
 
 @router.websocket("/ws/santa")
-async def santa_websocket(websocket: WebSocket):
-    """WebSocket endpoint for Santa dashboard live updates (requires auth)."""
+async def santa_websocket(
+    websocket: WebSocket,
+    channel: str | None = Query(default=None, description="Channel to view (tenant_id)"),
+):
+    """WebSocket endpoint for Santa dashboard live updates (requires auth).
+
+    Supports moderator access via ?channel= parameter.
+    """
     state = await get_app_state(websocket)
 
     if not state.feature_santa_enabled:
@@ -71,16 +101,33 @@ async def santa_websocket(websocket: WebSocket):
         return
 
     # Verify authentication before accepting connection
-    tenant_id = websocket.cookies.get("tenant_id")
-    if not tenant_id:
+    user_id = websocket.cookies.get("tenant_id")
+    if not user_id:
         await websocket.close(code=4001, reason="Unauthorized")
         return
 
+    # Determine effective channel (which channel they're viewing)
+    effective_channel = channel or websocket.cookies.get("effective_channel") or user_id
+    is_owner = effective_channel == user_id
+
+    # If not owner, verify moderator access
+    if not is_owner:
+        async with get_session() as session:
+            result = await session.execute(
+                select(SantaModerator).where(
+                    SantaModerator.broadcaster_tenant_id == effective_channel,
+                    SantaModerator.moderator_user_id == user_id,
+                ).limit(1)
+            )
+            if not result.scalar_one_or_none():
+                await websocket.close(code=4003, reason="Access denied")
+                return
+
     await websocket.accept()
-    state.santa_dashboard_connections[websocket] = tenant_id
+    state.santa_dashboard_connections[websocket] = effective_channel
 
     # Send initial status for this tenant
-    await broadcast_santa_status(state, tenant_id)
+    await broadcast_santa_status(state, effective_channel)
 
     try:
         while True:
@@ -190,6 +237,7 @@ async def character_websocket(
         manager._connections[channel_key] = []
         manager._channel_state[channel_key] = {"playing": False, "streaming": False}
     manager._connections[channel_key].append(websocket)
+    manager._last_pong[websocket] = time.time()  # Initialize pong tracking
     await manager._notify_dashboard()
 
     # Send hello message with version info for client version checking

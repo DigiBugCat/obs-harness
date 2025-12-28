@@ -9,11 +9,12 @@ import secrets
 import time
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import ValidationError
 from sqlmodel import select
 
 from ..auth import require_auth
+from ..models import SantaModerator
 from ..chat_pipeline import ChatPipeline, ChatPipelineConfig
 from ..config import settings
 from ..database import get_session
@@ -47,6 +48,39 @@ from ..state import AppState
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/characters", tags=["Characters"])
+
+
+async def get_effective_tenant(
+    channel: str | None,
+    tenant_id: str,
+) -> str:
+    """Get effective tenant ID, validating moderator access if channel specified.
+
+    Args:
+        channel: Optional channel (tenant_id) to view. If None, returns tenant_id.
+        tenant_id: The authenticated user's tenant_id.
+
+    Returns:
+        The effective tenant_id to use for queries.
+
+    Raises:
+        HTTPException: If user doesn't have moderator access to the channel.
+    """
+    if not channel or channel == tenant_id:
+        return tenant_id
+
+    # Verify user has moderator access to this channel
+    async with get_session() as session:
+        result = await session.execute(
+            select(SantaModerator).where(
+                SantaModerator.broadcaster_tenant_id == channel,
+                SantaModerator.moderator_user_id == tenant_id,
+            )
+        )
+        if not result.scalar_one_or_none():
+            raise HTTPException(status_code=403, detail="Not authorized for this channel")
+
+    return channel
 
 
 def _validate_tts_settings(provider: str | None, tts_settings: dict | None) -> None:
@@ -175,11 +209,17 @@ async def create_character(
 async def list_characters(
     state: AppState = Depends(get_state),
     tenant_id: str = Depends(require_auth),
+    channel: str | None = Query(default=None, description="Channel to view (requires moderator access)"),
 ) -> list[CharacterResponse]:
-    """List all characters for the current tenant with connection status."""
+    """List all characters for a channel with connection status.
+
+    If channel is specified, verifies the user has moderator access.
+    """
+    effective_tenant = await get_effective_tenant(channel, tenant_id)
+
     async with get_session() as session:
         result = await session.execute(
-            select(Character).where(Character.tenant_id == tenant_id)
+            select(Character).where(Character.tenant_id == effective_tenant)
         )
         characters = list(result.scalars().all())
 

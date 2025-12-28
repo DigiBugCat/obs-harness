@@ -146,7 +146,8 @@ uv run obs-harness --db sqlite+aiosqlite:///data/myapp.db
 | Dashboard | `/` | Main control panel for characters and channels |
 | Channel | `/channel/{name}` | Browser source endpoint for OBS |
 | Editor | `/editor` | Visual text animation preset editor |
-| Twitch | `/twitch` | Twitch OAuth setup and configuration |
+| Configuration | `/configuration` | Twitch OAuth, channel settings, moderators |
+| Santa Dashboard | `/santa` | Mall Santa session control |
 | API Docs | `/docs` | Interactive Swagger UI |
 | ReDoc | `/redoc` | Alternative API documentation |
 
@@ -188,8 +189,8 @@ Characters can "read" live Twitch chat and incorporate it into their AI response
 
 ### Setup
 
-1. Navigate to `/twitch` in your browser
-2. Click "Connect with Twitch" to authorize
+1. Navigate to `/configuration` in your browser
+2. Click "Login with Twitch" to authorize
 3. Enter the channel name to monitor
 4. Enable `twitch_chat_enabled` on characters that should see chat
 
@@ -338,6 +339,10 @@ SQLite database with the following tables:
 - `TextPreset` - Saved text animation presets
 - `PlaybackLog` - History of audio/text playback
 - `TwitchConfig` - Twitch OAuth tokens and channel settings
+- `ConversationMessage` - Persisted conversation history
+- `SantaModerator` - Cross-channel moderator permissions
+- `SantaConfig` - Per-channel Santa feature configuration
+- `SantaSession` - Active Santa session state
 
 Database is created automatically on first run.
 
@@ -349,7 +354,15 @@ uv run obs-harness --reload
 
 # Run directly with Python
 uv run python -m obs_harness
+
+# Build TypeScript frontend (required after changing frontend/src/*.ts)
+cd frontend && npm install && npm run build
+
+# Type check TypeScript
+cd frontend && npm run typecheck
 ```
+
+**Note:** Frontend source files are in `frontend/src/*.ts`. The built outputs in `static/js/*.js` should not be edited directly.
 
 ## License
 

@@ -41,8 +41,14 @@ variable "service_port" {
   default     = 8080
 }
 
+variable "enable_access_protection" {
+  description = "Enable Cloudflare Access protection (edge-level auth). Set to false if using app-level auth only."
+  type        = bool
+  default     = false
+}
+
 variable "auth_emails" {
-  description = "List of email addresses allowed to access"
+  description = "List of email addresses allowed to access (only used if enable_access_protection=true)"
   type        = list(string)
   default     = []
 }
