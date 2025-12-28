@@ -1947,22 +1947,21 @@ const historyList = document.getElementById('history-list')!
     // Twitch Status
     // =========================================================================
 
-    const twitchBtn = document.getElementById('twitch-btn');
-    const twitchBtnText = document.getElementById('twitch-btn-text');
+    const twitchUser = document.getElementById('twitch-user');
+    const twitchUsername = document.getElementById('twitch-username');
 
     async function checkTwitchStatus() {
-        if (!twitchBtn || !twitchBtnText) return;
+        if (!twitchUser || !twitchUsername) return;
 
         try {
             const response = await fetch('/api/twitch/status');
             const data = await response.json();
 
-            if (data.connected) {
-                twitchBtn.classList.add('connected');
-                twitchBtnText.textContent = `#${data.channel}`;
+            if (data.connected && data.channel) {
+                twitchUsername.textContent = data.channel;
+                twitchUser.style.display = 'inline-flex';
             } else {
-                twitchBtn.classList.remove('connected');
-                twitchBtnText.textContent = 'Twitch';
+                twitchUser.style.display = 'none';
             }
         } catch (e) {
             console.error('Error checking Twitch status:', e);

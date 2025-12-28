@@ -453,33 +453,46 @@
             gap: 1rem;
         }
 
-        .twitch-btn {
+        .twitch-user {
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
-            padding: 0.5rem 1rem;
+            padding: 0.5rem 0.75rem;
             background: #9146ff;
             color: white;
-            border: none;
             border-radius: 6px;
             font-size: 0.875rem;
             font-weight: 500;
-            cursor: pointer;
-            text-decoration: none;
-            transition: background 0.2s;
         }
 
-        .twitch-btn:hover {
-            background: #a970ff;
-        }
-
-        .twitch-btn.connected {
-            background: var(--success);
-        }
-
-        .twitch-btn svg {
+        .twitch-user svg {
             width: 16px;
             height: 16px;
+        }
+
+        .settings-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 36px;
+            height: 36px;
+            background: var(--bg-card);
+            color: var(--text-secondary);
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            text-decoration: none;
+            transition: background 0.2s, color 0.2s;
+        }
+
+        .settings-btn:hover {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+        }
+
+        .settings-btn svg {
+            width: 18px;
+            height: 18px;
         }
 
         /* Chat message bubbles */
@@ -610,11 +623,16 @@
         <header>
             <h1>OBS Audio Harness</h1>
             <div class="header-actions">
-                <a href="/configuration" class="twitch-btn" id="twitch-btn">
-                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                <div id="twitch-user" class="twitch-user" style="display: none;">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714Z"/>
+                    </svg>
+                    <span id="twitch-username"></span>
+                </div>
+                <a href="/configuration" class="settings-btn" title="Configuration">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
                         <path d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
                     </svg>
-                    <span id="twitch-btn-text">Configuration</span>
                 </a>
                 <div class="status-indicator">
                     <div class="status-dot" id="ws-status"></div>
