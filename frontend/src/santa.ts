@@ -4,19 +4,81 @@
  */
 
 // HTML escape helper to prevent XSS
-function escapeHtml(text) {
+function escapeHtml(text: string): string {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
 }
 
 class SantaDashboard {
-    constructor() {
-        this.ws = null;
-        this.connected = false;
-        this.eventsubConnected = false;
-        this.sessionActive = false;
+    // WebSocket state
+    private ws: WebSocket | null = null;
+    private connected: boolean = false;
+    private eventsubConnected: boolean = false;
+    private sessionActive: boolean = false;
+    private sessionHeld: boolean = false;
+    private configuredRewardId: string | null = null;
 
+    // DOM Elements - Status indicators
+    private wsStatus: HTMLElement | null;
+    private wsStatusText: HTMLElement | null;
+    private eventsubStatus: HTMLElement | null;
+    private eventsubStatusText: HTMLElement | null;
+
+    // Session status elements
+    private sessionStatusEl: HTMLElement | null;
+    private sessionState: HTMLElement | null;
+    private sessionVisitor: HTMLElement | null;
+    private sessionWish: HTMLElement | null;
+    private sessionFollowups: HTMLElement | null;
+
+    // Control elements
+    private messageInput: HTMLTextAreaElement | null;
+    private sendMessageBtn: HTMLButtonElement | null;
+    private grantBtn: HTMLButtonElement | null;
+    private denyBtn: HTMLButtonElement | null;
+    private holdToggle: HTMLInputElement | null;
+    private holdLabel: HTMLElement | null;
+    private cancelBtn: HTMLButtonElement | null;
+    private conversationArea: HTMLElement | null;
+    private pastSessionsArea: HTMLElement | null;
+    private refreshSessionsBtn: HTMLButtonElement | null;
+    private clearSessionsBtn: HTMLButtonElement | null;
+
+    // Connection banner
+    private connectionBanner: HTMLElement | null;
+    private overallStatusIcon: HTMLElement | null;
+    private overallStatusText: HTMLElement | null;
+
+    // Config elements
+    private enabledToggle: HTMLInputElement | null;
+    private characterName: HTMLInputElement | null;
+    private rewardId: HTMLSelectElement | null;
+    private chatVoteSeconds: HTMLInputElement | null;
+    private maxFollowups: HTMLInputElement | null;
+    private responseTimeout: HTMLInputElement | null;
+    private debounceSeconds: HTMLInputElement | null;
+    private saveConfigBtn: HTMLButtonElement | null;
+
+    // Log and reward elements
+    private logArea: HTMLElement | null;
+    private refreshRewardsDropdownBtn: HTMLButtonElement | null;
+    private createRewardBtn: HTMLButtonElement | null;
+
+    // Director speak elements
+    private directorInput: HTMLTextAreaElement | null;
+    private speakDirectBtn: HTMLButtonElement | null;
+
+    // System prompt elements
+    private systemPrompt: HTMLTextAreaElement | null;
+    private savePromptBtn: HTMLButtonElement | null;
+    private resetPromptBtn: HTMLButtonElement | null;
+
+    // Quick action buttons
+    private resetSantaBtn: HTMLButtonElement | null;
+    private clearMemoryBtn: HTMLButtonElement | null;
+
+    constructor() {
         // DOM Elements
         this.wsStatus = document.getElementById('wsStatus');
         this.wsStatusText = document.getElementById('wsStatusText');
@@ -29,48 +91,48 @@ class SantaDashboard {
         this.sessionWish = document.getElementById('sessionWish');
         this.sessionFollowups = document.getElementById('sessionFollowups');
 
-        this.messageInput = document.getElementById('messageInput');
-        this.sendMessageBtn = document.getElementById('sendMessageBtn');
-        this.grantBtn = document.getElementById('grantBtn');
-        this.denyBtn = document.getElementById('denyBtn');
-        this.holdToggle = document.getElementById('holdToggle');
+        this.messageInput = document.getElementById('messageInput') as HTMLTextAreaElement | null;
+        this.sendMessageBtn = document.getElementById('sendMessageBtn') as HTMLButtonElement | null;
+        this.grantBtn = document.getElementById('grantBtn') as HTMLButtonElement | null;
+        this.denyBtn = document.getElementById('denyBtn') as HTMLButtonElement | null;
+        this.holdToggle = document.getElementById('holdToggle') as HTMLInputElement | null;
         this.holdLabel = document.getElementById('holdLabel');
-        this.cancelBtn = document.getElementById('cancelBtn');
+        this.cancelBtn = document.getElementById('cancelBtn') as HTMLButtonElement | null;
         this.conversationArea = document.getElementById('conversationArea');
         this.pastSessionsArea = document.getElementById('pastSessionsArea');
-        this.refreshSessionsBtn = document.getElementById('refreshSessionsBtn');
-        this.clearSessionsBtn = document.getElementById('clearSessionsBtn');
+        this.refreshSessionsBtn = document.getElementById('refreshSessionsBtn') as HTMLButtonElement | null;
+        this.clearSessionsBtn = document.getElementById('clearSessionsBtn') as HTMLButtonElement | null;
 
         // Connection banner
         this.connectionBanner = document.getElementById('connectionBanner');
         this.overallStatusIcon = document.getElementById('overallStatusIcon');
         this.overallStatusText = document.getElementById('overallStatusText');
 
-        this.enabledToggle = document.getElementById('enabledToggle');
-        this.characterName = document.getElementById('characterName');
-        this.rewardId = document.getElementById('rewardId');
-        this.chatVoteSeconds = document.getElementById('chatVoteSeconds');
-        this.maxFollowups = document.getElementById('maxFollowups');
-        this.responseTimeout = document.getElementById('responseTimeout');
-        this.debounceSeconds = document.getElementById('debounceSeconds');
-        this.saveConfigBtn = document.getElementById('saveConfigBtn');
+        this.enabledToggle = document.getElementById('enabledToggle') as HTMLInputElement | null;
+        this.characterName = document.getElementById('characterName') as HTMLInputElement | null;
+        this.rewardId = document.getElementById('rewardId') as HTMLSelectElement | null;
+        this.chatVoteSeconds = document.getElementById('chatVoteSeconds') as HTMLInputElement | null;
+        this.maxFollowups = document.getElementById('maxFollowups') as HTMLInputElement | null;
+        this.responseTimeout = document.getElementById('responseTimeout') as HTMLInputElement | null;
+        this.debounceSeconds = document.getElementById('debounceSeconds') as HTMLInputElement | null;
+        this.saveConfigBtn = document.getElementById('saveConfigBtn') as HTMLButtonElement | null;
 
         this.logArea = document.getElementById('logArea');
-        this.refreshRewardsDropdownBtn = document.getElementById('refreshRewardsDropdownBtn');
-        this.createRewardBtn = document.getElementById('createRewardBtn');
+        this.refreshRewardsDropdownBtn = document.getElementById('refreshRewardsDropdownBtn') as HTMLButtonElement | null;
+        this.createRewardBtn = document.getElementById('createRewardBtn') as HTMLButtonElement | null;
 
         // Director speak
-        this.directorInput = document.getElementById('directorInput');
-        this.speakDirectBtn = document.getElementById('speakDirectBtn');
+        this.directorInput = document.getElementById('directorInput') as HTMLTextAreaElement | null;
+        this.speakDirectBtn = document.getElementById('speakDirectBtn') as HTMLButtonElement | null;
 
         // System prompt
-        this.systemPrompt = document.getElementById('systemPrompt');
-        this.savePromptBtn = document.getElementById('savePromptBtn');
-        this.resetPromptBtn = document.getElementById('resetPromptBtn');
+        this.systemPrompt = document.getElementById('systemPrompt') as HTMLTextAreaElement | null;
+        this.savePromptBtn = document.getElementById('savePromptBtn') as HTMLButtonElement | null;
+        this.resetPromptBtn = document.getElementById('resetPromptBtn') as HTMLButtonElement | null;
 
         // Quick actions
-        this.resetSantaBtn = document.getElementById('resetSantaBtn');
-        this.clearMemoryBtn = document.getElementById('clearMemoryBtn');
+        this.resetSantaBtn = document.getElementById('resetSantaBtn') as HTMLButtonElement | null;
+        this.clearMemoryBtn = document.getElementById('clearMemoryBtn') as HTMLButtonElement | null;
 
         this.init();
     }
@@ -184,12 +246,12 @@ class SantaDashboard {
         }
     }
 
-    updateConversation(conversation) {
-        const emptyDiv = this.conversationArea.querySelector('#conversation-empty');
+    updateConversation(conversation: Array<{ role: string; content: string }> | null) {
+        const emptyDiv = this.conversationArea?.querySelector('#conversation-empty') as HTMLElement | null;
 
         if (!conversation || conversation.length === 0) {
             if (emptyDiv) emptyDiv.style.display = 'block';
-            this.conversationArea.querySelectorAll('.chat-bubble').forEach(el => el.remove());
+            this.conversationArea?.querySelectorAll('.chat-bubble').forEach(el => el.remove());
             return;
         }
 
