@@ -3,7 +3,7 @@
  * Handles audio playback, streaming, and text overlays via WebSocket
  */
 
-import { TextAnimator } from './text-animator';
+import { TextAnimator, AnimationStyle } from './text-animator';
 
 // Extend Window interface for webkit AudioContext fallback
 declare global {
@@ -23,8 +23,8 @@ console.log('[channel.js] VERSION 13 LOADED - token-based WebSocket auth');
     const wsToken = urlParams.get('token');
 
     // WebSocket connection
-    let ws = null;
-    let reconnectTimeout = null;
+    let ws: WebSocket | null = null;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
     // Reconnection with exponential backoff
     let reconnectAttempts = 0;
@@ -36,32 +36,51 @@ console.log('[channel.js] VERSION 13 LOADED - token-based WebSocket auth');
     const PING_TIMEOUT = 60000;  // 60 seconds - consider connection dead if no ping
     const HEALTH_POLL_INTERVAL = 30000;  // 30 seconds - fallback health check
     let lastPingTime = Date.now();
-    let healthPollInterval = null;
+    let healthPollInterval: ReturnType<typeof setInterval> | null = null;
 
     // Server version tracking for auto-refresh on updates
-    let serverBuildId = null;
+    let serverBuildId: string | null = null;
 
     // Audio elements
-    let currentAudio = null;
+    let currentAudio: HTMLAudioElement | null = null;
 
     // Streaming audio
-    let audioContext = null;
-    let streamBuffer = [];
+    let audioContext: AudioContext | null = null;
+    let streamBuffer: ArrayBuffer[] = [];
     let isStreaming = false;
     let streamSampleRate = 24000;
     let streamChannels = 1;
     let nextPlayTime = 0;
     let audioStreamEndTime = 0;  // When all scheduled audio will finish
     let firstAudioChunkReceived = false;  // Track if first audio chunk arrived
-    let scheduledSources = [];  // Track scheduled AudioBufferSourceNodes for stopping
+    let scheduledSources: AudioBufferSourceNode[] = [];  // Track scheduled AudioBufferSourceNodes for stopping
+
+    // Text stream settings interface
+    interface TextStreamSettings {
+        fontFamily?: string;
+        fontSize?: number;
+        color?: string;
+        strokeColor?: string;
+        strokeWidth?: number;
+        positionX?: number;
+        positionY?: number;
+        instantReveal?: boolean;
+    }
 
     // Pending text (waits for audio to start)
-    let pendingTextSettings = null;
-    let pendingTextChunks = [];
+    let pendingTextSettings: TextStreamSettings | null = null;
+    let pendingTextChunks: string[] = [];
+
+    // Word timing interface
+    interface WordTiming {
+        word: string;
+        start: number;
+        end: number;
+    }
 
     // Word timing for synced text reveal
     let wordTimingEnabled = false;
-    let wordTimingData = [];  // Array of {word, start, end} - times in seconds from audio start
+    let wordTimingData: WordTiming[] = [];  // Array of {word, start, end} - times in seconds from audio start
     let audioStartContextTime = 0;  // audioContext.currentTime when audio started
     let revealedWordCount = 0;  // How many words have been revealed
 
@@ -70,7 +89,7 @@ console.log('[channel.js] VERSION 13 LOADED - token-based WebSocket auth');
     const ctx = canvas.getContext('2d')!;
 
     // Text animator instance
-    let textAnimator = null;
+    let textAnimator: TextAnimator | null = null;
     let hasError = false;
 
     // Resize canvas to match window
@@ -168,7 +187,7 @@ console.log('[channel.js] VERSION 13 LOADED - token-based WebSocket auth');
         }
     }
 
-    function sendEvent(event) {
+    function sendEvent(event: Record<string, unknown>) {
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify(event));
         }
@@ -208,12 +227,12 @@ console.log('[channel.js] VERSION 13 LOADED - token-based WebSocket auth');
     // Version Check (Auto-refresh on server update)
     // =========================================================================
 
-    function handleHello(msg) {
-        const newBuildId = msg.build_id;
+    function handleHello(msg: Record<string, unknown>) {
+        const newBuildId = msg.build_id as string | undefined;
 
         if (serverBuildId === null) {
             // First connection - store the build ID
-            serverBuildId = newBuildId;
+            serverBuildId = newBuildId ?? null;
             console.log(`[${channelName}] Server build ID: ${serverBuildId}`);
         } else if (serverBuildId !== newBuildId) {
             // Server restarted with new version - refresh to get new JS/CSS
@@ -229,9 +248,9 @@ console.log('[channel.js] VERSION 13 LOADED - token-based WebSocket auth');
     // Message Handler
     // =========================================================================
 
-    function handleMessage(data) {
+    function handleMessage(data: string) {
         try {
-            const msg = JSON.parse(data);
+            const msg = JSON.parse(data) as Record<string, unknown>;
             console.log(`[${channelName}] Received:`, msg);
 
             switch (msg.action) {
@@ -243,16 +262,16 @@ console.log('[channel.js] VERSION 13 LOADED - token-based WebSocket auth');
                     lastPingTime = Date.now();
                     break;
                 case 'play':
-                    playAudio(msg);
+                    playAudio(msg as unknown as PlayMessage);
                     break;
                 case 'stop':
                     stopAudio();
                     break;
                 case 'volume':
-                    setVolume(msg.level);
+                    setVolume(msg.level as number);
                     break;
                 case 'stream_start':
-                    startStream(msg);
+                    startStream(msg as unknown as StreamStartMessage);
                     break;
                 case 'stream_end':
                     endStream();
@@ -261,22 +280,22 @@ console.log('[channel.js] VERSION 13 LOADED - token-based WebSocket auth');
                     stopStream();
                     break;
                 case 'text':
-                    showText(msg);
+                    showText(msg as unknown as ShowTextMessage);
                     break;
                 case 'clear_text':
                     clearText();
                     break;
                 case 'text_stream_start':
-                    startTextStream(msg);
+                    startTextStream(msg as unknown as TextStreamStartMessage);
                     break;
                 case 'text_chunk':
-                    handleTextChunk(msg);
+                    handleTextChunk(msg as unknown as TextChunkMessage);
                     break;
                 case 'text_stream_end':
                     endTextStream();
                     break;
                 case 'word_timing':
-                    handleWordTiming(msg);
+                    handleWordTiming(msg as unknown as WordTimingMessage);
                     break;
                 default:
                     console.warn(`[${channelName}] Unknown action:`, msg.action);
@@ -290,7 +309,13 @@ console.log('[channel.js] VERSION 13 LOADED - token-based WebSocket auth');
     // Audio Playback (File-based)
     // =========================================================================
 
-    function playAudio(msg) {
+    interface PlayMessage {
+        file: string;
+        volume?: number;
+        loop?: boolean;
+    }
+
+    function playAudio(msg: PlayMessage) {
         // Stop any current audio
         if (currentAudio) {
             currentAudio.pause();
@@ -302,7 +327,7 @@ console.log('[channel.js] VERSION 13 LOADED - token-based WebSocket auth');
         currentAudio.loop = msg.loop ?? false;
 
         currentAudio.onended = () => {
-            if (!currentAudio.loop) {
+            if (currentAudio && !currentAudio.loop) {
                 sendEvent({ event: 'ended', file: msg.file });
             }
         };
@@ -324,7 +349,7 @@ console.log('[channel.js] VERSION 13 LOADED - token-based WebSocket auth');
         }
     }
 
-    function setVolume(level) {
+    function setVolume(level: number) {
         if (currentAudio) {
             currentAudio.volume = Math.max(0, Math.min(1, level));
         }
@@ -334,7 +359,12 @@ console.log('[channel.js] VERSION 13 LOADED - token-based WebSocket auth');
     // Audio Streaming
     // =========================================================================
 
-    function startStream(msg) {
+    interface StreamStartMessage {
+        sample_rate?: number;
+        channels?: number;
+    }
+
+    function startStream(msg: StreamStartMessage) {
         // Create audio context if needed
         if (!audioContext) {
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -356,7 +386,7 @@ console.log('[channel.js] VERSION 13 LOADED - token-based WebSocket auth');
         console.log(`[${channelName}] Stream started: ${streamSampleRate}Hz, ${streamChannels}ch`);
     }
 
-    function handleStreamData(data) {
+    function handleStreamData(data: ArrayBuffer) {
         if (!isStreaming || !audioContext) return;
 
         try {
@@ -543,7 +573,20 @@ console.log('[channel.js] VERSION 13 LOADED - token-based WebSocket auth');
     // Text Overlay
     // =========================================================================
 
-    function showText(msg) {
+    interface ShowTextMessage {
+        text: string;
+        style?: string;
+        duration?: number;
+        position_x?: number;
+        position_y?: number;
+        font_family?: string;
+        font_size?: number;
+        color?: string;
+        stroke_color?: string;
+        stroke_width?: number;
+    }
+
+    function showText(msg: ShowTextMessage) {
         if (!textAnimator) {
             console.warn(`[${channelName}] TextAnimator not available`);
             return;
@@ -551,7 +594,7 @@ console.log('[channel.js] VERSION 13 LOADED - token-based WebSocket auth');
 
         textAnimator.show({
             text: msg.text,
-            style: msg.style || 'typewriter',
+            style: (msg.style || 'typewriter') as AnimationStyle,
             duration: msg.duration || 3000,
             x: msg.position_x ?? 0.5,
             y: msg.position_y ?? 0.5,
@@ -576,7 +619,18 @@ console.log('[channel.js] VERSION 13 LOADED - token-based WebSocket auth');
     // Streaming Text Overlay
     // =========================================================================
 
-    function startTextStream(msg) {
+    interface TextStreamStartMessage {
+        font_family?: string;
+        font_size?: number;
+        color?: string;
+        stroke_color?: string;
+        stroke_width?: number;
+        position_x?: number;
+        position_y?: number;
+        instant_reveal?: boolean;
+    }
+
+    function startTextStream(msg: TextStreamStartMessage) {
         if (!textAnimator) {
             console.warn(`[${channelName}] TextAnimator not available`);
             return;
@@ -606,7 +660,11 @@ console.log('[channel.js] VERSION 13 LOADED - token-based WebSocket auth');
         console.log(`[${channelName}] Text stream pending (waiting for audio)`);
     }
 
-    function handleTextChunk(msg) {
+    interface TextChunkMessage {
+        text: string;
+    }
+
+    function handleTextChunk(msg: TextChunkMessage) {
         if (!textAnimator) return;
 
         // If word timing is enabled, we ignore text chunks (words come from timing data)
@@ -620,7 +678,11 @@ console.log('[channel.js] VERSION 13 LOADED - token-based WebSocket auth');
         }
     }
 
-    function handleWordTiming(msg) {
+    interface WordTimingMessage {
+        words: Array<{ word: string; start: number; end: number }>;
+    }
+
+    function handleWordTiming(msg: WordTimingMessage) {
         if (!msg.words || msg.words.length === 0) return;
 
         // Enable word timing mode
@@ -635,7 +697,7 @@ console.log('[channel.js] VERSION 13 LOADED - token-based WebSocket auth');
             });
         }
 
-        console.log(`[${channelName}] Word timing received: ${msg.words.map(w => `"${w.word}"@${w.start.toFixed(2)}s`).join(', ')} (total: ${wordTimingData.length})`);
+        console.log(`[${channelName}] Word timing received: ${msg.words.map((w: { word: string; start: number }) => `"${w.word}"@${w.start.toFixed(2)}s`).join(', ')} (total: ${wordTimingData.length})`);
     }
 
     function endTextStream() {
@@ -667,7 +729,7 @@ console.log('[channel.js] VERSION 13 LOADED - token-based WebSocket auth');
     // Error Display
     // =========================================================================
 
-    function showErrorMessage(title, subtitle) {
+    function showErrorMessage(title: string, subtitle: string) {
         // Mark as error state to stop animation loop
         hasError = true;
 
@@ -786,7 +848,7 @@ console.log('[channel.js] VERSION 13 LOADED - token-based WebSocket auth');
         // Update and draw text animator
         if (textAnimator) {
             // Handle streaming text
-            if (textAnimator.isStreaming || textAnimator.streamText) {
+            if (textAnimator.hasStreamContent()) {
                 textAnimator.updateStream();
                 textAnimator.drawStream();
             } else {

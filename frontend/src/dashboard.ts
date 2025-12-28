@@ -18,6 +18,8 @@ interface ExtendedCharacter extends Character {
     color?: string;
     icon?: string;
     description?: string;
+    model?: string;  // OpenRouter model (API may return as 'model' instead of 'openrouter_model')
+    elevenlabs_model_id?: string;  // ElevenLabs model ID from settings
 }
 
 // Global functions exposed to window for HTML onclick handlers
@@ -292,7 +294,7 @@ const historyList = document.getElementById('history-list')!
         }
     }, 10000);  // Check every 10 seconds
 
-    function handleMessage(msg) {
+    function handleMessage(msg: Record<string, unknown>) {
         // Handle ping (heartbeat)
         if (msg.type === 'ping') {
             if (ws && ws.readyState === WebSocket.OPEN) {
@@ -304,17 +306,17 @@ const historyList = document.getElementById('history-list')!
 
         // Handle version check (auto-refresh on server update)
         if (msg.type === 'hello') {
-            const newBuildId = msg.build_id;
+            const newBuildId = msg.build_id as string | undefined;
 
             // Store tenant_id for status key matching
             if (msg.tenant_id) {
-                currentTenantId = msg.tenant_id;
+                currentTenantId = msg.tenant_id as string;
                 console.log(`[dashboard] Tenant ID: ${currentTenantId}`);
             }
 
             if (serverBuildId === null) {
                 // First connection - store the build ID
-                serverBuildId = newBuildId;
+                serverBuildId = newBuildId ?? null;
                 console.log(`[dashboard] Server build ID: ${serverBuildId}`);
             } else if (serverBuildId !== newBuildId) {
                 // Server restarted with new version - refresh to get new JS/CSS
@@ -331,7 +333,8 @@ const historyList = document.getElementById('history-list')!
             // Merge connection status into character list
             // Status uses full "tenant_id:name" keys, so we construct full keys for lookup
             const tenantId = getTenantId();
-            const statusMap = new Map<string, CharacterStatus>(msg.characters.map((c: CharacterStatus) => [c.name, c]));
+            const msgCharacters = msg.characters as CharacterStatus[];
+            const statusMap = new Map<string, CharacterStatus>(msgCharacters.map((c: CharacterStatus) => [c.name, c]));
             characters = characters.map(ch => {
                 const fullKey = `${tenantId}:${ch.name}`;
                 return {
@@ -368,7 +371,7 @@ const historyList = document.getElementById('history-list')!
         } else if (msg.type === 'character_sync') {
             // Full character data sync from another client's changes
             // Replace the entire character list with fresh data
-            characters = msg.characters;
+            characters = msg.characters as ExtendedCharacter[];
             renderCharacters();
 
             // Show a subtle notification that data was synced (optional)
@@ -387,7 +390,7 @@ const historyList = document.getElementById('history-list')!
     // Toast Notifications
     // =========================================================================
 
-    function showToast(message, type = 'info', duration = 4000) {
+    function showToast(message: string, type = 'info', duration = 4000) {
         // Remove existing toast if any
         const existingToast = document.querySelector('.toast-notification');
         if (existingToast) {
@@ -467,14 +470,14 @@ const historyList = document.getElementById('history-list')!
         return characters;
     }
 
-    async function createCharacter(data) {
+    async function createCharacter(data: Record<string, unknown>) {
         recentLocalUpdate = true;
         const result = await apiCall('/api/characters', 'POST', data);
         await getAllCharacters();  // Update local UI immediately
         return result;
     }
 
-    async function updateCharacter(name, data, showErrors = true) {
+    async function updateCharacter(name: string, data: Record<string, unknown>, showErrors = true) {
         recentLocalUpdate = true;
         const result = await apiCall(`/api/characters/${name}`, 'PUT', data, showErrors);
         await getAllCharacters();  // Update local UI immediately
@@ -680,7 +683,7 @@ const historyList = document.getElementById('history-list')!
         }
     }
 
-    function updateCartesiaVoiceInfo(voiceId) {
+    function updateCartesiaVoiceInfo(voiceId: string) {
         const infoEl = document.getElementById('cartesia-voice-info');
         if (!infoEl) return;
 
@@ -697,20 +700,20 @@ const historyList = document.getElementById('history-list')!
         }
     }
 
-    function toggleTTSProvider(provider) {
+    function toggleTTSProvider(provider: string) {
         const elevenlabsSettings = document.getElementById('elevenlabs-settings');
         const cartesiaSettings = document.getElementById('cartesia-settings');
 
         if (provider === 'cartesia') {
-            elevenlabsSettings.style.display = 'none';
-            cartesiaSettings.style.display = 'block';
+            if (elevenlabsSettings) elevenlabsSettings.style.display = 'none';
+            if (cartesiaSettings) cartesiaSettings.style.display = 'block';
             // Load voices on first switch
             if (cartesiaVoices.length === 0) {
                 loadCartesiaVoices();
             }
         } else {
-            elevenlabsSettings.style.display = 'block';
-            cartesiaSettings.style.display = 'none';
+            if (elevenlabsSettings) elevenlabsSettings.style.display = 'block';
+            if (cartesiaSettings) cartesiaSettings.style.display = 'none';
         }
     }
 
@@ -754,33 +757,40 @@ const historyList = document.getElementById('history-list')!
         return apiCall(`/api/characters/${characterName}/memory`, 'DELETE');
     }
 
-    function renderChatHistory(messages, characterName) {
+    interface ChatMessage {
+        role: string;
+        content: string;
+        interrupted?: boolean;
+        generated_text?: string;
+    }
+
+    function renderChatHistory(messages: ChatMessage[] | null, characterName: string) {
         const historyDiv = document.getElementById('chat-history');
         const emptyDiv = document.getElementById('chat-history-empty');
 
         if (!messages || messages.length === 0) {
-            emptyDiv.style.display = 'block';
+            if (emptyDiv) emptyDiv.style.display = 'block';
             // Clear any existing bubbles
-            historyDiv.querySelectorAll('.chat-bubble').forEach(el => el.remove());
+            historyDiv?.querySelectorAll('.chat-bubble').forEach(el => el.remove());
             return;
         }
 
-        emptyDiv.style.display = 'none';
+        if (emptyDiv) emptyDiv.style.display = 'none';
         // Clear existing bubbles
-        historyDiv.querySelectorAll('.chat-bubble').forEach(el => el.remove());
+        historyDiv?.querySelectorAll('.chat-bubble').forEach(el => el.remove());
 
-        messages.forEach(msg => {
+        messages.forEach((msg: ChatMessage) => {
             if (msg.role === 'context') {
                 // Render context as a trimmed snippet
                 const lines = msg.content.split('\n');
-                const trimmed = lines.slice(-4).map(l => l.length > 60 ? l.substring(0, 57) + '...' : l).join(' | ');
+                const trimmed = lines.slice(-4).map((l: string) => l.length > 60 ? l.substring(0, 57) + '...' : l).join(' | ');
                 const bubble = document.createElement('div');
                 bubble.className = 'chat-bubble context';
                 const contentDiv = document.createElement('div');
                 contentDiv.className = 'chat-bubble-content';
                 contentDiv.textContent = `📺 Twitch (${lines.length}): ${trimmed}`;
                 bubble.appendChild(contentDiv);
-                historyDiv.appendChild(bubble);
+                historyDiv?.appendChild(bubble);
             } else {
                 const bubble = document.createElement('div');
                 bubble.className = `chat-bubble ${msg.role}`;
@@ -833,18 +843,18 @@ const historyList = document.getElementById('history-list')!
 
                 bubble.appendChild(label);
                 bubble.appendChild(content);
-                historyDiv.appendChild(bubble);
+                historyDiv?.appendChild(bubble);
             }
         });
 
         // Scroll to bottom
-        historyDiv.scrollTop = historyDiv.scrollHeight;
+        if (historyDiv) historyDiv.scrollTop = historyDiv.scrollHeight;
     }
 
-    function addChatBubble(role, content, characterName) {
+    function addChatBubble(role: string, content: string, characterName: string) {
         const historyDiv = document.getElementById('chat-history');
         const emptyDiv = document.getElementById('chat-history-empty');
-        emptyDiv.style.display = 'none';
+        if (emptyDiv) emptyDiv.style.display = 'none';
 
         const bubble = document.createElement('div');
         bubble.className = `chat-bubble ${role}`;
@@ -859,16 +869,16 @@ const historyList = document.getElementById('history-list')!
 
         bubble.appendChild(label);
         bubble.appendChild(contentDiv);
-        historyDiv.appendChild(bubble);
+        historyDiv?.appendChild(bubble);
 
         // Scroll to bottom
-        historyDiv.scrollTop = historyDiv.scrollHeight;
+        if (historyDiv) historyDiv.scrollTop = historyDiv.scrollHeight;
     }
 
-    function addContextBubble(text) {
+    function addContextBubble(text: string) {
         const historyDiv = document.getElementById('chat-history');
         const emptyDiv = document.getElementById('chat-history-empty');
-        emptyDiv.style.display = 'none';
+        if (emptyDiv) emptyDiv.style.display = 'none';
 
         const bubble = document.createElement('div');
         bubble.className = 'chat-bubble context';
@@ -878,10 +888,10 @@ const historyList = document.getElementById('history-list')!
         contentDiv.textContent = text;
 
         bubble.appendChild(contentDiv);
-        historyDiv.appendChild(bubble);
+        historyDiv?.appendChild(bubble);
 
         // Scroll to bottom
-        historyDiv.scrollTop = historyDiv.scrollHeight;
+        if (historyDiv) historyDiv.scrollTop = historyDiv.scrollHeight;
     }
 
     // =========================================================================
@@ -1506,7 +1516,7 @@ const historyList = document.getElementById('history-list')!
 
             showToast('Screen captured!', 'success');
         } catch (err) {
-            if (err.name === 'NotAllowedError') {
+            if (err instanceof Error && err.name === 'NotAllowedError') {
                 showToast('Screen capture permission denied', 'warning');
             } else {
                 console.error('Screen capture error:', err);
@@ -1516,7 +1526,7 @@ const historyList = document.getElementById('history-list')!
     }
 
     // Paste handler for chat textarea
-    function handleChatPaste(event) {
+    function handleChatPaste(event: ClipboardEvent) {
         const items = event.clipboardData?.items;
         if (!items) return;
 
@@ -1583,11 +1593,11 @@ const historyList = document.getElementById('history-list')!
             renderChatHistory([], characterName);
         }
 
-        chatModal.classList.add('active');
+        chatModal?.classList.add('active');
     }
 
     function closeChatModal() {
-        chatModal.classList.remove('active');
+        chatModal?.classList.remove('active');
         chatCharacter = null;
         clearPendingImages();
     }
@@ -1663,11 +1673,11 @@ const historyList = document.getElementById('history-list')!
                 if (result.twitch_chat_context) {
                     const lines = result.twitch_chat_context.split('\n').length;
                     statusMsg += ` (${lines} chat msgs)`;
-                    twitchSummary.textContent = `Twitch Chat Context (${lines} messages)`;
-                    twitchContextText.textContent = result.twitch_chat_context;
-                    twitchDetails.style.display = 'block';
+                    if (twitchSummary) twitchSummary.textContent = `Twitch Chat Context (${lines} messages)`;
+                    if (twitchContextText) twitchContextText.textContent = result.twitch_chat_context;
+                    if (twitchDetails) twitchDetails.style.display = 'block';
                 } else {
-                    twitchDetails.style.display = 'none';
+                    if (twitchDetails) twitchDetails.style.display = 'none';
                 }
                 statusText.textContent = statusMsg;
                 loadHistory();
@@ -1680,7 +1690,7 @@ const historyList = document.getElementById('history-list')!
             }
         } catch (error) {
             console.error('Chat error:', error);
-            statusText.textContent = `Error: ${error.message || 'Unknown error'}`;
+            statusText.textContent = `Error: ${error instanceof Error ? error.message : 'Unknown error'}`;
             // Error - hide stop button immediately
             stopBtn.style.display = 'none';
             activeGenerationCharacter = null;
@@ -1699,12 +1709,16 @@ const historyList = document.getElementById('history-list')!
 
         try {
             await clearCharacterMemory(chatCharacter.name);
-            document.getElementById('chat-memory-count').textContent = 'Memory: 0 messages';
-            document.getElementById('chat-status').style.display = 'block';
-            document.getElementById('chat-status-text').textContent = 'Memory cleared!';
+            const memoryCount = document.getElementById('chat-memory-count');
+            const chatStatus = document.getElementById('chat-status');
+            const chatStatusText = document.getElementById('chat-status-text');
+            const chatTwitchDetails = document.getElementById('chat-twitch-details');
+            if (memoryCount) memoryCount.textContent = 'Memory: 0 messages';
+            if (chatStatus) chatStatus.style.display = 'block';
+            if (chatStatusText) chatStatusText.textContent = 'Memory cleared!';
             // Clear the chat history UI
             renderChatHistory([], chatCharacter.name);
-            document.getElementById('chat-twitch-details').style.display = 'none';
+            if (chatTwitchDetails) chatTwitchDetails.style.display = 'none';
         } catch (error) {
             console.error('Error clearing memory:', error);
             alert('Error clearing memory');
@@ -1715,13 +1729,19 @@ const historyList = document.getElementById('history-list')!
     // Rendering
     // =========================================================================
 
-    function renderHistory(history) {
+    interface HistoryItem {
+        timestamp: string;
+        channel: string;
+        content: string;
+    }
+
+    function renderHistory(history: HistoryItem[] | null) {
         if (!history || history.length === 0) {
             historyList.innerHTML = '<div class="history-item"><span class="history-content">No history yet</span></div>';
             return;
         }
 
-        historyList.innerHTML = history.map(item => {
+        historyList.innerHTML = history.map((item: HistoryItem) => {
             const time = new Date(item.timestamp).toLocaleTimeString();
             return `
                 <div class="history-item">
@@ -1749,7 +1769,7 @@ const historyList = document.getElementById('history-list')!
         charactersContainer.innerHTML = characters.map(ch => renderCharacterCard(ch)).join('');
     }
 
-    function renderCharacterCard(character) {
+    function renderCharacterCard(character: ExtendedCharacter) {
         // Connection status
         let statusClass = '';
         let statusText = 'offline';

@@ -10,6 +10,45 @@ function escapeHtml(text: string): string {
     return div.innerHTML;
 }
 
+// Type definitions for Santa dashboard
+interface SessionStatus {
+    active: boolean;
+    held?: boolean;
+    state?: string;
+    redeemer_display_name?: string;
+    wish_text?: string;
+    followup_count?: number;
+    conversation?: Array<{ role: string; content: string }>;
+}
+
+interface SantaSession {
+    id: number;
+    redeemer_display_name: string;
+    wish_text?: string;
+    outcome?: string;
+    started_at?: string;
+    ended_at?: string;
+    conversation?: Array<{ role: string; content: string }>;
+}
+
+interface SantaConfig {
+    enabled: boolean;
+    character_name: string;
+    reward_id?: string;
+    chat_vote_seconds?: number;
+    max_followups?: number;
+    response_timeout?: number;
+    debounce_seconds?: number;
+}
+
+interface TwitchReward {
+    id: string;
+    title: string;
+    cost: number;
+    is_enabled: boolean;
+    is_paused: boolean;
+}
+
 class SantaDashboard {
     // WebSocket state
     private ws: WebSocket | null = null;
@@ -161,16 +200,16 @@ class SantaDashboard {
 
         this.ws.onopen = () => {
             this.connected = true;
-            this.wsStatus.classList.add('connected');
-            this.wsStatusText.textContent = 'Dashboard';
+            this.wsStatus?.classList.add('connected');
+            if (this.wsStatusText) this.wsStatusText.textContent = 'Dashboard';
             this.log('WebSocket connected');
             this.updateConnectionBanner();
         };
 
         this.ws.onclose = () => {
             this.connected = false;
-            this.wsStatus.classList.remove('connected');
-            this.wsStatusText.textContent = 'Dashboard';
+            this.wsStatus?.classList.remove('connected');
+            if (this.wsStatusText) this.wsStatusText.textContent = 'Dashboard';
             this.log('WebSocket disconnected, reconnecting...');
             this.updateConnectionBanner();
             setTimeout(() => this.connectWebSocket(), 3000);
@@ -185,19 +224,19 @@ class SantaDashboard {
             try {
                 const data = JSON.parse(event.data);
                 this.handleMessage(data);
-            } catch (e) {
+            } catch (e: unknown) {
                 console.error('Failed to parse WebSocket message:', e);
             }
         };
     }
 
-    handleMessage(data) {
+    handleMessage(data: { type: string; status?: SessionStatus }) {
         switch (data.type) {
             case 'santa_status':
-                this.updateSessionStatus(data.status);
+                if (data.status) this.updateSessionStatus(data.status);
                 break;
             case 'ping':
-                this.ws.send(JSON.stringify({ event: 'pong' }));
+                this.ws?.send(JSON.stringify({ event: 'pong' }));
                 break;
             default:
                 console.log('Unknown message type:', data.type);
@@ -208,32 +247,34 @@ class SantaDashboard {
     // Session Status
     // -------------------------------------------------------------------------
 
-    updateSessionStatus(status) {
+    updateSessionStatus(status: SessionStatus) {
         this.sessionActive = status.active;
         this.sessionHeld = status.held || false;
 
         // Update state badge
         const state = status.state || 'idle';
-        this.sessionState.textContent = state.replace('_', ' ') + (this.sessionHeld ? ' (HELD)' : '');
-        this.sessionState.className = `state-badge ${state}`;
+        if (this.sessionState) {
+            this.sessionState.textContent = state.replace('_', ' ') + (this.sessionHeld ? ' (HELD)' : '');
+            this.sessionState.className = `state-badge ${state}`;
+        }
 
         // Update session info
-        this.sessionVisitor.textContent = status.redeemer_display_name || '-';
-        this.sessionWish.textContent = status.wish_text || '-';
-        this.sessionFollowups.textContent = status.followup_count || '0';
+        if (this.sessionVisitor) this.sessionVisitor.textContent = status.redeemer_display_name || '-';
+        if (this.sessionWish) this.sessionWish.textContent = status.wish_text || '-';
+        if (this.sessionFollowups) this.sessionFollowups.textContent = String(status.followup_count || '0');
 
         // Update status container
         if (status.active) {
-            this.sessionStatusEl.classList.remove('idle');
-            this.sessionStatusEl.classList.add('active');
+            this.sessionStatusEl?.classList.remove('idle');
+            this.sessionStatusEl?.classList.add('active');
         } else {
-            this.sessionStatusEl.classList.remove('active');
-            this.sessionStatusEl.classList.add('idle');
+            this.sessionStatusEl?.classList.remove('active');
+            this.sessionStatusEl?.classList.add('idle');
         }
 
         // Update hold toggle
-        this.holdToggle.checked = this.sessionHeld;
-        this.holdLabel.textContent = this.sessionHeld ? 'On Hold' : 'Hold';
+        if (this.holdToggle) this.holdToggle.checked = this.sessionHeld;
+        if (this.holdLabel) this.holdLabel.textContent = this.sessionHeld ? 'On Hold' : 'Hold';
 
         // Update conversation display
         this.updateConversation(status.conversation || []);
@@ -267,7 +308,7 @@ class SantaDashboard {
                 try {
                     const parsed = JSON.parse(content);
                     content = parsed.speech || content;
-                } catch (e) {
+                } catch (e: unknown) {
                     // Not JSON, use as-is
                 }
             }
@@ -279,9 +320,9 @@ class SantaDashboard {
         }).join('');
 
         // Keep empty div, replace only bubbles
-        this.conversationArea.querySelectorAll('.chat-bubble').forEach(el => el.remove());
-        this.conversationArea.insertAdjacentHTML('beforeend', html);
-        this.conversationArea.scrollTop = this.conversationArea.scrollHeight;
+        this.conversationArea?.querySelectorAll('.chat-bubble').forEach(el => el.remove());
+        this.conversationArea?.insertAdjacentHTML('beforeend', html);
+        if (this.conversationArea) this.conversationArea.scrollTop = this.conversationArea.scrollHeight;
     }
 
     async loadPastSessions() {
@@ -294,7 +335,7 @@ class SantaDashboard {
                 return;
             }
 
-            const html = data.sessions.map(session => {
+            const html = data.sessions.map((session: SantaSession) => {
                 const outcomeClass = session.outcome || 'unknown';
                 const outcomeLabel = session.outcome ? session.outcome.toUpperCase() : 'IN PROGRESS';
                 const date = session.started_at ? new Date(session.started_at).toLocaleString() : 'Unknown';
@@ -302,7 +343,7 @@ class SantaDashboard {
                 // Render conversation bubbles
                 let convoHtml = '';
                 if (session.conversation && session.conversation.length > 0) {
-                    convoHtml = session.conversation.map(msg => {
+                    convoHtml = session.conversation.map((msg: { role: string; content: string }) => {
                         const isUser = msg.role === 'user';
                         const label = isUser ? '👤 CHILD' : '🎅 SANTA';
                         let content = msg.content;
@@ -311,7 +352,7 @@ class SantaDashboard {
                             try {
                                 const parsed = JSON.parse(content);
                                 content = parsed.speech || content;
-                            } catch (e) {}
+                            } catch (e: unknown) {}
                         }
 
                         return `<div class="chat-bubble ${msg.role}">
@@ -344,7 +385,7 @@ class SantaDashboard {
             }).join('');
 
             this.pastSessionsArea.innerHTML = html;
-        } catch (e) {
+        } catch (e: unknown) {
             this.pastSessionsArea.innerHTML = '<div style="color: var(--text-secondary);">Failed to load past sessions</div>';
             console.error('Failed to load past sessions:', e);
         }
@@ -377,8 +418,8 @@ class SantaDashboard {
             this.debounceSeconds.value = config.debounce_seconds;
 
             this.log('Configuration loaded');
-        } catch (e) {
-            this.log('Failed to load config: ' + e.message);
+        } catch (e: unknown) {
+            this.log('Failed to load config: ' + (e instanceof Error ? e.message : String(e)));
         }
     }
 
@@ -405,8 +446,8 @@ class SantaDashboard {
                 const error = await response.json();
                 this.log('Failed to save config: ' + error.detail);
             }
-        } catch (e) {
-            this.log('Failed to save config: ' + e.message);
+        } catch (e: unknown) {
+            this.log('Failed to save config: ' + (e instanceof Error ? e.message : String(e)));
         }
     }
 
@@ -428,7 +469,7 @@ class SantaDashboard {
             }
 
             this.updateConnectionBanner();
-        } catch (e) {
+        } catch (e: unknown) {
             this.eventsubConnected = false;
             this.updateConnectionBanner();
         }
@@ -472,7 +513,7 @@ class SantaDashboard {
             if (data.rewards && data.rewards.length > 0) {
                 // Update dropdown
                 this.rewardId.innerHTML = '<option value="">All rewards</option>' +
-                    data.rewards.map(r =>
+                    data.rewards.map((r: TwitchReward) =>
                         `<option value="${r.id}">${escapeHtml(r.title)} (${r.cost} pts)${r.is_paused ? ' [PAUSED]' : ''}</option>`
                     ).join('');
 
@@ -484,8 +525,8 @@ class SantaDashboard {
                 this.rewardId.innerHTML = '<option value="">All rewards</option>';
                 this.log('No rewards found');
             }
-        } catch (e) {
-            this.log('Failed to load rewards: ' + e.message);
+        } catch (e: unknown) {
+            this.log('Failed to load rewards: ' + (e instanceof Error ? e.message : String(e)));
         }
     }
 
@@ -507,12 +548,12 @@ class SantaDashboard {
                 const error = await response.json();
                 this.log('Failed to send message: ' + error.detail);
             }
-        } catch (e) {
-            this.log('Failed to send message: ' + e.message);
+        } catch (e: unknown) {
+            this.log('Failed to send message: ' + (e instanceof Error ? e.message : String(e)));
         }
     }
 
-    async forceVerdict(verdict) {
+    async forceVerdict(verdict: string) {
         try {
             const response = await fetch('/api/santa/session/verdict', {
                 method: 'POST',
@@ -526,8 +567,8 @@ class SantaDashboard {
                 const error = await response.json();
                 this.log('Failed to force verdict: ' + error.detail);
             }
-        } catch (e) {
-            this.log('Failed to force verdict: ' + e.message);
+        } catch (e: unknown) {
+            this.log('Failed to force verdict: ' + (e instanceof Error ? e.message : String(e)));
         }
     }
 
@@ -541,8 +582,8 @@ class SantaDashboard {
                 const error = await response.json();
                 this.log('Failed to cancel session: ' + error.detail);
             }
-        } catch (e) {
-            this.log('Failed to cancel session: ' + e.message);
+        } catch (e: unknown) {
+            this.log('Failed to cancel session: ' + (e instanceof Error ? e.message : String(e)));
         }
     }
 
@@ -556,8 +597,8 @@ class SantaDashboard {
             } else {
                 this.log('Failed to toggle hold: ' + result.detail);
             }
-        } catch (e) {
-            this.log('Failed to toggle hold: ' + e.message);
+        } catch (e: unknown) {
+            this.log('Failed to toggle hold: ' + (e instanceof Error ? e.message : String(e)));
         }
     }
 
@@ -573,8 +614,8 @@ class SantaDashboard {
                 this.systemPrompt.value = char.system_prompt || '';
                 this.log('Character settings loaded');
             }
-        } catch (e) {
-            this.log('Failed to load character: ' + e.message);
+        } catch (e: unknown) {
+            this.log('Failed to load character: ' + (e instanceof Error ? e.message : String(e)));
         }
     }
 
@@ -594,8 +635,8 @@ class SantaDashboard {
                 const error = await response.json();
                 this.log('Failed to save prompt: ' + error.detail);
             }
-        } catch (e) {
-            this.log('Failed to save prompt: ' + e.message);
+        } catch (e: unknown) {
+            this.log('Failed to save prompt: ' + (e instanceof Error ? e.message : String(e)));
         }
     }
 
@@ -649,8 +690,8 @@ You remember everything from this stream. Reference past visitors, chat's previo
                 const error = await response.json();
                 this.log('Failed to send: ' + error.detail);
             }
-        } catch (e) {
-            this.log('Failed to send: ' + e.message);
+        } catch (e: unknown) {
+            this.log('Failed to send: ' + (e instanceof Error ? e.message : String(e)));
         } finally {
             this.speakDirectBtn.disabled = false;
         }
@@ -676,8 +717,8 @@ You remember everything from this stream. Reference past visitors, chat's previo
             } else {
                 this.log('Failed to reset: ' + result.detail);
             }
-        } catch (e) {
-            this.log('Failed to reset: ' + e.message);
+        } catch (e: unknown) {
+            this.log('Failed to reset: ' + (e instanceof Error ? e.message : String(e)));
         } finally {
             this.resetSantaBtn.disabled = false;
         }
@@ -700,8 +741,8 @@ You remember everything from this stream. Reference past visitors, chat's previo
                 const error = await response.json();
                 this.log('Failed to clear memory: ' + error.detail);
             }
-        } catch (e) {
-            this.log('Failed to clear memory: ' + e.message);
+        } catch (e: unknown) {
+            this.log('Failed to clear memory: ' + (e instanceof Error ? e.message : String(e)));
         } finally {
             this.clearMemoryBtn.disabled = false;
         }
@@ -725,8 +766,8 @@ You remember everything from this stream. Reference past visitors, chat's previo
                 const error = await response.json();
                 this.log('Failed to clear sessions: ' + error.detail);
             }
-        } catch (e) {
-            this.log('Failed to clear sessions: ' + e.message);
+        } catch (e: unknown) {
+            this.log('Failed to clear sessions: ' + (e instanceof Error ? e.message : String(e)));
         } finally {
             this.clearSessionsBtn.disabled = false;
         }
@@ -771,8 +812,8 @@ You remember everything from this stream. Reference past visitors, chat's previo
                 const error = await response.json();
                 this.log('Failed to create reward: ' + error.detail);
             }
-        } catch (e) {
-            this.log('Failed to create reward: ' + e.message);
+        } catch (e: unknown) {
+            this.log('Failed to create reward: ' + (e instanceof Error ? e.message : String(e)));
         } finally {
             this.createRewardBtn.disabled = false;
         }
@@ -837,10 +878,10 @@ You remember everything from this stream. Reference past visitors, chat's previo
                 this.enabledToggle.checked = !this.enabledToggle.checked;
                 this.log('Failed to toggle: ' + result.detail);
             }
-        } catch (e) {
+        } catch (e: unknown) {
             // Revert checkbox on error
             this.enabledToggle.checked = !this.enabledToggle.checked;
-            this.log('Failed to toggle: ' + e.message);
+            this.log('Failed to toggle: ' + (e instanceof Error ? e.message : String(e)));
         }
     }
 
@@ -848,7 +889,7 @@ You remember everything from this stream. Reference past visitors, chat's previo
     // Logging
     // -------------------------------------------------------------------------
 
-    log(message) {
+    log(message: string) {
         const time = new Date().toLocaleTimeString();
         const entry = document.createElement('div');
         entry.className = 'log-entry';

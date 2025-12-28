@@ -65,7 +65,7 @@ function Z() {
 function ee(e) {
   const t = e.build_id;
   if (_ === null)
-    _ = t, console.log(`[${n}] Server build ID: ${_}`);
+    _ = t ?? null, console.log(`[${n}] Server build ID: ${_}`);
   else if (_ !== t) {
     console.log(`[${n}] Server version changed (${_} -> ${t}), refreshing page...`), location.reload();
     return;
@@ -127,7 +127,7 @@ function te(e) {
 }
 function ne(e) {
   i && (i.pause(), i = null), i = new Audio(e.file), i.volume = e.volume ?? 1, i.loop = e.loop ?? !1, i.onended = () => {
-    i.loop || p({ event: "ended", file: e.file });
+    i && !i.loop && p({ event: "ended", file: e.file });
   }, i.onerror = (t) => {
     p({ event: "error", message: `Failed to load: ${e.file}` });
   }, i.play().catch((t) => {
@@ -304,7 +304,7 @@ function we() {
   }
 }
 function X() {
-  H || (c && c.readyState === WebSocket.OPEN && Date.now() - P > F && (console.log(`[${n}] No ping received in ${F}ms, connection stale - reconnecting...`), P = Date.now(), c.close()), s.clearRect(0, 0, l.width, l.height), we(), o && (o.isStreaming || o.streamText ? (o.updateStream(), o.drawStream()) : (o.update(), o.draw())), requestAnimationFrame(X));
+  H || (c && c.readyState === WebSocket.OPEN && Date.now() - P > F && (console.log(`[${n}] No ping received in ${F}ms, connection stale - reconnecting...`), P = Date.now(), c.close()), s.clearRect(0, 0, l.width, l.height), we(), o && (o.hasStreamContent() ? (o.updateStream(), o.drawStream()) : (o.update(), o.draw())), requestAnimationFrame(X));
 }
 X();
 V();

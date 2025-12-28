@@ -67,30 +67,42 @@ class z {
   clear() {
     this.queue = [], this.current = null;
   }
+  /**
+   * Check if there's an animation in progress
+   */
+  isAnimating() {
+    return this.current !== null;
+  }
+  /**
+   * Check if text streaming is active
+   */
+  hasStreamContent() {
+    return this.isStreaming || this.streamText.length > 0;
+  }
   next() {
-    this.queue.length > 0 ? (this.current = this.queue.shift(), this.startTime = performance.now(), this.current.lines = this.wrapText(this.current)) : this.current = null;
+    this.queue.length > 0 ? (this.current = this.queue.shift() ?? null, this.startTime = performance.now(), this.current && (this.current.lines = this.wrapText(this.current))) : this.current = null;
   }
   wrapText(t) {
     this.ctx.font = `${t.fontSize}px ${t.fontFamily}`;
-    const e = this.width * 0.9, i = t.text.split(" "), r = [];
-    let s = "", a = 0;
+    const e = this.width * 0.9, i = t.text.split(" "), a = [];
+    let s = "", r = 0;
     for (let n = 0; n < i.length; n++) {
       const o = i[n], l = s ? s + " " + o : o;
       if (this.ctx.measureText(l).width > e && s) {
         const x = s.split("");
-        r.push({
+        a.push({
           text: s,
-          startIndex: a,
-          endIndex: a + x.length
-        }), a += x.length + 1, s = o;
+          startIndex: r,
+          endIndex: r + x.length
+        }), r += x.length + 1, s = o;
       } else
         s = l;
     }
-    return s && r.push({
+    return s && a.push({
       text: s,
-      startIndex: a,
-      endIndex: a + s.length
-    }), r;
+      startIndex: r,
+      endIndex: r + s.length
+    }), a;
   }
   update() {
     if (!this.current) return;
@@ -120,40 +132,40 @@ class z {
   // Animation Updates
   // =========================================================================
   updateTypewriter(t, e) {
-    const i = t.duration * 0.6, r = Math.min(e / i, 1), s = Math.floor(r * t.chars.length);
+    const i = t.duration * 0.6, a = Math.min(e / i, 1), s = Math.floor(a * t.chars.length);
     for (let n = 0; n < t.chars.length; n++)
       t.charStates[n].visible = n < s, t.charStates[n].opacity = t.charStates[n].visible ? 1 : 0;
-    const a = t.duration * 0.8;
-    if (e > a) {
-      const o = 1 - (e - a) / (t.duration * 0.2);
+    const r = t.duration * 0.8;
+    if (e > r) {
+      const o = 1 - (e - r) / (t.duration * 0.2);
       for (let l = 0; l < t.chars.length; l++)
         t.charStates[l].visible && (t.charStates[l].opacity = o);
     }
   }
   updateFade(t, e) {
-    const i = t.duration * 0.2, r = t.duration * 0.8;
+    const i = t.duration * 0.2, a = t.duration * 0.8;
     let s = 1;
-    e < i ? s = e / i : e > r && (s = 1 - (e - r) / (t.duration * 0.2));
-    for (let a = 0; a < t.chars.length; a++)
-      t.charStates[a].visible = !0, t.charStates[a].opacity = s;
+    e < i ? s = e / i : e > a && (s = 1 - (e - a) / (t.duration * 0.2));
+    for (let r = 0; r < t.chars.length; r++)
+      t.charStates[r].visible = !0, t.charStates[r].opacity = s;
   }
   updateSlide(t, e) {
-    const i = t.duration * 0.2, r = t.duration * 0.8;
-    let s = 0, a = 1;
+    const i = t.duration * 0.2, a = t.duration * 0.8;
+    let s = 0, r = 1;
     if (e < i) {
       const n = e / i;
-      s = (1 - this.easeOutCubic(n)) * -this.width * 0.3, a = n;
-    } else if (e > r) {
-      const n = (e - r) / (t.duration * 0.2);
-      s = this.easeInCubic(n) * this.width * 0.3, a = 1 - n;
+      s = (1 - this.easeOutCubic(n)) * -this.width * 0.3, r = n;
+    } else if (e > a) {
+      const n = (e - a) / (t.duration * 0.2);
+      s = this.easeInCubic(n) * this.width * 0.3, r = 1 - n;
     }
     for (let n = 0; n < t.chars.length; n++)
-      t.charStates[n].visible = !0, t.charStates[n].offset = s, t.charStates[n].opacity = a;
+      t.charStates[n].visible = !0, t.charStates[n].offset = s, t.charStates[n].opacity = r;
   }
   updateBounce(t, e) {
-    const i = t.duration * 0.4, r = t.duration * 0.8;
+    const i = t.duration * 0.4, a = t.duration * 0.8;
     for (let s = 0; s < t.chars.length; s++) {
-      const a = s / t.chars.length * i * 0.5, n = e - a;
+      const r = s / t.chars.length * i * 0.5, n = e - r;
       if (n < 0) {
         t.charStates[s].visible = !1, t.charStates[s].opacity = 0, t.charStates[s].offset = -50;
         continue;
@@ -166,30 +178,30 @@ class z {
       } else
         t.charStates[s].offset = 0, t.charStates[s].opacity = 1;
     }
-    if (e > r) {
-      const s = (e - r) / (t.duration * 0.2);
-      for (let a = 0; a < t.chars.length; a++)
-        t.charStates[a].opacity = 1 - s;
+    if (e > a) {
+      const s = (e - a) / (t.duration * 0.2);
+      for (let r = 0; r < t.chars.length; r++)
+        t.charStates[r].opacity = 1 - s;
     }
   }
   updateWave(t, e) {
-    const i = t.duration * 0.1, r = t.duration * 0.8;
+    const i = t.duration * 0.1, a = t.duration * 0.8;
     let s = 1;
-    e < i ? s = e / i : e > r && (s = 1 - (e - r) / (t.duration * 0.2));
-    const a = 5e-3, n = 15;
+    e < i ? s = e / i : e > a && (s = 1 - (e - a) / (t.duration * 0.2));
+    const r = 5e-3, n = 15;
     for (let o = 0; o < t.chars.length; o++)
-      t.charStates[o].visible = !0, t.charStates[o].opacity = s, t.charStates[o].offset = Math.sin(e * a + o * 0.5) * n;
+      t.charStates[o].visible = !0, t.charStates[o].opacity = s, t.charStates[o].offset = Math.sin(e * r + o * 0.5) * n;
   }
   // =========================================================================
   // Drawing
   // =========================================================================
   draw() {
     if (!this.current) return;
-    const t = this.current, e = this.ctx, i = t.x * this.width, r = t.y * this.height;
+    const t = this.current, e = this.ctx, i = t.x * this.width, a = t.y * this.height;
     e.font = `${t.fontSize}px ${t.fontFamily}`, e.textAlign = "center", e.textBaseline = "middle";
-    const s = t.lines.length * t.lineHeight, a = r - s / 2 + t.lineHeight / 2;
+    const s = t.lines.length * t.lineHeight, r = a - s / 2 + t.lineHeight / 2;
     for (let n = 0; n < t.lines.length; n++) {
-      const o = t.lines[n], l = a + n * t.lineHeight, S = e.measureText(o.text).width;
+      const o = t.lines[n], l = r + n * t.lineHeight, S = e.measureText(o.text).width;
       let x = i - S / 2;
       for (let p = o.startIndex; p < o.endIndex && p < t.chars.length; p++) {
         p - o.startIndex;
@@ -295,7 +307,7 @@ class z {
    */
   parseFormattedText(t) {
     const e = [];
-    let i = t, r = !1, s = !1, a = !1;
+    let i = t, a = !1, s = !1, r = !1;
     for (; i.length > 0; ) {
       if (i[0] === `
 `) {
@@ -303,7 +315,7 @@ class z {
         continue;
       }
       if (i.startsWith("**")) {
-        r = !r, i = i.substring(2);
+        a = !a, i = i.substring(2);
         continue;
       }
       if (i[0] === "*" && !i.startsWith("**")) {
@@ -311,7 +323,7 @@ class z {
         continue;
       }
       if (i[0] === "^") {
-        a = !a, i = i.substring(1);
+        r = !r, i = i.substring(1);
         continue;
       }
       let n = i.length;
@@ -326,9 +338,9 @@ class z {
       const l = i.substring(0, n);
       l && e.push({
         text: l,
-        bold: r,
+        bold: a,
         italic: s,
-        whisper: a,
+        whisper: r,
         newline: !1
       }), i = i.substring(n);
     }
@@ -339,23 +351,23 @@ class z {
    */
   measureFormattedText(t, e) {
     const i = this.ctx;
-    let r = 0;
+    let a = 0;
     for (const s of t) {
       if (s.newline) continue;
-      const a = s.italic || s.whisper, n = s.whisper ? e.fontSize * 0.85 : e.fontSize, o = (s.bold ? "bold " : "") + (a ? "italic " : "");
-      i.font = `${o}${n}px ${e.fontFamily}`, r += i.measureText(s.text).width;
+      const r = s.italic || s.whisper, n = s.whisper ? e.fontSize * 0.85 : e.fontSize, o = (s.bold ? "bold " : "") + (r ? "italic " : "");
+      i.font = `${o}${n}px ${e.fontFamily}`, a += i.measureText(s.text).width;
     }
-    return r;
+    return a;
   }
   /**
    * Wrap a paragraph into lines while preserving formatting across line breaks.
    */
-  wrapFormattedParagraph(t, e, i, r = !1) {
-    const s = this.parseFormattedText(t), a = [];
+  wrapFormattedParagraph(t, e, i, a = !1) {
+    const s = this.parseFormattedText(t), r = [];
     let n = [], o = 0;
     for (const l of s) {
       if (l.newline) {
-        n.length > 0 && (a.push({ segments: n, isQuote: r }), n = [], o = 0);
+        n.length > 0 && (r.push({ segments: n, isQuote: a }), n = [], o = 0);
         continue;
       }
       const S = l.italic || l.whisper, x = l.whisper ? i.fontSize * 0.85 : i.fontSize, p = (l.bold ? "bold " : "") + (S ? "italic " : "");
@@ -364,20 +376,20 @@ class z {
       for (const m of u) {
         if (m === "") continue;
         const w = this.ctx.measureText(m).width;
-        o + w > e && n.length > 0 && (a.push({ segments: n, isQuote: r }), n = [], o = 0), (m.trim() || n.length > 0) && (n.push({ text: m, bold: l.bold, italic: l.italic, whisper: l.whisper, newline: !1 }), o += w);
+        o + w > e && n.length > 0 && (r.push({ segments: n, isQuote: a }), n = [], o = 0), (m.trim() || n.length > 0) && (n.push({ text: m, bold: l.bold, italic: l.italic, whisper: l.whisper, newline: !1 }), o += w);
       }
     }
-    return n.length > 0 && a.push({ segments: n, isQuote: r }), a;
+    return n.length > 0 && r.push({ segments: n, isQuote: a }), r;
   }
   /**
    * Get the formatting state (bold/italic) at a given position in the text.
    * Scans from the start to count formatting marker toggles.
    */
   getFormattingStateAt(t, e) {
-    let i = !1, r = !1, s = 0;
+    let i = !1, a = !1, s = 0;
     for (; s < e && s < t.length; )
-      t.substring(s, s + 2) === "**" ? (i = !i, s += 2) : (t[s] === "*" && (r = !r), s += 1);
-    return { bold: i, italic: r };
+      t.substring(s, s + 2) === "**" ? (i = !i, s += 2) : (t[s] === "*" && (a = !a), s += 1);
+    return { bold: i, italic: a };
   }
   /**
    * Find sentence ending in text, returns index after the ending or -1.
@@ -387,12 +399,12 @@ class z {
 `, `!
 `, `?
 `, '."', '!"', '?"', ".'", "!'", "?'"];
-    let r = -1, s = null;
-    for (const a of i) {
-      const n = t.indexOf(a, e);
-      n !== -1 && (r === -1 || n < r) && (r = n, s = a);
+    let a = -1, s = null;
+    for (const r of i) {
+      const n = t.indexOf(r, e);
+      n !== -1 && (a === -1 || n < a) && (a = n, s = r);
     }
-    return r !== -1 && s ? r + s.length : -1;
+    return a !== -1 && s ? a + s.length : -1;
   }
   /**
    * Draw streaming text with word wrapping and formatting.
@@ -400,15 +412,15 @@ class z {
    */
   drawStream() {
     if (!this.streamText || !this.streamSettings) return;
-    const t = this.streamSettings, e = this.ctx, i = this.width * 0.9, r = t.fontSize * 1.3;
+    const t = this.streamSettings, e = this.ctx, i = this.width * 0.9, a = t.fontSize * 1.3;
     let s = 1;
     if (this.clearFadeStart !== null && (s = 1 - (performance.now() - this.clearFadeStart) / this.clearFadeDuration, s <= 0)) {
       const c = this.pendingSentencesToRemove || 1;
       this.committedSentences.splice(0, c), this.pendingSentencesToRemove = null, this.clearFadeStart = null, s = 1;
     }
-    const a = this.streamText.substring(0, this.revealIndex);
-    if (!a) return;
-    const n = a.substring(this.lastCommittedIndex);
+    const r = this.streamText.substring(0, this.revealIndex);
+    if (!r) return;
+    const n = r.substring(this.lastCommittedIndex);
     let o = 0, l = this.findSentenceEnd(n, o);
     for (; l !== -1; ) {
       const f = n.substring(o, l);
@@ -426,7 +438,7 @@ class z {
       l = this.findSentenceEnd(n, o);
     }
     this.lastCommittedIndex += o;
-    const S = a.substring(this.lastCommittedIndex);
+    const S = r.substring(this.lastCommittedIndex);
     let x = [];
     if (S.trim()) {
       const f = this.getFormattingStateAt(this.streamText, this.lastCommittedIndex);
@@ -441,10 +453,10 @@ class z {
       return;
     }
     if (m > this.maxDisplayLines && this.clearFadeStart === null && this.committedSentences.length > 0 && (this.pendingSentencesToRemove = this.committedSentences.length, this.clearFadeStart = performance.now()), u.length === 0) return;
-    const w = t.positionX * this.width, v = this.height * 0.08 + r / 2;
+    const w = t.positionX * this.width, v = this.height * 0.08 + a / 2;
     e.save(), e.textAlign = "left", e.textBaseline = "middle", e.globalAlpha = this.streamOpacity * s;
     for (let f = 0; f < u.length; f++) {
-      const c = u[f], d = v + f * r, y = this.measureFormattedText(c.segments, t);
+      const c = u[f], d = v + f * a, y = this.measureFormattedText(c.segments, t);
       let b = w - y / 2;
       c.isQuote && (e.font = `${t.fontSize}px ${t.fontFamily}`, e.fillStyle = t.quoteColor || "#888888", e.fillText("│ ", b - e.measureText("│ ").width, d));
       for (const g of c.segments) {

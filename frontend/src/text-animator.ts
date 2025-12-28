@@ -214,12 +214,21 @@ class TextAnimator {
         return this.current !== null;
     }
 
+    /**
+     * Check if text streaming is active
+     */
+    hasStreamContent(): boolean {
+        return this.isStreaming || this.streamText.length > 0;
+    }
+
     next(): void {
         if (this.queue.length > 0) {
-            this.current = this.queue.shift();
+            this.current = this.queue.shift() ?? null;
             this.startTime = performance.now();
             // Calculate wrapped lines for the new item
-            this.current.lines = this.wrapText(this.current);
+            if (this.current) {
+                this.current.lines = this.wrapText(this.current);
+            }
         } else {
             this.current = null;
         }
@@ -945,7 +954,7 @@ class TextAnimator {
 
         // Get current (uncommitted) text
         const currentText = revealedText.substring(this.lastCommittedIndex);
-        let currentLines = [];
+        let currentLines: FormattedLine[] = [];
 
         if (currentText.trim()) {
             // Get formatting state for current text

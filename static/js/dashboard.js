@@ -1,159 +1,176 @@
-import { TextAnimator as $e } from "./text-animator.js";
-let y = null, C = null, _ = 0;
-const Te = 1e3, Me = 3e4, N = 10, oe = 6e4, Se = 3e4;
-let F = Date.now(), S = null, M = null, ce = [], g = [], E = null, m = null, b = null, U = [], f = null, p = null, k = !1, B = [], X = null;
-const re = document.getElementById("ws-status"), se = document.getElementById("ws-status-text"), L = document.getElementById("characters-container"), le = document.getElementById("history-list");
-function w(e) {
+import { TextAnimator as De } from "./text-animator.js";
+function l(e) {
+  return document.getElementById(e);
+}
+function o(e) {
+  return document.getElementById(e);
+}
+function m(e) {
+  return document.getElementById(e);
+}
+function A(e) {
+  return document.getElementById(e);
+}
+function b(e) {
+  return document.getElementById(e);
+}
+function be(e) {
+  return document.getElementById(e);
+}
+function Ne(e) {
+  return document.getElementById(e);
+}
+let y = null, M = null, T = 0;
+const Re = 1e3, Fe = 3e4, O = 10, ue = 6e4, Ue = 3e4;
+let z = Date.now(), N = null, D = null, he = [], w = [], C = null, p = null, $ = null, q = [], x = null, g = null, B = !1, S = [], te = null;
+const me = document.getElementById("ws-status"), pe = document.getElementById("ws-status-text"), R = document.getElementById("characters-container"), fe = document.getElementById("history-list");
+function I(e) {
   if (e == null) return "";
   const t = document.createElement("div");
   return t.textContent = String(e), t.innerHTML;
 }
-function Le(e, t = "#9146ff") {
+function He(e, t = "#9146ff") {
   return e && /^#[0-9a-fA-F]{3,4}$|^#[0-9a-fA-F]{6}$|^#[0-9a-fA-F]{8}$/.test(e) ? e : t;
 }
-function Ae() {
-  return X;
+function Oe() {
+  return te;
 }
-function ye() {
+function _e() {
   const t = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws/dashboard`;
   y = new WebSocket(t), y.onopen = () => {
-    re.classList.add("connected"), se.textContent = "Connected", _ = 0, F = Date.now(), Ne(), C && (clearTimeout(C), C = null);
+    me.classList.add("connected"), pe.textContent = "Connected", T = 0, z = Date.now(), qe(), M && (clearTimeout(M), M = null);
   }, y.onclose = () => {
-    re.classList.remove("connected"), se.textContent = "Disconnected", Pe(), De();
+    me.classList.remove("connected"), pe.textContent = "Disconnected", ze(), Ge();
   }, y.onerror = (n) => {
     console.error("Dashboard WebSocket error:", n);
   }, y.onmessage = (n) => {
     try {
       const a = JSON.parse(n.data);
-      Re(a);
+      We(a);
     } catch (a) {
       console.error("Error parsing message:", a);
     }
   };
 }
-function De() {
-  if (!C) {
-    if (_ >= N) {
-      console.log(`[dashboard] Max reconnect attempts (${N}) reached, reloading page...`), location.reload();
+function Ge() {
+  if (!M) {
+    if (T >= O) {
+      console.log(`[dashboard] Max reconnect attempts (${O}) reached, reloading page...`), location.reload();
       return;
     }
     const e = Math.min(
-      Te * Math.pow(2, _),
-      Me
+      Re * Math.pow(2, T),
+      Fe
     );
-    _++, console.log(`[dashboard] Reconnecting in ${e}ms (attempt ${_}/${N})...`), C = setTimeout(() => {
-      C = null, ye();
+    T++, console.log(`[dashboard] Reconnecting in ${e}ms (attempt ${T}/${O})...`), M = setTimeout(() => {
+      M = null, _e();
     }, e);
   }
 }
-function Pe() {
-  S || (S = setInterval(async () => {
+function ze() {
+  N || (N = setInterval(async () => {
     if (!(y && y.readyState === WebSocket.OPEN))
       try {
-        (await fetch("/health", { signal: AbortSignal.timeout(5e3) })).ok && _ >= N / 2 && (console.log("[dashboard] Server healthy but WebSocket failing, reloading page..."), location.reload());
+        (await fetch("/health", { signal: AbortSignal.timeout(5e3) })).ok && T >= O / 2 && (console.log("[dashboard] Server healthy but WebSocket failing, reloading page..."), location.reload());
       } catch {
       }
-  }, Se));
+  }, Ue));
 }
-function Ne() {
-  S && (clearInterval(S), S = null);
+function qe() {
+  N && (clearInterval(N), N = null);
 }
 setInterval(() => {
-  y && y.readyState === WebSocket.OPEN && Date.now() - F > oe && (console.log(`[dashboard] No ping received in ${oe}ms, connection stale - reconnecting...`), F = Date.now(), y.close());
+  y && y.readyState === WebSocket.OPEN && Date.now() - z > ue && (console.log(`[dashboard] No ping received in ${ue}ms, connection stale - reconnecting...`), z = Date.now(), y.close());
 }, 1e4);
-function Re(e) {
+function We(e) {
   if (e.type === "ping") {
-    y && y.readyState === WebSocket.OPEN && y.send(JSON.stringify({ event: "pong", ts: e.ts })), F = Date.now();
+    y && y.readyState === WebSocket.OPEN && y.send(JSON.stringify({ event: "pong", ts: e.ts })), z = Date.now();
     return;
   }
   if (e.type === "hello") {
     const t = e.build_id;
-    if (e.tenant_id && (X = e.tenant_id, console.log(`[dashboard] Tenant ID: ${X}`)), M === null)
-      M = t, console.log(`[dashboard] Server build ID: ${M}`);
-    else if (M !== t) {
-      console.log(`[dashboard] Server version changed (${M} -> ${t}), refreshing page...`), location.reload();
+    if (e.tenant_id && (te = e.tenant_id, console.log(`[dashboard] Tenant ID: ${te}`)), D === null)
+      D = t ?? null, console.log(`[dashboard] Server build ID: ${D}`);
+    else if (D !== t) {
+      console.log(`[dashboard] Server version changed (${D} -> ${t}), refreshing page...`), location.reload();
       return;
     } else
       console.log("[dashboard] Reconnected to same server version");
     return;
   }
   if (e.type === "characters") {
-    const t = Ae(), n = new Map(e.characters.map((a) => [a.name, a]));
-    if (g = g.map((a) => {
-      var c, r;
-      const o = `${t}:${a.name}`;
+    const t = Oe(), n = e.characters, a = new Map(n.map((r) => [r.name, r]));
+    if (w = w.map((r) => {
+      var s, i;
+      const c = `${t}:${r.name}`;
       return {
-        ...a,
-        connected: n.has(o),
-        playing: ((c = n.get(o)) == null ? void 0 : c.playing) || !1,
-        streaming: ((r = n.get(o)) == null ? void 0 : r.streaming) || !1
+        ...r,
+        connected: a.has(c),
+        playing: ((s = a.get(c)) == null ? void 0 : s.playing) || !1,
+        streaming: ((i = a.get(c)) == null ? void 0 : i.streaming) || !1
       };
-    }), K(), f && p) {
-      const a = `${t}:${f}`, o = n.get(a);
-      if (o && (o.streaming && (k = !0), k && !o.streaming)) {
-        const c = document.getElementById(`${p}-stop-btn`), r = document.getElementById(`${p}-status-text`);
-        c && (c.style.display = "none"), r && (r.textContent = "Complete!"), f = null, p = null, k = !1;
+    }), ne(), x && g) {
+      const r = `${t}:${x}`, c = a.get(r);
+      if (c && (c.streaming && (B = !0), B && !c.streaming)) {
+        const s = document.getElementById(`${g}-stop-btn`), i = document.getElementById(`${g}-status-text`);
+        s && (s.style.display = "none"), i && (i.textContent = "Complete!"), x = null, g = null, B = !1;
       }
     }
-  } else e.type === "character_sync" && (g = e.characters, K(), P || console.log("Character data synced from server"), P = !1);
+  } else e.type === "character_sync" && (w = e.characters, ne(), U || console.log("Character data synced from server"), U = !1);
 }
-let P = !1;
-function u(e, t = "info", n = 4e3) {
+let U = !1;
+function f(e, t = "info", n = 4e3) {
   const a = document.querySelector(".toast-notification");
   a && a.remove();
-  const o = document.createElement("div");
-  o.className = `toast-notification toast-${t}`, o.textContent = e, document.body.appendChild(o), setTimeout(() => {
-    o.classList.add("hiding"), setTimeout(() => o.remove(), 300);
+  const r = document.createElement("div");
+  r.className = `toast-notification toast-${t}`, r.textContent = e, document.body.appendChild(r), setTimeout(() => {
+    r.classList.add("hiding"), setTimeout(() => r.remove(), 300);
   }, n);
 }
-async function i(e, t = "GET", n = null, a = !0) {
-  const o = {
+async function u(e, t = "GET", n = null, a = !0) {
+  const r = {
     method: t,
     headers: { "Content-Type": "application/json" }
   };
-  n && (o.body = JSON.stringify(n));
+  n && (r.body = JSON.stringify(n));
   try {
-    const c = await fetch(e, o), r = await c.json();
+    const c = await fetch(e, r), s = await c.json();
     if (!c.ok) {
-      const s = r.detail || r.error || `HTTP ${c.status}`;
-      return a && u(`API Error: ${s}`, "error"), console.error(`API Error [${t} ${e}]:`, s), { error: s, status: c.status };
+      const i = s.detail || s.error || `HTTP ${c.status}`;
+      return a && f(`API Error: ${i}`, "error"), console.error(`API Error [${t} ${e}]:`, i), { error: i, status: c.status };
     }
-    return r;
+    return s;
   } catch (c) {
-    const r = c.message || "Network error";
-    return a && u(`Connection Error: ${r}`, "error"), console.error(`Fetch Error [${t} ${e}]:`, c), { error: r, networkError: !0 };
+    const s = c.message || "Network error";
+    return a && f(`Connection Error: ${s}`, "error"), console.error(`Fetch Error [${t} ${e}]:`, c), { error: s, networkError: !0 };
   }
 }
-async function Fe() {
-  const e = await i("/api/presets");
-  return Array.isArray(e) && (ce = e), ce;
+async function je() {
+  const e = await u("/api/presets");
+  return Array.isArray(e) && (he = e), he;
 }
-async function z() {
-  const e = await i("/api/history");
-  Array.isArray(e) && lt(e);
+async function X() {
+  const e = await u("/api/history");
+  Array.isArray(e) && vt(e);
 }
-async function q() {
-  const e = await i("/api/characters");
-  return Array.isArray(e) && (g = e, K()), g;
+async function J() {
+  const e = await u("/api/characters");
+  return Array.isArray(e) && (w = e, ne()), w;
 }
-async function Ue(e) {
-  P = !0;
-  const t = await i("/api/characters", "POST", e);
-  return await q(), t;
+async function Ve(e) {
+  U = !0;
+  const t = await u("/api/characters", "POST", e);
+  return await J(), t;
 }
-async function He(e, t, n = !0) {
-  P = !0;
-  const a = await i(`/api/characters/${e}`, "PUT", t, n);
-  return await q(), a;
+async function Ye(e, t, n = !0) {
+  U = !0;
+  const a = await u(`/api/characters/${e}`, "PUT", t, n);
+  return await J(), a;
 }
-async function Oe(e) {
-  if (!confirm(`Delete character "${e}"? This cannot be undone.`))
-    return;
-  P = !0;
-  const t = await i(`/api/characters/${e}`, "DELETE");
-  return await q(), t;
+async function Xe(e) {
+  confirm(`Delete character "${e}"? This cannot be undone.`) && (U = !0, await u(`/api/characters/${e}`, "DELETE"), await J());
 }
-async function he(e) {
+async function xe(e) {
   const t = document.getElementById("character-provider");
   if (t) {
     if (t.innerHTML = '<option value="">Loading providers...</option>', t.disabled = !0, !e || e.trim() === "") {
@@ -161,11 +178,11 @@ async function he(e) {
       return;
     }
     try {
-      const n = await i(`/api/openrouter/models/${encodeURIComponent(e)}/providers`, "GET", null, !1);
+      const n = await u(`/api/openrouter/models/${encodeURIComponent(e)}/providers`, "GET", null, !1);
       if (t.innerHTML = '<option value="">Default (auto)</option>', n.providers && n.providers.length > 0)
         for (const a of n.providers) {
-          const o = document.createElement("option");
-          o.value = a, o.textContent = a, t.appendChild(o);
+          const r = document.createElement("option");
+          r.value = a, r.textContent = a, t.appendChild(r);
         }
     } catch (n) {
       console.error("Error fetching providers:", n), t.innerHTML = '<option value="">Default (auto)</option>';
@@ -174,12 +191,12 @@ async function he(e) {
     }
   }
 }
-async function Ge() {
+async function Je() {
   const e = document.getElementById("character-tts-model");
   if (e)
     try {
-      const t = await i("/api/elevenlabs/models", "GET", null, !1);
-      Array.isArray(t) && (U = t, e.innerHTML = t.map((n) => {
+      const t = await u("/api/elevenlabs/models", "GET", null, !1);
+      Array.isArray(t) && (q = t, e.innerHTML = t.map((n) => {
         const a = n.name || n.model_id;
         return `<option value="${n.model_id}">${a}</option>`;
       }).join(""));
@@ -187,21 +204,21 @@ async function Ge() {
       console.error("Error fetching ElevenLabs models:", t);
     }
 }
-async function pe(e) {
-  const t = document.getElementById("character-tts-model"), n = document.getElementById("tts-model-info");
+async function Ce(e) {
+  const t = m("character-tts-model"), n = document.getElementById("tts-model-info");
   if (!(!t || !e)) {
     n && (n.textContent = "");
     try {
-      const a = await i(`/api/elevenlabs/voices/${e}`, "GET", null, !1);
-      if (a && a.high_quality_base_model_ids && a.high_quality_base_model_ids.length > 0) {
-        const o = new Set(a.high_quality_base_model_ids);
+      const a = await u(`/api/elevenlabs/voices/${e}`, "GET", null, !1);
+      if (a != null && a.high_quality_base_model_ids && a.high_quality_base_model_ids.length > 0) {
+        const r = new Set(a.high_quality_base_model_ids);
         Array.from(t.options).forEach((c) => {
-          if (o.has(c.value)) {
-            const r = U.find((s) => s.model_id === c.value);
-            c.textContent = `${(r == null ? void 0 : r.name) || c.value} (Recommended)`;
+          if (r.has(c.value)) {
+            const s = q.find((i) => i.model_id === c.value);
+            c.textContent = `${(s == null ? void 0 : s.name) || c.value} (Recommended)`;
           } else {
-            const r = U.find((s) => s.model_id === c.value);
-            c.textContent = (r == null ? void 0 : r.name) || c.value;
+            const s = q.find((i) => i.model_id === c.value);
+            c.textContent = (s == null ? void 0 : s.name) || c.value;
           }
         }), n && (n.textContent = `Voice "${a.name}" is optimized for: ${a.high_quality_base_model_ids.join(", ")}`);
       }
@@ -210,7 +227,7 @@ async function pe(e) {
     }
   }
 }
-const ze = {
+const Ke = {
   eleven_v3: "Latest flagship model with emotionally rich, expressive speech. 70+ languages. Best for audiobooks & dramatic content. Not optimized for real-time.",
   eleven_multilingual_v2: "Advanced emotionally-aware synthesis. 29 languages. Most stable for long-form. Higher latency but best quality.",
   eleven_flash_v2_5: "Fastest model (~75ms latency). 32 languages. 50% lower cost. Best for real-time agents & bulk processing.",
@@ -220,17 +237,17 @@ const ze = {
   eleven_multilingual_v1: "Legacy multilingual model. Use v2 for better results.",
   eleven_monolingual_v1: "Legacy English model. Use newer models for better quality."
 };
-function Q(e) {
-  const t = document.getElementById("tts-model-info"), n = document.getElementById("voice-style-row"), a = document.getElementById("voice-similarity-row"), o = U.find((c) => c.model_id === e);
-  o && (n && (n.style.display = o.can_use_style ? "" : "none"), a && (a.style.display = o.can_use_speaker_boost ? "" : "none"), t && (t.textContent = ze[e] || ""));
+function oe(e) {
+  const t = document.getElementById("tts-model-info"), n = document.getElementById("voice-style-row"), a = document.getElementById("voice-similarity-row"), r = q.find((c) => c.model_id === e);
+  r && (n && (n.style.display = r.can_use_style ? "" : "none"), a && (a.style.display = r.can_use_speaker_boost ? "" : "none"), t && (t.textContent = Ke[e] || ""));
 }
-let H = [];
-async function Z() {
+let W = [];
+async function re() {
   try {
-    H = await i("/api/cartesia/voices", "GET", null, !1);
+    W = await u("/api/cartesia/voices", "GET", null, !1);
     const e = document.getElementById("cartesia-voice-select");
     if (!e) return;
-    e.innerHTML = '<option value="">-- Select a voice --</option>', H.forEach((t) => {
+    e.innerHTML = '<option value="">-- Select a voice --</option>', W.forEach((t) => {
       const n = document.createElement("option");
       n.value = t.voice_id, n.textContent = `${t.name} (${t.language})`, e.appendChild(n);
     });
@@ -240,475 +257,491 @@ async function Z() {
     t && (t.innerHTML = '<option value="">Failed to load voices</option>');
   }
 }
-function qe(e) {
+function Qe(e) {
   const t = document.getElementById("cartesia-voice-id");
-  t && e && (t.value = e), W(e);
+  t && e && (t.value = e), K(e);
 }
-function We(e) {
+function Ze(e) {
   const t = document.getElementById("cartesia-voice-select");
-  t && e && (Array.from(t.options).find((a) => a.value === e) ? (t.value = e, W(e)) : (t.value = "", document.getElementById("cartesia-voice-info").textContent = "Custom voice ID"));
+  if (t && e)
+    if (Array.from(t.options).find((a) => a.value === e))
+      t.value = e, K(e);
+    else {
+      t.value = "";
+      const a = document.getElementById("cartesia-voice-info");
+      a && (a.textContent = "Custom voice ID");
+    }
 }
-function W(e) {
+function K(e) {
   const t = document.getElementById("cartesia-voice-info");
   if (!t) return;
   if (!e) {
     t.textContent = "";
     return;
   }
-  const n = H.find((a) => a.voice_id === e);
+  const n = W.find((a) => a.voice_id === e);
   n && n.description ? t.textContent = n.description : t.textContent = "";
 }
-function ge(e) {
+function Ee(e) {
   const t = document.getElementById("elevenlabs-settings"), n = document.getElementById("cartesia-settings");
-  e === "cartesia" ? (t.style.display = "none", n.style.display = "block", H.length === 0 && Z()) : (t.style.display = "block", n.style.display = "none");
+  e === "cartesia" ? (t && (t.style.display = "none"), n && (n.style.display = "block"), W.length === 0 && re()) : (t && (t.style.display = "block"), n && (n.style.display = "none"));
 }
-async function je(e, t, n) {
-  return i(`/api/characters/${e}/speak`, "POST", {
+async function et(e, t, n) {
+  return u(`/api/characters/${e}/speak`, "POST", {
     text: t,
     show_text: n
   });
 }
-async function Ve(e, t, n, a = null, o = null) {
+async function tt(e, t, n, a = null, r = null) {
   const c = {
     message: t,
     show_text: n
   };
-  return a !== null && a !== "" && (c.twitch_chat_seconds = parseInt(a)), o && o.length > 0 && (c.images = o.map((r) => ({
-    data: r.data,
-    media_type: r.mediaType
-  }))), i(`/api/characters/${e}/chat`, "POST", c);
+  return a !== null && a !== "" && (c.twitch_chat_seconds = parseInt(a)), r && r.length > 0 && (c.images = r.map((s) => ({
+    data: s.data,
+    media_type: s.mediaType
+  }))), u(`/api/characters/${e}/chat`, "POST", c);
 }
-async function ee(e) {
-  return i(`/api/characters/${e}/memory`);
+async function ce(e) {
+  return u(`/api/characters/${e}/memory`);
 }
-async function Ye(e) {
-  return i(`/api/characters/${e}/memory`, "DELETE");
+async function at(e) {
+  return u(`/api/characters/${e}/memory`, "DELETE");
 }
-function O(e, t) {
+function j(e, t) {
   const n = document.getElementById("chat-history"), a = document.getElementById("chat-history-empty");
   if (!e || e.length === 0) {
-    a.style.display = "block", n.querySelectorAll(".chat-bubble").forEach((o) => o.remove());
+    a && (a.style.display = "block"), n == null || n.querySelectorAll(".chat-bubble").forEach((r) => r.remove());
     return;
   }
-  a.style.display = "none", n.querySelectorAll(".chat-bubble").forEach((o) => o.remove()), e.forEach((o) => {
-    if (o.role === "context") {
-      const c = o.content.split(`
-`), r = c.slice(-4).map((h) => h.length > 60 ? h.substring(0, 57) + "..." : h).join(" | "), s = document.createElement("div");
-      s.className = "chat-bubble context";
-      const l = document.createElement("div");
-      l.className = "chat-bubble-content", l.textContent = `📺 Twitch (${c.length}): ${r}`, s.appendChild(l), n.appendChild(s);
+  a && (a.style.display = "none"), n == null || n.querySelectorAll(".chat-bubble").forEach((r) => r.remove()), e.forEach((r) => {
+    if (r.role === "context") {
+      const c = r.content.split(`
+`), s = c.slice(-4).map((v) => v.length > 60 ? v.substring(0, 57) + "..." : v).join(" | "), i = document.createElement("div");
+      i.className = "chat-bubble context";
+      const d = document.createElement("div");
+      d.className = "chat-bubble-content", d.textContent = `📺 Twitch (${c.length}): ${s}`, i.appendChild(d), n == null || n.appendChild(i);
     } else {
       const c = document.createElement("div");
-      c.className = `chat-bubble ${o.role}`;
-      const r = document.createElement("div");
-      r.className = "chat-bubble-label", r.textContent = o.role === "user" ? "You" : t;
+      c.className = `chat-bubble ${r.role}`;
       const s = document.createElement("div");
-      if (s.className = "chat-bubble-content", o.interrupted && o.generated_text) {
-        const l = o.content || "", h = o.generated_text || "";
-        if (l) {
-          const v = document.createElement("span");
-          v.textContent = l, s.appendChild(v);
+      s.className = "chat-bubble-label", s.textContent = r.role === "user" ? "You" : t;
+      const i = document.createElement("div");
+      if (i.className = "chat-bubble-content", r.interrupted && r.generated_text) {
+        const d = r.content || "", v = r.generated_text || "";
+        if (d) {
+          const _ = document.createElement("span");
+          _.textContent = d, i.appendChild(_);
         }
-        let I = "";
-        if ((h.startsWith(l) || h.length > l.length) && (I = h.substring(l.length).trim()), I) {
-          const v = document.createElement("span");
-          v.style.textDecoration = "line-through", v.style.opacity = "0.6", v.textContent = " " + I, s.appendChild(v);
+        let k = "";
+        if ((v.startsWith(d) || v.length > d.length) && (k = v.substring(d.length).trim()), k) {
+          const _ = document.createElement("span");
+          _.style.textDecoration = "line-through", _.style.opacity = "0.6", _.textContent = " " + k, i.appendChild(_);
         }
-        const d = document.createElement("span");
-        d.style.cssText = "display: inline-block; margin-left: 8px; padding: 2px 6px; background: #ff6b6b33; color: #ff6b6b; border-radius: 4px; font-size: 0.7rem;", d.textContent = "⚡ interrupted", s.appendChild(d);
+        const h = document.createElement("span");
+        h.style.cssText = "display: inline-block; margin-left: 8px; padding: 2px 6px; background: #ff6b6b33; color: #ff6b6b; border-radius: 4px; font-size: 0.7rem;", h.textContent = "⚡ interrupted", i.appendChild(h);
       } else
-        s.textContent = o.content;
-      c.appendChild(r), c.appendChild(s), n.appendChild(c);
+        i.textContent = r.content;
+      c.appendChild(s), c.appendChild(i), n == null || n.appendChild(c);
     }
-  }), n.scrollTop = n.scrollHeight;
+  }), n && (n.scrollTop = n.scrollHeight);
 }
-function ie(e, t, n) {
-  const a = document.getElementById("chat-history"), o = document.getElementById("chat-history-empty");
-  o.style.display = "none";
+function ve(e, t, n) {
+  const a = document.getElementById("chat-history"), r = document.getElementById("chat-history-empty");
+  r && (r.style.display = "none");
   const c = document.createElement("div");
   c.className = `chat-bubble ${e}`;
-  const r = document.createElement("div");
-  r.className = "chat-bubble-label", r.textContent = e === "user" ? "You" : n;
   const s = document.createElement("div");
-  s.className = "chat-bubble-content", s.textContent = t, c.appendChild(r), c.appendChild(s), a.appendChild(c), a.scrollTop = a.scrollHeight;
+  s.className = "chat-bubble-label", s.textContent = e === "user" ? "You" : n;
+  const i = document.createElement("div");
+  i.className = "chat-bubble-content", i.textContent = t, c.appendChild(s), c.appendChild(i), a == null || a.appendChild(c), a && (a.scrollTop = a.scrollHeight);
 }
-function Xe(e) {
+function nt(e) {
   const t = document.getElementById("chat-history"), n = document.getElementById("chat-history-empty");
-  n.style.display = "none";
+  n && (n.style.display = "none");
   const a = document.createElement("div");
   a.className = "chat-bubble context";
-  const o = document.createElement("div");
-  o.className = "chat-bubble-content", o.textContent = e, a.appendChild(o), t.appendChild(a), t.scrollTop = t.scrollHeight;
+  const r = document.createElement("div");
+  r.className = "chat-bubble-content", r.textContent = e, a.appendChild(r), t == null || t.appendChild(a), t && (t.scrollTop = t.scrollHeight);
 }
-let x = null, R = null;
-function Je() {
-  te();
-  const e = document.getElementById("character-preview-canvas");
+let V = null, G = null;
+function ot() {
+  se();
+  const e = be("character-preview-canvas");
   if (!e) return;
   const t = e.getContext("2d");
-  x = new $e(t, e.width, e.height);
-  const n = {
-    style: document.getElementById("character-text-style").value,
-    fontFamily: document.getElementById("character-font-family").value,
-    fontSize: parseInt(document.getElementById("character-font-size").value),
-    duration: parseInt(document.getElementById("character-text-duration").value),
-    color: document.getElementById("character-text-color").value,
-    strokeColor: document.getElementById("character-stroke-color").value,
-    strokeWidth: parseInt(document.getElementById("character-stroke-width").value),
-    positionX: parseInt(document.getElementById("character-position-x").value) / 100,
-    positionY: parseInt(document.getElementById("character-position-y").value) / 100
-  }, a = e.width / 800;
-  x.show({
+  V = new De(t, e.width, e.height);
+  const n = V, a = {
+    style: o("character-text-style").value,
+    fontFamily: o("character-font-family").value,
+    fontSize: parseInt(o("character-font-size").value),
+    duration: parseInt(o("character-text-duration").value),
+    color: o("character-text-color").value,
+    strokeColor: o("character-stroke-color").value,
+    strokeWidth: parseInt(o("character-stroke-width").value),
+    positionX: parseInt(o("character-position-x").value) / 100,
+    positionY: parseInt(o("character-position-y").value) / 100
+  }, r = e.width / 800;
+  n.show({
     text: "Sample Text",
-    style: n.style,
-    duration: n.duration,
-    x: n.positionX,
-    y: n.positionY,
-    fontFamily: n.fontFamily,
-    fontSize: Math.round(n.fontSize * a),
-    color: n.color,
-    strokeColor: n.strokeWidth > 0 ? n.strokeColor : null,
-    strokeWidth: Math.round(n.strokeWidth * a)
+    style: a.style,
+    duration: a.duration,
+    x: a.positionX,
+    y: a.positionY,
+    fontFamily: a.fontFamily,
+    fontSize: Math.round(a.fontSize * r),
+    color: a.color,
+    strokeColor: a.strokeWidth > 0 ? a.strokeColor : null,
+    strokeWidth: Math.round(a.strokeWidth * r)
   });
-  function o() {
-    t.clearRect(0, 0, e.width, e.height), x.update(), x.draw(), x.current && (R = requestAnimationFrame(o));
+  function c() {
+    t.clearRect(0, 0, e.width, e.height), n.update(), n.draw(), n.isAnimating() && (G = requestAnimationFrame(c));
   }
-  o();
+  c();
 }
-function te() {
-  R && (cancelAnimationFrame(R), R = null), x && x.clear();
-  const e = document.getElementById("character-preview-canvas");
-  e && e.getContext("2d").clearRect(0, 0, e.width, e.height);
+function se() {
+  G && (cancelAnimationFrame(G), G = null), V && V.clear();
+  const e = be("character-preview-canvas");
+  if (e) {
+    const t = e.getContext("2d");
+    t == null || t.clearRect(0, 0, e.width, e.height);
+  }
 }
-const $ = document.getElementById("character-modal"), J = document.getElementById("character-form"), ve = document.getElementById("character-modal-title");
-function Ke() {
-  E = null, ve.textContent = "Create Character", J.reset(), document.getElementById("character-name").disabled = !1, document.getElementById("character-color").value = "#e94560", document.getElementById("character-icon").value = "🔊", document.getElementById("character-stability").value = 50, document.getElementById("character-stability-value").textContent = "0.50", document.getElementById("character-similarity").value = 75, document.getElementById("character-similarity-value").textContent = "0.75", document.getElementById("character-voice-style").value = 0, document.getElementById("character-style-value").textContent = "0.00", document.getElementById("character-voice-speed").value = 100, document.getElementById("character-speed-value").textContent = "1.0", document.getElementById("character-volume").value = 100, document.getElementById("character-volume-value").textContent = "100", document.getElementById("character-text-style").value = "typewriter", document.getElementById("character-font-family").value = "Arial", document.getElementById("character-font-size").value = 48, document.getElementById("character-text-duration").value = 3e3, document.getElementById("character-text-color").value = "#ffffff", document.getElementById("character-stroke-color").value = "#000000", document.getElementById("character-stroke-width").value = 0, document.getElementById("character-stroke-width-value").textContent = "0", document.getElementById("character-position-x").value = 50, document.getElementById("character-pos-x-value").textContent = "50", document.getElementById("character-position-y").value = 50, document.getElementById("character-pos-y-value").textContent = "50", document.getElementById("character-model").value = "anthropic/claude-sonnet-4.5", document.getElementById("character-provider").innerHTML = '<option value="">Default (auto)</option>', document.getElementById("character-provider").value = "", document.getElementById("character-temperature").value = 70, document.getElementById("character-temp-value").textContent = "0.7", document.getElementById("character-max-tokens").value = 1024, document.getElementById("character-tts-model").value = "eleven_multilingual_v2", document.getElementById("tts-model-info").textContent = "", Q("eleven_multilingual_v2"), document.getElementById("character-memory-enabled").checked = !1, document.getElementById("character-persist-memory").checked = !1, document.getElementById("character-twitch-chat-enabled").checked = !1, document.getElementById("character-twitch-chat-seconds").value = 60, document.getElementById("character-twitch-chat-max").value = 20, $.classList.add("active");
+const L = l("character-modal"), ae = Ne("character-form"), ke = l("character-modal-title");
+function rt() {
+  C = null, ke.textContent = "Create Character", ae.reset(), o("character-name").disabled = !1, o("character-color").value = "#e94560", o("character-icon").value = "🔊", o("character-stability").value = "50", l("character-stability-value").textContent = "0.50", o("character-similarity").value = "75", l("character-similarity-value").textContent = "0.75", o("character-voice-style").value = "0", l("character-style-value").textContent = "0.00", o("character-voice-speed").value = "100", l("character-speed-value").textContent = "1.0", o("character-volume").value = "100", l("character-volume-value").textContent = "100", m("character-text-style").value = "typewriter", o("character-font-family").value = "Arial", o("character-font-size").value = "48", o("character-text-duration").value = "3000", o("character-text-color").value = "#ffffff", o("character-stroke-color").value = "#000000", o("character-stroke-width").value = "0", l("character-stroke-width-value").textContent = "0", o("character-position-x").value = "50", l("character-pos-x-value").textContent = "50", o("character-position-y").value = "50", l("character-pos-y-value").textContent = "50", o("character-model").value = "anthropic/claude-sonnet-4.5", m("character-provider").innerHTML = '<option value="">Default (auto)</option>', m("character-provider").value = "", o("character-temperature").value = "70", l("character-temp-value").textContent = "0.7", o("character-max-tokens").value = "1024", m("character-tts-model").value = "eleven_multilingual_v2", l("tts-model-info").textContent = "", oe("eleven_multilingual_v2"), o("character-memory-enabled").checked = !1, o("character-persist-memory").checked = !1, o("character-twitch-chat-enabled").checked = !1, o("character-twitch-chat-seconds").value = "60", o("character-twitch-chat-max").value = "20", L.classList.add("active");
 }
-function fe(e) {
-  E = e, ve.textContent = "Edit Character", document.getElementById("character-name").value = e.name, document.getElementById("character-name").disabled = !0, document.getElementById("character-description").value = e.description || "", document.getElementById("character-color").value = e.color, document.getElementById("character-icon").value = e.icon;
-  const t = e.tts_provider || "elevenlabs";
-  if (document.getElementById("character-tts-provider").value = t, ge(t), t === "cartesia" && e.tts_settings)
-    Z().then(() => {
-      const n = e.tts_settings, a = n.voice_id || "";
-      document.getElementById("cartesia-voice-id").value = a;
-      const o = document.getElementById("cartesia-voice-select");
-      o && a && Array.from(o.options).find((l) => l.value === a) && (o.value = a), document.getElementById("cartesia-model-id").value = n.model_id || "sonic-2024-12-12", document.getElementById("cartesia-language").value = n.language || "en";
-      const c = n.speed || 1, r = Math.max(0.6, Math.min(1.5, c));
-      document.getElementById("cartesia-speed").value = Math.round(r * 100), document.getElementById("cartesia-speed-value").textContent = r.toFixed(1), c !== r && console.warn(`Cartesia speed ${c} was clamped to ${r} (valid: 0.6-1.5)`), W(a);
+function Ie(e) {
+  C = e, ke.textContent = "Edit Character";
+  const t = e;
+  o("character-name").value = e.name, o("character-name").disabled = !0, b("character-description").value = t.description || "", o("character-color").value = t.color, o("character-icon").value = t.icon;
+  const n = e.tts_provider || "elevenlabs";
+  if (m("character-tts-provider").value = n, Ee(n), n === "cartesia" && e.tts_settings)
+    re().then(() => {
+      const a = e.tts_settings, r = a.voice_id || "";
+      o("cartesia-voice-id").value = r;
+      const c = m("cartesia-voice-select");
+      c && r && Array.from(c.options).find((v) => v.value === r) && (c.value = r), o("cartesia-model-id").value = a.model_id || "sonic-2024-12-12", m("cartesia-language").value = a.language || "en";
+      const s = a.speed || 1, i = Math.max(0.6, Math.min(1.5, s));
+      o("cartesia-speed").value = String(Math.round(i * 100)), l("cartesia-speed-value").textContent = i.toFixed(1), s !== i && console.warn(`Cartesia speed ${s} was clamped to ${i} (valid: 0.6-1.5)`), K(r);
     });
   else {
-    const n = e.tts_settings || {};
-    document.getElementById("character-voice-id").value = n.voice_id || e.elevenlabs_voice_id;
-    const a = n.model_id || e.elevenlabs_model_id || "eleven_multilingual_v2";
-    document.getElementById("character-tts-model").value = a, Q(a), pe(n.voice_id || e.elevenlabs_voice_id);
-    const o = n.stability ?? e.voice_stability;
-    document.getElementById("character-stability").value = Math.round(o * 100), document.getElementById("character-stability-value").textContent = o.toFixed(2);
-    const c = n.similarity_boost ?? e.voice_similarity_boost;
-    document.getElementById("character-similarity").value = Math.round(c * 100), document.getElementById("character-similarity-value").textContent = c.toFixed(2);
-    const r = n.style ?? e.voice_style;
-    document.getElementById("character-voice-style").value = Math.round(r * 100), document.getElementById("character-style-value").textContent = r.toFixed(2);
-    const s = n.speed ?? e.voice_speed;
-    document.getElementById("character-voice-speed").value = Math.round(s * 100), document.getElementById("character-speed-value").textContent = s.toFixed(1);
+    const a = e.tts_settings || {};
+    o("character-voice-id").value = a.voice_id || t.elevenlabs_voice_id;
+    const r = a.model_id || t.elevenlabs_model_id || "eleven_multilingual_v2";
+    m("character-tts-model").value = r, oe(r), Ce(a.voice_id || t.elevenlabs_voice_id);
+    const c = a.stability ?? t.voice_stability;
+    o("character-stability").value = String(Math.round(c * 100)), l("character-stability-value").textContent = c.toFixed(2);
+    const s = a.similarity_boost ?? t.voice_similarity_boost;
+    o("character-similarity").value = String(Math.round(s * 100)), l("character-similarity-value").textContent = s.toFixed(2);
+    const i = a.style ?? t.voice_style;
+    o("character-voice-style").value = String(Math.round(i * 100)), l("character-style-value").textContent = i.toFixed(2);
+    const d = a.speed ?? t.voice_speed;
+    o("character-voice-speed").value = String(Math.round(d * 100)), l("character-speed-value").textContent = d.toFixed(1);
   }
-  document.getElementById("character-volume").value = Math.round(e.default_volume * 100), document.getElementById("character-volume-value").textContent = Math.round(e.default_volume * 100), document.getElementById("character-muted").checked = e.mute_state, document.getElementById("character-text-style").value = e.default_text_style, document.getElementById("character-font-family").value = e.text_font_family, document.getElementById("character-font-size").value = e.text_font_size, document.getElementById("character-text-duration").value = e.text_duration, document.getElementById("character-text-color").value = e.text_color, document.getElementById("character-stroke-color").value = e.text_stroke_color || "#000000", document.getElementById("character-stroke-width").value = e.text_stroke_width, document.getElementById("character-stroke-width-value").textContent = e.text_stroke_width, document.getElementById("character-position-x").value = Math.round(e.text_position_x * 100), document.getElementById("character-pos-x-value").textContent = Math.round(e.text_position_x * 100), document.getElementById("character-position-y").value = Math.round(e.text_position_y * 100), document.getElementById("character-pos-y-value").textContent = Math.round(e.text_position_y * 100), document.getElementById("character-prompt").value = e.system_prompt || "", document.getElementById("character-model").value = e.model, he(e.model).then(() => {
-    document.getElementById("character-provider").value = e.provider || "";
-  }), document.getElementById("character-temperature").value = Math.round(e.temperature * 100), document.getElementById("character-temp-value").textContent = e.temperature.toFixed(1), document.getElementById("character-max-tokens").value = e.max_tokens, document.getElementById("character-memory-enabled").checked = e.memory_enabled || !1, document.getElementById("character-persist-memory").checked = e.persist_memory || !1, document.getElementById("character-twitch-chat-enabled").checked = e.twitch_chat_enabled || !1, document.getElementById("character-twitch-chat-seconds").value = e.twitch_chat_window_seconds || 60, document.getElementById("character-twitch-chat-max").value = e.twitch_chat_max_messages || 20, $.classList.add("active");
+  o("character-volume").value = String(Math.round(t.default_volume * 100)), l("character-volume-value").textContent = String(Math.round(t.default_volume * 100)), o("character-muted").checked = t.mute_state, m("character-text-style").value = t.default_text_style, o("character-font-family").value = e.text_font_family || "Arial", o("character-font-size").value = String(e.text_font_size || 48), o("character-text-duration").value = String(t.text_duration), o("character-text-color").value = e.text_color || "#ffffff", o("character-stroke-color").value = e.text_stroke_color || "#000000", o("character-stroke-width").value = String(e.text_stroke_width || 0), l("character-stroke-width-value").textContent = String(e.text_stroke_width || 0), o("character-position-x").value = String(Math.round((e.text_position_x || 0.5) * 100)), l("character-pos-x-value").textContent = String(Math.round((e.text_position_x || 0.5) * 100)), o("character-position-y").value = String(Math.round((e.text_position_y || 0.5) * 100)), l("character-pos-y-value").textContent = String(Math.round((e.text_position_y || 0.5) * 100)), b("character-prompt").value = e.system_prompt || "", o("character-model").value = e.openrouter_model || "", xe(e.openrouter_model || "").then(() => {
+    m("character-provider").value = t.provider || "";
+  }), o("character-temperature").value = String(Math.round(t.temperature * 100)), l("character-temp-value").textContent = t.temperature.toFixed(1), o("character-max-tokens").value = String(t.max_tokens), o("character-memory-enabled").checked = t.memory_enabled || !1, o("character-persist-memory").checked = e.persist_memory || !1, o("character-twitch-chat-enabled").checked = t.twitch_chat_enabled || !1, o("character-twitch-chat-seconds").value = String(t.twitch_chat_window_seconds || 60), o("character-twitch-chat-max").value = String(t.twitch_chat_max_messages || 20), L.classList.add("active");
 }
-function G() {
-  $.classList.remove("active"), E = null, te();
+function Y() {
+  L.classList.remove("active"), C = null, se();
 }
-async function Qe(e) {
+async function ct(e) {
   e.preventDefault();
-  const t = document.getElementById("character-tts-provider").value;
+  const t = m("character-tts-provider").value;
   let n = null;
   t === "cartesia" ? n = {
-    voice_id: document.getElementById("cartesia-voice-id").value,
-    model_id: document.getElementById("cartesia-model-id").value,
-    language: document.getElementById("cartesia-language").value,
-    speed: parseInt(document.getElementById("cartesia-speed").value) / 100
+    voice_id: o("cartesia-voice-id").value,
+    model_id: o("cartesia-model-id").value,
+    language: m("cartesia-language").value,
+    speed: parseInt(o("cartesia-speed").value) / 100
   } : n = {
-    voice_id: document.getElementById("character-voice-id").value,
-    model_id: document.getElementById("character-tts-model").value,
-    stability: parseInt(document.getElementById("character-stability").value) / 100,
-    similarity_boost: parseInt(document.getElementById("character-similarity").value) / 100,
-    style: parseInt(document.getElementById("character-voice-style").value) / 100,
-    speed: parseInt(document.getElementById("character-voice-speed").value) / 100
+    voice_id: o("character-voice-id").value,
+    model_id: m("character-tts-model").value,
+    stability: parseInt(o("character-stability").value) / 100,
+    similarity_boost: parseInt(o("character-similarity").value) / 100,
+    style: parseInt(o("character-voice-style").value) / 100,
+    speed: parseInt(o("character-voice-speed").value) / 100
   };
   const a = {
-    name: document.getElementById("character-name").value,
-    description: document.getElementById("character-description").value || null,
-    color: document.getElementById("character-color").value,
-    icon: document.getElementById("character-icon").value,
+    name: o("character-name").value,
+    description: b("character-description").value || null,
+    color: o("character-color").value,
+    icon: o("character-icon").value,
     // TTS provider abstraction
     tts_provider: t,
     tts_settings: n,
     // Legacy ElevenLabs fields (for backwards compatibility)
-    elevenlabs_voice_id: document.getElementById("character-voice-id").value,
-    elevenlabs_model_id: document.getElementById("character-tts-model").value,
-    voice_stability: parseInt(document.getElementById("character-stability").value) / 100,
-    voice_similarity_boost: parseInt(document.getElementById("character-similarity").value) / 100,
-    voice_style: parseInt(document.getElementById("character-voice-style").value) / 100,
-    voice_speed: parseInt(document.getElementById("character-voice-speed").value) / 100,
-    default_volume: parseInt(document.getElementById("character-volume").value) / 100,
-    mute_state: document.getElementById("character-muted").checked,
-    default_text_style: document.getElementById("character-text-style").value,
-    text_font_family: document.getElementById("character-font-family").value,
-    text_font_size: parseInt(document.getElementById("character-font-size").value),
-    text_duration: parseInt(document.getElementById("character-text-duration").value),
-    text_color: document.getElementById("character-text-color").value,
-    text_stroke_color: parseInt(document.getElementById("character-stroke-width").value) > 0 ? document.getElementById("character-stroke-color").value : null,
-    text_stroke_width: parseInt(document.getElementById("character-stroke-width").value),
-    text_position_x: parseInt(document.getElementById("character-position-x").value) / 100,
-    text_position_y: parseInt(document.getElementById("character-position-y").value) / 100,
-    system_prompt: document.getElementById("character-prompt").value || null,
-    model: document.getElementById("character-model").value,
-    provider: document.getElementById("character-provider").value || null,
-    temperature: parseInt(document.getElementById("character-temperature").value) / 100,
-    max_tokens: parseInt(document.getElementById("character-max-tokens").value),
-    memory_enabled: document.getElementById("character-memory-enabled").checked,
-    persist_memory: document.getElementById("character-persist-memory").checked,
-    twitch_chat_enabled: document.getElementById("character-twitch-chat-enabled").checked,
-    twitch_chat_window_seconds: parseInt(document.getElementById("character-twitch-chat-seconds").value),
-    twitch_chat_max_messages: parseInt(document.getElementById("character-twitch-chat-max").value),
+    elevenlabs_voice_id: o("character-voice-id").value,
+    elevenlabs_model_id: m("character-tts-model").value,
+    voice_stability: parseInt(o("character-stability").value) / 100,
+    voice_similarity_boost: parseInt(o("character-similarity").value) / 100,
+    voice_style: parseInt(o("character-voice-style").value) / 100,
+    voice_speed: parseInt(o("character-voice-speed").value) / 100,
+    default_volume: parseInt(o("character-volume").value) / 100,
+    mute_state: o("character-muted").checked,
+    default_text_style: m("character-text-style").value,
+    text_font_family: o("character-font-family").value,
+    text_font_size: parseInt(o("character-font-size").value),
+    text_duration: parseInt(o("character-text-duration").value),
+    text_color: o("character-text-color").value,
+    text_stroke_color: parseInt(o("character-stroke-width").value) > 0 ? o("character-stroke-color").value : null,
+    text_stroke_width: parseInt(o("character-stroke-width").value),
+    text_position_x: parseInt(o("character-position-x").value) / 100,
+    text_position_y: parseInt(o("character-position-y").value) / 100,
+    system_prompt: b("character-prompt").value || null,
+    model: o("character-model").value,
+    provider: m("character-provider").value || null,
+    temperature: parseInt(o("character-temperature").value) / 100,
+    max_tokens: parseInt(o("character-max-tokens").value),
+    memory_enabled: o("character-memory-enabled").checked,
+    persist_memory: o("character-persist-memory").checked,
+    twitch_chat_enabled: o("character-twitch-chat-enabled").checked,
+    twitch_chat_window_seconds: parseInt(o("character-twitch-chat-seconds").value),
+    twitch_chat_max_messages: parseInt(o("character-twitch-chat-max").value),
     // Optimistic concurrency control - send timestamp to detect conflicts
-    expected_updated_at: (E == null ? void 0 : E.updated_at) || null
+    expected_updated_at: (C == null ? void 0 : C.updated_at) || null
   };
   try {
-    if (E) {
-      const o = await He(E.name, a, !1);
-      if (o && o.status === 409) {
-        const c = await i(`/api/characters/${encodeURIComponent(E.name)}`, "GET", null, !1);
-        c && !c.error ? (fe(c), u("Someone else modified this character. Please review the updated values and try again.", "warning")) : (G(), u("Character was modified. Please try again.", "warning"));
+    if (C) {
+      const r = await Ye(C.name, a, !1);
+      if (r && r.status === 409) {
+        const c = await u(`/api/characters/${encodeURIComponent(C.name)}`, "GET", null, !1);
+        c && !("error" in c) ? (Ie(c), f("Someone else modified this character. Please review the updated values and try again.", "warning")) : (Y(), f("Character was modified. Please try again.", "warning"));
         return;
       }
     } else
-      await Ue(a);
-    G();
-  } catch (o) {
-    console.error("Error saving character:", o), alert("Error saving character. Check console for details.");
+      await Ve(a);
+    Y();
+  } catch (r) {
+    console.error("Error saving character:", r), alert("Error saving character. Check console for details.");
   }
 }
-const A = document.getElementById("speak-modal");
-function Ze(e) {
-  const t = g.find((n) => n.name === e);
-  t && (b = t, document.getElementById("speak-modal-title").textContent = `Speak as ${t.name}`, document.getElementById("speak-text").value = "", document.getElementById("speak-show-text").checked = !0, document.getElementById("speak-status").style.display = "none", document.getElementById("speak-send-btn").disabled = !1, A.classList.add("active"));
+const F = l("speak-modal");
+function st(e) {
+  const t = w.find((n) => n.name === e);
+  t && ($ = t, l("speak-modal-title").textContent = `Speak as ${t.name}`, b("speak-text").value = "", o("speak-show-text").checked = !0, l("speak-status").style.display = "none", A("speak-send-btn").disabled = !1, F.classList.add("active"));
 }
-function Ee() {
-  A.classList.remove("active"), b = null;
+function Se() {
+  F.classList.remove("active"), $ = null;
 }
-async function et() {
-  if (!b) return;
-  const e = document.getElementById("speak-text").value.trim(), t = document.getElementById("speak-show-text").checked;
+async function it() {
+  if (!$) return;
+  const e = b("speak-text").value.trim(), t = o("speak-show-text").checked;
   if (!e) {
     alert("Please enter text to speak");
     return;
   }
-  const n = document.getElementById("speak-status"), a = document.getElementById("speak-status-text"), o = document.getElementById("speak-send-btn"), c = document.getElementById("speak-stop-btn");
-  n.style.display = "block", a.textContent = "Speaking...", o.disabled = !0, c.style.display = "inline-block", f = b.name, p = "speak", k = !1;
+  const n = l("speak-status"), a = l("speak-status-text"), r = A("speak-send-btn"), c = A("speak-stop-btn");
+  n.style.display = "block", a.textContent = "Speaking...", r.disabled = !0, c.style.display = "inline-block", x = $.name, g = "speak", B = !1;
   try {
-    const r = await je(b.name, e, t);
-    r.error || r.detail ? (a.textContent = `Error: ${r.error || r.detail}`, c.style.display = "none", f = null, p = null) : (a.textContent = "Playing audio...", document.getElementById("speak-text").value = "", z());
-  } catch (r) {
-    console.error("Speak error:", r), a.textContent = `Error: ${r.message || "Unknown error"}`, c.style.display = "none", f = null, p = null;
+    const s = await et($.name, e, t);
+    s.error || s.detail ? (a.textContent = `Error: ${s.error || s.detail}`, c.style.display = "none", x = null, g = null) : (a.textContent = "Playing audio...", b("speak-text").value = "", X());
+  } catch (s) {
+    console.error("Speak error:", s), a.textContent = `Error: ${s.message || "Unknown error"}`, c.style.display = "none", x = null, g = null;
   } finally {
-    o.disabled = !1;
+    r.disabled = !1;
   }
 }
-async function tt(e) {
-  const t = e === "speak" ? b == null ? void 0 : b.name : m == null ? void 0 : m.name;
+async function lt(e) {
+  const t = e === "speak" ? $ == null ? void 0 : $.name : p == null ? void 0 : p.name;
   if (!t) return;
   const n = document.getElementById(`${e}-status-text`), a = document.getElementById(`${e}-stop-btn`);
   n && (n.textContent = "Stopping..."), a && (a.disabled = !0);
   try {
-    const o = await i(`/api/characters/${t}/stop`, "POST");
-    n && (o.was_active ? n.textContent = "Stopped" : n.textContent = "Nothing to stop"), e === "chat" && o.was_active && setTimeout(async () => {
+    const r = await u(`/api/characters/${t}/stop`, "POST");
+    n && (r.was_active ? n.textContent = "Stopped" : n.textContent = "Nothing to stop"), e === "chat" && r.was_active && setTimeout(async () => {
       try {
-        const c = await ee(t);
-        document.getElementById("chat-memory-count").textContent = `Memory: ${c.message_count} messages`, O(c.messages, t);
+        const c = await ce(t);
+        l("chat-memory-count").textContent = `Memory: ${c.message_count} messages`, j(c.messages, t);
       } catch (c) {
         console.error("Error refreshing memory after stop:", c);
       }
     }, 500);
-  } catch (o) {
-    console.error("Stop error:", o), n && (n.textContent = `Stop failed: ${o.message}`);
+  } catch (r) {
+    console.error("Stop error:", r), n && (n.textContent = `Stop failed: ${r.message}`);
   } finally {
-    a && (a.disabled = !1, a.style.display = "none"), f = null, p = null, k = !1;
-    const o = document.getElementById(`${e}-send-btn`);
-    o && (o.disabled = !1);
+    a && (a.disabled = !1, a.style.display = "none"), x = null, g = null, B = !1;
+    const r = document.getElementById(`${e}-send-btn`);
+    r && (r.disabled = !1);
   }
 }
-const D = document.getElementById("chat-modal"), de = 20, me = 5;
-function ne() {
-  B = [];
+const E = document.getElementById("chat-modal"), ye = 20, ge = 5;
+function ie() {
+  S = [];
   const e = document.getElementById("chat-image-previews");
   if (e)
     for (; e.firstChild; )
       e.removeChild(e.firstChild);
 }
-function Ie(e, t) {
-  if (B.length >= me) {
-    u(`Maximum ${me} images allowed`, "warning");
+function $e(e, t) {
+  if (S.length >= ge) {
+    f(`Maximum ${ge} images allowed`, "warning");
     return;
   }
-  B.push({ data: e, mediaType: t });
-  const n = document.getElementById("chat-image-previews"), a = document.createElement("div");
-  a.className = "image-preview-thumb", a.dataset.index = B.length - 1;
-  const o = document.createElement("img");
-  o.src = `data:${t};base64,${e}`;
+  S.push({ data: e, mediaType: t });
+  const n = l("chat-image-previews"), a = document.createElement("div");
+  a.className = "image-preview-thumb", a.dataset.index = String(S.length - 1);
+  const r = document.createElement("img");
+  r.src = `data:${t};base64,${e}`;
   const c = document.createElement("button");
   c.className = "remove-btn", c.textContent = "×", c.onclick = function() {
-    const r = parseInt(a.dataset.index);
-    B.splice(r, 1), a.remove(), document.querySelectorAll("#chat-image-previews .image-preview-thumb").forEach((s, l) => {
-      s.dataset.index = l;
+    const s = parseInt(a.dataset.index || "0");
+    S.splice(s, 1), a.remove(), document.querySelectorAll("#chat-image-previews .image-preview-thumb").forEach((i, d) => {
+      i.dataset.index = String(d);
     });
-  }, a.appendChild(o), a.appendChild(c), n.appendChild(a);
+  }, a.appendChild(r), a.appendChild(c), n.appendChild(a);
 }
-async function we(e) {
+async function Te(e) {
   if (!e.type.startsWith("image/")) {
-    u("Only image files are supported", "error");
+    f("Only image files are supported", "error");
     return;
   }
-  if (e.size > de * 1024 * 1024) {
-    u(`Image too large (max ${de}MB)`, "error");
+  if (e.size > ye * 1024 * 1024) {
+    f(`Image too large (max ${ye}MB)`, "error");
     return;
   }
   return new Promise((t) => {
     const n = new FileReader();
     n.onload = (a) => {
-      const c = a.target.result.split(",")[1], r = e.type || "image/png";
-      Ie(c, r), t();
+      var i;
+      const c = ((i = a.target) == null ? void 0 : i.result).split(",")[1], s = e.type || "image/png";
+      $e(c, s), t();
     }, n.readAsDataURL(e);
   });
 }
-function nt() {
-  document.getElementById("chat-image-input").click();
+function dt() {
+  o("chat-image-input").click();
 }
-async function at(e) {
-  const t = e.target.files;
-  for (const n of t)
-    await we(n);
-  e.target.value = "";
+async function ut(e) {
+  const t = e.target, n = t.files;
+  if (n)
+    for (const a of n)
+      await Te(a);
+  t.value = "";
 }
-async function ot() {
+async function ht() {
   try {
     const e = await navigator.mediaDevices.getDisplayMedia({
-      video: { mediaSource: "screen" }
+      video: !0
     }), t = document.createElement("video");
-    t.srcObject = e, await t.play(), await new Promise((r) => {
-      t.readyState >= 2 ? r() : t.onloadeddata = r;
+    t.srcObject = e, await t.play(), await new Promise((s) => {
+      t.readyState >= 2 ? s() : t.onloadeddata = () => s();
     });
     const n = document.createElement("canvas");
-    n.width = t.videoWidth, n.height = t.videoHeight, n.getContext("2d").drawImage(t, 0, 0), e.getTracks().forEach((r) => r.stop());
+    n.width = t.videoWidth, n.height = t.videoHeight, n.getContext("2d").drawImage(t, 0, 0), e.getTracks().forEach((s) => s.stop());
     const c = n.toDataURL("image/png").split(",")[1];
-    Ie(c, "image/png"), u("Screen captured!", "success");
+    $e(c, "image/png"), f("Screen captured!", "success");
   } catch (e) {
-    e.name === "NotAllowedError" ? u("Screen capture permission denied", "warning") : (console.error("Screen capture error:", e), u("Screen capture failed", "error"));
+    e instanceof Error && e.name === "NotAllowedError" ? f("Screen capture permission denied", "warning") : (console.error("Screen capture error:", e), f("Screen capture failed", "error"));
   }
 }
-function ue(e) {
+function we(e) {
   var n;
   const t = (n = e.clipboardData) == null ? void 0 : n.items;
   if (t) {
     for (const a of t)
       if (a.type.startsWith("image/")) {
         e.preventDefault();
-        const o = a.getAsFile();
-        o && we(o);
+        const r = a.getAsFile();
+        r && Te(r);
       }
   }
 }
-async function ct(e) {
-  const t = g.find((a) => a.name === e);
+async function mt(e) {
+  const t = w.find((a) => a.name === e);
   if (!t) return;
   if (!t.system_prompt) {
     alert('This character has no AI system prompt configured. Use "Speak" for direct TTS.');
     return;
   }
-  m = t, document.getElementById("chat-modal-title").textContent = `Chat with ${t.name}`, document.getElementById("chat-message").value = "", document.getElementById("chat-show-text").checked = !0, document.getElementById("chat-include-twitch").checked = !0, document.getElementById("chat-twitch-seconds").value = "", document.getElementById("chat-status").style.display = "none", document.getElementById("chat-twitch-details").style.display = "none", document.getElementById("chat-send-btn").disabled = !1, ne();
-  const n = document.getElementById("chat-message");
-  n.removeEventListener("paste", ue), n.addEventListener("paste", ue);
+  p = t, l("chat-modal-title").textContent = `Chat with ${t.name}`, b("chat-message").value = "", o("chat-show-text").checked = !0, o("chat-include-twitch").checked = !0, o("chat-twitch-seconds").value = "", l("chat-status").style.display = "none", l("chat-twitch-details").style.display = "none", A("chat-send-btn").disabled = !1, ie();
+  const n = b("chat-message");
+  n.removeEventListener("paste", we), n.addEventListener("paste", we);
   try {
-    const a = await ee(e);
-    document.getElementById("chat-memory-count").textContent = `Memory: ${a.message_count} messages${t.memory_enabled ? "" : " (disabled)"}`, O(a.messages, e);
+    const a = await ce(e);
+    l("chat-memory-count").textContent = `Memory: ${a.message_count} messages${t.memory_enabled ? "" : " (disabled)"}`, j(a.messages, e);
   } catch {
-    document.getElementById("chat-memory-count").textContent = "Memory: 0 messages", O([], e);
+    l("chat-memory-count").textContent = "Memory: 0 messages", j([], e);
   }
-  D.classList.add("active");
+  E == null || E.classList.add("active");
 }
-function Be() {
-  D.classList.remove("active"), m = null, ne();
+function Me() {
+  E == null || E.classList.remove("active"), p = null, ie();
 }
-async function rt() {
-  if (!m) return;
-  const e = document.getElementById("chat-message").value.trim(), t = document.getElementById("chat-show-text").checked, n = document.getElementById("chat-include-twitch").checked;
-  let a = document.getElementById("chat-twitch-seconds").value;
+async function pt() {
+  if (!p) return;
+  const e = b("chat-message").value.trim(), t = o("chat-show-text").checked, n = o("chat-include-twitch").checked;
+  let a = o("chat-twitch-seconds").value;
   if (n || (a = "0"), !e) {
     alert("Please enter a message");
     return;
   }
-  const o = document.getElementById("chat-status"), c = document.getElementById("chat-status-text"), r = document.getElementById("chat-send-btn"), s = document.getElementById("chat-stop-btn");
-  o.style.display = "block", c.textContent = "Generating...", r.disabled = !0, s.style.display = "inline-block", f = m.name, p = "chat", k = !1;
+  const r = l("chat-status"), c = l("chat-status-text"), s = A("chat-send-btn"), i = A("chat-stop-btn");
+  r.style.display = "block", c.textContent = "Generating...", s.disabled = !0, i.style.display = "inline-block", x = p.name, g = "chat", B = !1;
   try {
-    const l = B.length > 0, h = l ? `[${B.length} image(s)] ${e}` : e;
-    ie("user", h, m.name), document.getElementById("chat-message").value = "";
-    const I = l ? [...B] : null;
-    ne();
-    const d = await Ve(m.name, e, t, a, I);
-    if (d.error || d.detail)
-      c.textContent = `Error: ${d.error || d.detail}`, s.style.display = "none", f = null, p = null;
+    const d = S.length > 0, v = d ? `[${S.length} image(s)] ${e}` : e;
+    ve("user", v, p.name), b("chat-message").value = "";
+    const k = d ? [...S] : null;
+    ie();
+    const h = await tt(p.name, e, t, a, k);
+    if (h.error || h.detail)
+      c.textContent = `Error: ${h.error || h.detail}`, i.style.display = "none", x = null, g = null;
     else {
-      if (d.twitch_chat_context) {
-        const T = d.twitch_chat_context.split(`
-`), ke = T.slice(-4).map((j) => j.length > 60 ? j.substring(0, 57) + "..." : j).join(" | ");
-        Xe(`📺 Twitch chat (${T.length}): ${ke}`);
+      if (h.twitch_chat_context) {
+        const P = h.twitch_chat_context.split(`
+`), Pe = P.slice(-4).map((Q) => Q.length > 60 ? Q.substring(0, 57) + "..." : Q).join(" | ");
+        nt(`📺 Twitch chat (${P.length}): ${Pe}`);
       }
-      ie("assistant", d.response_text, m.name);
-      let v = "Playing audio...";
-      const ae = document.getElementById("chat-twitch-details"), xe = document.getElementById("chat-twitch-summary"), _e = document.getElementById("chat-twitch-context-text");
-      if (d.twitch_chat_context) {
-        const T = d.twitch_chat_context.split(`
+      ve("assistant", h.response_text || "", p.name);
+      let _ = "Playing audio...";
+      const H = document.getElementById("chat-twitch-details"), le = document.getElementById("chat-twitch-summary"), de = document.getElementById("chat-twitch-context-text");
+      if (h.twitch_chat_context) {
+        const P = h.twitch_chat_context.split(`
 `).length;
-        v += ` (${T} chat msgs)`, xe.textContent = `Twitch Chat Context (${T} messages)`, _e.textContent = d.twitch_chat_context, ae.style.display = "block";
+        _ += ` (${P} chat msgs)`, le && (le.textContent = `Twitch Chat Context (${P} messages)`), de && (de.textContent = h.twitch_chat_context), H && (H.style.display = "block");
       } else
-        ae.style.display = "none";
-      c.textContent = v, z();
-      const Ce = await ee(m.name);
-      document.getElementById("chat-memory-count").textContent = `Memory: ${Ce.message_count} messages${m.memory_enabled ? "" : " (not saving)"}`;
+        H && (H.style.display = "none");
+      c.textContent = _, X();
+      const Le = await ce(p.name), Ae = p;
+      l("chat-memory-count").textContent = `Memory: ${Le.message_count} messages${Ae.memory_enabled ? "" : " (not saving)"}`;
     }
-  } catch (l) {
-    console.error("Chat error:", l), c.textContent = `Error: ${l.message || "Unknown error"}`, s.style.display = "none", f = null, p = null;
+  } catch (d) {
+    console.error("Chat error:", d), c.textContent = `Error: ${d instanceof Error ? d.message : "Unknown error"}`, i.style.display = "none", x = null, g = null;
   } finally {
-    r.disabled = !1;
+    s.disabled = !1;
   }
 }
-async function st() {
-  if (m && confirm(`Clear conversation memory for ${m.name}?`))
+async function ft() {
+  if (p && confirm(`Clear conversation memory for ${p.name}?`))
     try {
-      await Ye(m.name), document.getElementById("chat-memory-count").textContent = "Memory: 0 messages", document.getElementById("chat-status").style.display = "block", document.getElementById("chat-status-text").textContent = "Memory cleared!", O([], m.name), document.getElementById("chat-twitch-details").style.display = "none";
+      await at(p.name);
+      const e = document.getElementById("chat-memory-count"), t = document.getElementById("chat-status"), n = document.getElementById("chat-status-text"), a = document.getElementById("chat-twitch-details");
+      e && (e.textContent = "Memory: 0 messages"), t && (t.style.display = "block"), n && (n.textContent = "Memory cleared!"), j([], p.name), a && (a.style.display = "none");
     } catch (e) {
       console.error("Error clearing memory:", e), alert("Error clearing memory");
     }
 }
-function lt(e) {
+function vt(e) {
   if (!e || e.length === 0) {
-    le.innerHTML = '<div class="history-item"><span class="history-content">No history yet</span></div>';
+    fe.innerHTML = '<div class="history-item"><span class="history-content">No history yet</span></div>';
     return;
   }
-  le.innerHTML = e.map((t) => {
+  fe.innerHTML = e.map((t) => {
     const n = new Date(t.timestamp).toLocaleTimeString();
     return `
                 <div class="history-item">
-                    <span class="history-channel">${w(t.channel)}</span>
-                    <span class="history-content">${w(t.content)}</span>
-                    <span class="history-time">${w(n)}</span>
+                    <span class="history-channel">${I(t.channel)}</span>
+                    <span class="history-content">${I(t.content)}</span>
+                    <span class="history-time">${I(n)}</span>
                 </div>
             `;
   }).join("");
 }
-function K() {
-  if (L) {
-    if (g.length === 0) {
-      L.innerHTML = `
+function ne() {
+  if (R) {
+    if (w.length === 0) {
+      R.innerHTML = `
                 <div class="no-channels">
                     <p>No characters configured yet.</p>
                     <p>Click "Create Character" to add one.</p>
@@ -716,21 +749,21 @@ function K() {
             `;
       return;
     }
-    L.innerHTML = g.map((e) => it(e)).join("");
+    R.innerHTML = w.map((e) => yt(e)).join("");
   }
 }
-function it(e) {
-  var d;
+function yt(e) {
+  var h;
   let t = "", n = "offline";
   e.connected ? e.streaming ? (t = "streaming", n = "streaming") : e.playing ? (t = "playing", n = "playing") : n = "ready" : (t = "", n = "offline");
-  const a = e.connected ? "" : "disconnected", o = e.system_prompt ? '<span class="voice-indicator">AI</span>' : "", c = w(e.description || (e.system_prompt ? e.system_prompt.substring(0, 80) + "..." : "No description")), r = w(e.name), s = w(e.icon), l = Le(e.color), h = w(e.model ? e.model.split("/").pop() : ""), I = w(e.tts_provider === "cartesia" ? (((d = e.tts_settings) == null ? void 0 : d.model_id) || "sonic").replace("sonic-", "") : (e.elevenlabs_model_id || "multilingual_v2").replace("eleven_", "").replace("_", " "));
+  const a = e.connected ? "" : "disconnected", r = e.system_prompt ? '<span class="voice-indicator">AI</span>' : "", c = I(e.description || (e.system_prompt ? e.system_prompt.substring(0, 80) + "..." : "No description")), s = I(e.name), i = I(e.icon), d = He(e.color), v = I(e.model ? e.model.split("/").pop() : ""), k = I(e.tts_provider === "cartesia" ? (((h = e.tts_settings) == null ? void 0 : h.model_id) || "sonic").replace("sonic-", "") : (e.elevenlabs_model_id || "multilingual_v2").replace("eleven_", "").replace("_", " "));
   return `
-            <div class="channel-card ${a}" data-character="${r}" style="border-left-color: ${l}">
+            <div class="channel-card ${a}" data-character="${s}" style="border-left-color: ${d}">
                 <div class="channel-header">
                     <div class="channel-name">
-                        <span class="channel-icon">${s}</span>
+                        <span class="channel-icon">${i}</span>
+                        ${s}
                         ${r}
-                        ${o}
                     </div>
                     <span class="channel-status ${t}">${n}</span>
                 </div>
@@ -738,53 +771,53 @@ function it(e) {
                 <div class="channel-controls">
                     <div class="control-row" style="font-size: 0.75rem; color: var(--text-secondary);">
                         <span>TTS: ${e.tts_provider === "cartesia" ? "Cartesia" : "ElevenLabs"}</span>
-                        <span>${I}</span>
+                        <span>${k}</span>
                     </div>
-                    ${e.system_prompt ? `<div class="control-row" style="font-size: 0.75rem; color: var(--text-secondary);"><span>AI: ${h}</span></div>` : ""}
+                    ${e.system_prompt ? `<div class="control-row" style="font-size: 0.75rem; color: var(--text-secondary);"><span>AI: ${v}</span></div>` : ""}
                 </div>
                 <div class="channel-actions">
-                    <button data-action="speak" data-character="${r}">Speak</button>
-                    ${e.system_prompt ? `<button data-action="chat" data-character="${r}">Chat</button>` : ""}
-                    <button data-action="copy-url" data-character="${r}" title="Copy browser source URL for OBS">Copy URL</button>
-                    <button data-action="rotate-token" data-character="${r}" title="Invalidate old URL and generate new token">Rotate</button>
-                    <button data-action="edit" data-character="${r}">Edit</button>
-                    <button class="secondary" data-action="delete" data-character="${r}">Delete</button>
+                    <button data-action="speak" data-character="${s}">Speak</button>
+                    ${e.system_prompt ? `<button data-action="chat" data-character="${s}">Chat</button>` : ""}
+                    <button data-action="copy-url" data-character="${s}" title="Copy browser source URL for OBS">Copy URL</button>
+                    <button data-action="rotate-token" data-character="${s}" title="Invalidate old URL and generate new token">Rotate</button>
+                    <button data-action="edit" data-character="${s}">Edit</button>
+                    <button class="secondary" data-action="delete" data-character="${s}">Delete</button>
                 </div>
             </div>
         `;
 }
-window.openCreateCharacterModal = Ke;
-window.closeCharacterModal = G;
+window.openCreateCharacterModal = rt;
+window.closeCharacterModal = Y;
 window.editCharacter = async function(e) {
-  const t = await i(`/api/characters/${encodeURIComponent(e)}`);
-  t && !t.error ? fe(t) : u("Failed to load character", "error");
+  const t = await u(`/api/characters/${encodeURIComponent(e)}`);
+  t && !("error" in t) ? Ie(t) : f("Failed to load character", "error");
 };
-window.deleteCharacter = Oe;
-window.openSpeakModal = Ze;
-window.closeSpeakModal = Ee;
-window.sendSpeak = et;
-window.stopGeneration = tt;
-window.openChatModal = ct;
-window.closeChatModal = Be;
-window.sendChat = rt;
-window.clearChatMemory = st;
-window.attachImage = nt;
-window.handleImageSelect = at;
-window.captureScreen = ot;
-window.previewCharacterTextStyle = Je;
-window.stopCharacterTextPreview = te;
-window.updateProviderDropdown = he;
-window.loadVoiceModels = pe;
-window.updateModelInfo = Q;
-window.toggleTTSProvider = ge;
-window.updateCartesiaVoiceInfo = W;
-window.loadCartesiaVoices = Z;
-window.selectCartesiaVoice = qe;
-window.onCartesiaManualIdChange = We;
+window.deleteCharacter = Xe;
+window.openSpeakModal = st;
+window.closeSpeakModal = Se;
+window.sendSpeak = it;
+window.stopGeneration = lt;
+window.openChatModal = mt;
+window.closeChatModal = Me;
+window.sendChat = pt;
+window.clearChatMemory = ft;
+window.attachImage = dt;
+window.handleImageSelect = ut;
+window.captureScreen = ht;
+window.previewCharacterTextStyle = ot;
+window.stopCharacterTextPreview = se;
+window.updateProviderDropdown = xe;
+window.loadVoiceModels = Ce;
+window.updateModelInfo = oe;
+window.toggleTTSProvider = Ee;
+window.updateCartesiaVoiceInfo = K;
+window.loadCartesiaVoices = re;
+window.selectCartesiaVoice = Qe;
+window.onCartesiaManualIdChange = Ze;
 window.copyCharacterUrl = async function(e) {
-  const t = g.find((a) => a.name === e);
-  if (!t || !t.ws_token) {
-    u("Character token not found", "error");
+  const t = w.find((a) => a.name === e);
+  if (!(t != null && t.ws_token)) {
+    f("Character token not found", "error");
     return;
   }
   const n = `${window.location.origin}/channel/${encodeURIComponent(e)}?token=${encodeURIComponent(t.ws_token)}`;
@@ -792,11 +825,11 @@ window.copyCharacterUrl = async function(e) {
     await navigator.clipboard.writeText(n);
     const a = document.querySelector(`[data-character="${CSS.escape(e)}"]`);
     if (a) {
-      const o = a.querySelector('button[data-action="copy-url"]');
-      if (o) {
-        const c = o.textContent;
-        o.textContent = "Copied!", setTimeout(() => {
-          o.textContent = c;
+      const r = a.querySelector('button[data-action="copy-url"]');
+      if (r) {
+        const c = r.textContent;
+        r.textContent = "Copied!", setTimeout(() => {
+          r.textContent = c;
         }, 1500);
       }
     }
@@ -809,67 +842,67 @@ window.rotateCharacterToken = async function(e) {
 
 This will invalidate any existing OBS browser source URLs. You'll need to update your OBS sources with the new URL.`))
     try {
-      const t = await i(`/api/characters/${encodeURIComponent(e)}/rotate-token`, { method: "POST" });
-      if (t && t.success) {
-        const n = g.find((a) => a.name === e);
-        n && (n.ws_token = t.ws_token), u("Token rotated. Copy new URL for OBS.", "success");
+      const t = await u(`/api/characters/${encodeURIComponent(e)}/rotate-token`, "POST");
+      if (t != null && t.success) {
+        const n = w.find((a) => a.name === e);
+        n && t.ws_token && (n.ws_token = t.ws_token), f("Token rotated. Copy new URL for OBS.", "success");
       } else
-        u((t == null ? void 0 : t.detail) || "Failed to rotate token", "error");
+        f((t == null ? void 0 : t.detail) || "Failed to rotate token", "error");
     } catch (t) {
-      console.error("Failed to rotate token:", t), u("Failed to rotate token", "error");
+      console.error("Failed to rotate token:", t), f("Failed to rotate token", "error");
     }
 };
-const V = document.getElementById("twitch-btn"), Y = document.getElementById("twitch-btn-text");
-async function be() {
-  if (!(!V || !Y))
+const Z = document.getElementById("twitch-btn"), ee = document.getElementById("twitch-btn-text");
+async function Be() {
+  if (!(!Z || !ee))
     try {
       const t = await (await fetch("/api/twitch/status")).json();
-      t.connected ? (V.classList.add("connected"), Y.textContent = `#${t.channel}`) : (V.classList.remove("connected"), Y.textContent = "Twitch");
+      t.connected ? (Z.classList.add("connected"), ee.textContent = `#${t.channel}`) : (Z.classList.remove("connected"), ee.textContent = "Twitch");
     } catch (e) {
       console.error("Error checking Twitch status:", e);
     }
 }
-J && J.addEventListener("submit", Qe);
-$ && $.addEventListener("click", (e) => {
-  e.target === $ && G();
-});
-A && A.addEventListener("click", (e) => {
-  e.target === A && Ee();
-});
-D && D.addEventListener("click", (e) => {
-  e.target === D && Be();
-});
+ae && ae.addEventListener("submit", ct);
 L && L.addEventListener("click", (e) => {
-  const t = e.target.closest("button[data-action]");
-  if (!t) return;
-  const n = t.dataset.action, a = t.dataset.character;
-  if (a)
-    switch (n) {
+  e.target === L && Y();
+});
+F && F.addEventListener("click", (e) => {
+  e.target === F && Se();
+});
+E && E.addEventListener("click", (e) => {
+  e.target === E && Me();
+});
+R && R.addEventListener("click", (e) => {
+  const n = e.target.closest("button[data-action]");
+  if (!n) return;
+  const a = n.dataset.action, r = n.dataset.character;
+  if (r)
+    switch (a) {
       case "speak":
-        window.openSpeakModal(a);
+        window.openSpeakModal(r);
         break;
       case "chat":
-        window.openChatModal(a);
+        window.openChatModal(r);
         break;
       case "copy-url":
-        window.copyCharacterUrl(a);
+        window.copyCharacterUrl(r);
         break;
       case "rotate-token":
-        window.rotateCharacterToken(a);
+        window.rotateCharacterToken(r);
         break;
       case "edit":
-        window.editCharacter(a);
+        window.editCharacter(r);
         break;
       case "delete":
-        window.deleteCharacter(a);
+        window.deleteCharacter(r);
         break;
     }
 });
-ye();
-q();
-Fe();
-z();
-be();
-Ge();
-setInterval(z, 1e4);
-setInterval(be, 15e3);
+_e();
+J();
+je();
+X();
+Be();
+Je();
+setInterval(X, 1e4);
+setInterval(Be, 15e3);
