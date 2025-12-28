@@ -3,7 +3,12 @@
 Handles ElevenLabs, Cartesia, and OpenRouter model/voice lookups.
 """
 
+import struct
+
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
+from pydantic import BaseModel
 
 from ..auth import require_auth
 from ..config import settings
@@ -203,3 +208,84 @@ async def list_kokoro_voices(tenant_id: str = Depends(require_auth)) -> list[dic
         return voices
     except KokoroError as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+
+class KokoroPreviewRequest(BaseModel):
+    """Request to preview a Kokoro voice."""
+
+    voice: str = "af_heart"
+    speed: float = 1.0
+
+
+def _pcm_to_wav(pcm_data: bytes, sample_rate: int = 24000, channels: int = 1) -> bytes:
+    """Convert raw PCM16 data to WAV format."""
+    bits_per_sample = 16
+    byte_rate = sample_rate * channels * bits_per_sample // 8
+    block_align = channels * bits_per_sample // 8
+    data_size = len(pcm_data)
+
+    # WAV header
+    header = struct.pack(
+        "<4sI4s4sIHHIIHH4sI",
+        b"RIFF",
+        36 + data_size,  # File size - 8
+        b"WAVE",
+        b"fmt ",
+        16,  # Subchunk1 size
+        1,  # Audio format (PCM)
+        channels,
+        sample_rate,
+        byte_rate,
+        block_align,
+        bits_per_sample,
+        b"data",
+        data_size,
+    )
+    return header + pcm_data
+
+
+@router.post("/api/kokoro/preview")
+async def preview_kokoro_voice(
+    request: KokoroPreviewRequest,
+    tenant_id: str = Depends(require_auth),
+) -> Response:
+    """Generate a short audio preview of a Kokoro voice.
+
+    Returns WAV audio for immediate playback in browser.
+    Does not log to playback history.
+    """
+    preview_text = "Hello! This is a voice preview."
+
+    try:
+        async with httpx.AsyncClient(
+            base_url=settings.kokoro_base_url,
+            timeout=httpx.Timeout(30.0, connect=10.0),
+        ) as client:
+            response = await client.post(
+                "/v1/audio/speech",
+                json={
+                    "model": "kokoro",
+                    "input": preview_text,
+                    "voice": request.voice,
+                    "response_format": "pcm",
+                    "speed": request.speed,
+                },
+            )
+
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Kokoro error: {response.status_code}",
+                )
+
+            # Convert PCM to WAV for browser playback
+            wav_data = _pcm_to_wav(response.content)
+
+            return Response(
+                content=wav_data,
+                media_type="audio/wav",
+                headers={"Cache-Control": "no-cache"},
+            )
+
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Connection error: {e}")

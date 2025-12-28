@@ -828,13 +828,19 @@
                 <div id="kokoro-settings" style="display: none;">
                     <div class="form-group">
                         <label>Kokoro Voice *</label>
-                        <select id="kokoro-voice-select" style="width: 100%;">
-                            <option value="">Loading voices...</option>
-                        </select>
+                        <div style="display: flex; gap: 0.5rem; align-items: stretch;">
+                            <select id="kokoro-voice-select" style="flex: 1;">
+                                <option value="">Loading voices...</option>
+                            </select>
+                            <button type="button" id="kokoro-preview-btn" class="btn btn-secondary" style="padding: 0.5rem 0.75rem; white-space: nowrap;">
+                                Preview
+                            </button>
+                        </div>
                         <small style="color: var(--text-secondary); font-size: 0.7rem; display: block; margin-top: 0.25rem;">
                             67 voices available across 8 languages (American, British, Japanese, etc.)
                         </small>
                     </div>
+                    <audio id="kokoro-preview-player" style="display: none;"></audio>
                     <div class="form-group">
                         <label>Speed (<span id="kokoro-speed-value">1.0</span>x)</label>
                         <input type="range" id="kokoro-speed" min="50" max="200" value="100"

@@ -766,6 +766,68 @@ const historyList = document.getElementById('history-list')!
         }
     }
 
+    let kokoroPreviewPlaying = false;
+
+    async function previewKokoroVoice() {
+        const voice = $select('kokoro-voice-select').value;
+        const speed = parseInt($input('kokoro-speed').value) / 100;
+
+        if (!voice) {
+            showToast('Please select a voice first', 'warning');
+            return;
+        }
+
+        if (kokoroPreviewPlaying) {
+            return;
+        }
+
+        const btn = document.getElementById('kokoro-preview-btn') as HTMLButtonElement;
+        const originalText = btn.textContent || 'Preview';
+        btn.disabled = true;
+        btn.textContent = 'Loading...';
+        kokoroPreviewPlaying = true;
+
+        try {
+            const response = await fetch('/api/kokoro/preview', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ voice, speed }),
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const audioData = await response.arrayBuffer();
+            const audioPlayer = document.getElementById('kokoro-preview-player') as HTMLAudioElement;
+            const blob = new Blob([audioData], { type: 'audio/wav' });
+            audioPlayer.src = URL.createObjectURL(blob);
+
+            btn.textContent = 'Playing...';
+
+            audioPlayer.onended = () => {
+                kokoroPreviewPlaying = false;
+                btn.disabled = false;
+                btn.textContent = originalText;
+            };
+
+            audioPlayer.onerror = () => {
+                kokoroPreviewPlaying = false;
+                btn.disabled = false;
+                btn.textContent = originalText;
+                showToast('Audio playback failed', 'error');
+            };
+
+            await audioPlayer.play();
+        } catch (error) {
+            console.error('Preview error:', error);
+            showToast(`Preview failed: ${error}`, 'error');
+            kokoroPreviewPlaying = false;
+            btn.disabled = false;
+            btn.textContent = originalText;
+        }
+    }
+
     function toggleTTSProvider(provider: string) {
         const elevenlabsSettings = document.getElementById('elevenlabs-settings');
         const cartesiaSettings = document.getElementById('cartesia-settings');
@@ -2158,6 +2220,12 @@ const historyList = document.getElementById('history-list')!
     // Character form submission
     if (characterForm) {
         characterForm.addEventListener('submit', handleCharacterFormSubmit);
+    }
+
+    // Kokoro voice preview button
+    const kokoroPreviewBtn = document.getElementById('kokoro-preview-btn');
+    if (kokoroPreviewBtn) {
+        kokoroPreviewBtn.addEventListener('click', previewKokoroVoice);
     }
 
     // Close character modal on background click
