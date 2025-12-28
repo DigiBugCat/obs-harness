@@ -251,7 +251,7 @@ class KokoroClient:
         url = base_url or settings.kokoro_base_url
         async with httpx.AsyncClient(
             base_url=url,
-            timeout=httpx.Timeout(connect=10.0, read=30.0),
+            timeout=httpx.Timeout(30.0, connect=10.0),
         ) as client:
             try:
                 response = await client.get("/v1/audio/voices")
@@ -262,9 +262,16 @@ class KokoroClient:
                 voices = data.get("voices", [])
 
                 # Transform to consistent format
-                return [
-                    {"id": v.get("voice_id", v.get("id", "")), "name": v.get("name", v.get("voice_id", ""))}
-                    for v in voices
-                ]
+                # Kokoro API returns list of strings like ["af_alloy", "af_heart", ...]
+                result = []
+                for v in voices:
+                    if isinstance(v, str):
+                        result.append({"id": v, "name": v})
+                    else:
+                        result.append({
+                            "id": v.get("voice_id", v.get("id", "")),
+                            "name": v.get("name", v.get("voice_id", ""))
+                        })
+                return result
             except httpx.RequestError as e:
                 raise KokoroError(f"Connection error: {e}")

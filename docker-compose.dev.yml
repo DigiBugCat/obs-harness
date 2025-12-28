@@ -1,0 +1,18 @@
+# Development docker-compose
+# Usage:
+#   docker compose -f docker-compose.dev.yml up -d kokoro
+#   KOKORO_BASE_URL=http://localhost:8880 uv run obs-harness --reload
+
+services:
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    container_name: obs-harness-kokoro-dev
+    ports:
+      - "8880:8880"
+    environment:
+      - KOKORO_DEFAULT_VOICE=af_heart
+    volumes:
+      - kokoro-models-dev:/app/api/src/models
+
+volumes:
+  kokoro-models-dev:
