@@ -1,803 +1,311 @@
-/**
- * OBS Browser Source Channel Handler
- * Handles audio playback, streaming, and text overlays via WebSocket
- */
-console.log('[channel.js] VERSION 13 LOADED - token-based WebSocket auth');
-
-(function() {
-    'use strict';
-
-    // Get channel name from URL path
-    const pathParts = window.location.pathname.split('/');
-    const channelName = pathParts[pathParts.length - 1] || 'default';
-
-    // Get auth token from URL query params (required for WebSocket auth)
-    const urlParams = new URLSearchParams(window.location.search);
-    const wsToken = urlParams.get('token');
-
-    // WebSocket connection
-    let ws = null;
-    let reconnectTimeout = null;
-
-    // Reconnection with exponential backoff
-    let reconnectAttempts = 0;
-    const BASE_RECONNECT_DELAY = 1000;  // Start at 1 second
-    const MAX_RECONNECT_DELAY = 30000;  // Max 30 seconds
-    const MAX_RECONNECT_ATTEMPTS = 10;  // Reload page after this many failures
-
-    // Heartbeat tracking
-    const PING_TIMEOUT = 60000;  // 60 seconds - consider connection dead if no ping
-    const HEALTH_POLL_INTERVAL = 30000;  // 30 seconds - fallback health check
-    let lastPingTime = Date.now();
-    let healthPollInterval = null;
-
-    // Server version tracking for auto-refresh on updates
-    let serverBuildId = null;
-
-    // Audio elements
-    let currentAudio = null;
-
-    // Streaming audio
-    let audioContext = null;
-    let streamBuffer = [];
-    let isStreaming = false;
-    let streamSampleRate = 24000;
-    let streamChannels = 1;
-    let nextPlayTime = 0;
-    let audioStreamEndTime = 0;  // When all scheduled audio will finish
-    let firstAudioChunkReceived = false;  // Track if first audio chunk arrived
-    let scheduledSources = [];  // Track scheduled AudioBufferSourceNodes for stopping
-
-    // Pending text (waits for audio to start)
-    let pendingTextSettings = null;
-    let pendingTextChunks = [];
-
-    // Word timing for synced text reveal
-    let wordTimingEnabled = false;
-    let wordTimingData = [];  // Array of {word, start, end} - times in seconds from audio start
-    let audioStartContextTime = 0;  // audioContext.currentTime when audio started
-    let revealedWordCount = 0;  // How many words have been revealed
-
-    // Canvas for text overlay
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
-
-    // Text animator instance
-    let textAnimator = null;
-    let hasError = false;
-
-    // Resize canvas to match window
-    function resizeCanvas() {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-        if (textAnimator) {
-            textAnimator.resize(canvas.width, canvas.height);
-        }
+import { TextAnimator as L } from "./text-animator.js";
+console.log("[channel.js] VERSION 13 LOADED - token-based WebSocket auth");
+const O = window.location.pathname.split("/"), n = O[O.length - 1] || "default", j = new URLSearchParams(window.location.search), M = j.get("token");
+let c = null, S = null, x = 0;
+const q = 1e3, G = 3e4, D = 10, F = 6e4, J = 3e4;
+let P = Date.now(), A = null, _ = null, i = null, r = null, W = !1, I = 24e3, k = 1, h = 0, C = 0, N = !1, y = [], T = null, b = [], g = !1, f = [], E = 0, m = 0;
+const l = document.getElementById("canvas"), s = l.getContext("2d");
+let o = null, H = !1;
+function U() {
+  l.width = window.innerWidth, l.height = window.innerHeight, o && o.resize(l.width, l.height);
+}
+window.addEventListener("resize", U);
+U();
+typeof L < "u" && (o = new L(s, l.width, l.height));
+function V() {
+  if (!M) {
+    console.error(`[${n}] No token provided - WebSocket connection requires ?token= parameter`), B("Missing Token", "Get URL from dashboard");
+    return;
+  }
+  const t = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws/${encodeURIComponent(n)}?token=${encodeURIComponent(M)}`;
+  c = new WebSocket(t), c.binaryType = "arraybuffer", c.onopen = () => {
+    console.log(`[${n}] Connected to server`), x = 0, P = Date.now(), Z(), S && (clearTimeout(S), S = null);
+  }, c.onclose = (a) => {
+    if (a.code === 4004) {
+      console.error(`[${n}] Invalid channel or token: ${a.reason}`), B("Invalid channel or token", "Copy fresh URL from dashboard");
+      return;
     }
-
-    window.addEventListener('resize', resizeCanvas);
-    resizeCanvas();
-
-    // Initialize text animator
-    if (typeof TextAnimator !== 'undefined') {
-        textAnimator = new TextAnimator(ctx, canvas.width, canvas.height);
+    console.log(`[${n}] Disconnected from server`), Q(), K();
+  }, c.onerror = (a) => {
+    console.error(`[${n}] WebSocket error:`, a);
+  }, c.onmessage = (a) => {
+    a.data instanceof ArrayBuffer ? le(a.data) : te(a.data);
+  };
+}
+function K() {
+  if (!S) {
+    if (x >= D) {
+      console.log(`[${n}] Max reconnect attempts (${D}) reached, reloading page...`), location.reload();
+      return;
     }
-
-    // =========================================================================
-    // WebSocket Connection
-    // =========================================================================
-
-    function connect() {
-        if (!wsToken) {
-            console.error(`[${channelName}] No token provided - WebSocket connection requires ?token= parameter`);
-            showErrorMessage('Missing Token', 'Get URL from dashboard');
-            return;
-        }
-
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws/${encodeURIComponent(channelName)}?token=${encodeURIComponent(wsToken)}`;
-
-        ws = new WebSocket(wsUrl);
-        ws.binaryType = 'arraybuffer';
-
-        ws.onopen = () => {
-            console.log(`[${channelName}] Connected to server`);
-            reconnectAttempts = 0;  // Reset backoff on successful connection
-            lastPingTime = Date.now();  // Reset ping timer
-            stopHealthPoll();  // Stop fallback polling
-            if (reconnectTimeout) {
-                clearTimeout(reconnectTimeout);
-                reconnectTimeout = null;
-            }
-        };
-
-        ws.onclose = (event) => {
-            // Handle auth/channel error (don't reconnect)
-            if (event.code === 4004) {
-                console.error(`[${channelName}] Invalid channel or token: ${event.reason}`);
-                showErrorMessage('Invalid channel or token', 'Copy fresh URL from dashboard');
-                return; // Don't reconnect for auth errors
-            }
-
-            console.log(`[${channelName}] Disconnected from server`);
-            startHealthPoll();  // Start fallback health polling
-            scheduleReconnect();
-        };
-
-        ws.onerror = (error) => {
-            console.error(`[${channelName}] WebSocket error:`, error);
-        };
-
-        ws.onmessage = (event) => {
-            if (event.data instanceof ArrayBuffer) {
-                handleStreamData(event.data);
-            } else {
-                handleMessage(event.data);
-            }
-        };
+    const e = Math.min(
+      q * Math.pow(2, x),
+      G
+    );
+    x++, console.log(`[${n}] Reconnecting in ${e}ms (attempt ${x}/${D})...`), S = setTimeout(() => {
+      S = null, V();
+    }, e);
+  }
+}
+function p(e) {
+  c && c.readyState === WebSocket.OPEN && c.send(JSON.stringify(e));
+}
+function Q() {
+  A || (A = setInterval(async () => {
+    if (!(c && c.readyState === WebSocket.OPEN))
+      try {
+        (await fetch("/health", { signal: AbortSignal.timeout(5e3) })).ok && x >= D / 2 && (console.log(`[${n}] Server healthy but WebSocket failing, reloading page...`), location.reload());
+      } catch {
+      }
+  }, J));
+}
+function Z() {
+  A && (clearInterval(A), A = null);
+}
+function ee(e) {
+  const t = e.build_id;
+  if (_ === null)
+    _ = t, console.log(`[${n}] Server build ID: ${_}`);
+  else if (_ !== t) {
+    console.log(`[${n}] Server version changed (${_} -> ${t}), refreshing page...`), location.reload();
+    return;
+  } else
+    console.log(`[${n}] Reconnected to same server version`);
+}
+function te(e) {
+  try {
+    const t = JSON.parse(e);
+    switch (console.log(`[${n}] Received:`, t), t.action) {
+      case "hello":
+        ee(t);
+        break;
+      case "ping":
+        p({ event: "pong", ts: t.ts }), P = Date.now();
+        break;
+      case "play":
+        ne(t);
+        break;
+      case "stop":
+        oe();
+        break;
+      case "volume":
+        re(t.level);
+        break;
+      case "stream_start":
+        ae(t);
+        break;
+      case "stream_end":
+        se();
+        break;
+      case "stop_stream":
+        ce();
+        break;
+      case "text":
+        de(t);
+        break;
+      case "clear_text":
+        fe();
+        break;
+      case "text_stream_start":
+        ue(t);
+        break;
+      case "text_chunk":
+        he(t);
+        break;
+      case "text_stream_end":
+        pe();
+        break;
+      case "word_timing":
+        me(t);
+        break;
+      default:
+        console.warn(`[${n}] Unknown action:`, t.action);
     }
-
-    function scheduleReconnect() {
-        if (!reconnectTimeout) {
-            // After too many failures, reload the page entirely
-            if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-                console.log(`[${channelName}] Max reconnect attempts (${MAX_RECONNECT_ATTEMPTS}) reached, reloading page...`);
-                location.reload();
-                return;
-            }
-
-            // Exponential backoff: 1s, 2s, 4s, 8s, ... up to 30s max
-            const delay = Math.min(
-                BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempts),
-                MAX_RECONNECT_DELAY
-            );
-            reconnectAttempts++;
-
-            console.log(`[${channelName}] Reconnecting in ${delay}ms (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
-            reconnectTimeout = setTimeout(() => {
-                reconnectTimeout = null;
-                connect();
-            }, delay);
-        }
+  } catch (t) {
+    console.error(`[${n}] Error parsing message:`, t);
+  }
+}
+function ne(e) {
+  i && (i.pause(), i = null), i = new Audio(e.file), i.volume = e.volume ?? 1, i.loop = e.loop ?? !1, i.onended = () => {
+    i.loop || p({ event: "ended", file: e.file });
+  }, i.onerror = (t) => {
+    p({ event: "error", message: `Failed to load: ${e.file}` });
+  }, i.play().catch((t) => {
+    p({ event: "error", message: `Playback failed: ${t.message}` });
+  });
+}
+function oe() {
+  i && (i.pause(), i.currentTime = 0, i = null);
+}
+function re(e) {
+  i && (i.volume = Math.max(0, Math.min(1, e)));
+}
+function ae(e) {
+  r || (r = new (window.AudioContext || window.webkitAudioContext)()), r.state === "suspended" && r.resume(), I = e.sample_rate || 24e3, k = e.channels || 1, W = !0, h = r.currentTime, N = !1, y = [], console.log(`[${n}] Stream started: ${I}Hz, ${k}ch`);
+}
+function le(e) {
+  if (!(!W || !r))
+    try {
+      if (!e || !(e instanceof ArrayBuffer) || e.byteLength === 0) {
+        console.warn(`[${n}] Invalid stream data received`);
+        return;
+      }
+      const t = new Int16Array(e), a = new Float32Array(t.length);
+      for (let d = 0; d < t.length; d++)
+        a[d] = t[d] / 32768;
+      const u = a.length / k;
+      if (u <= 0) {
+        console.warn(`[${n}] Empty audio chunk, skipping`);
+        return;
+      }
+      const v = r.createBuffer(
+        k,
+        u,
+        I
+      );
+      for (let d = 0; d < k; d++) {
+        const Y = v.getChannelData(d);
+        for (let R = 0; R < u; R++)
+          Y[R] = a[R * k + d];
+      }
+      const w = r.createBufferSource();
+      w.buffer = v, w.connect(r.destination), h < r.currentTime && (h = r.currentTime), w.start(h), y.push(w), w.onended = () => {
+        const d = y.indexOf(w);
+        d !== -1 && y.splice(d, 1);
+      }, N || (N = !0, E = h, ie()), h += v.duration;
+    } catch (t) {
+      console.error(`[${n}] Error processing audio stream data:`, t);
     }
-
-    function sendEvent(event) {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify(event));
-        }
+}
+function ie() {
+  if (!(!o || !T)) {
+    if (o.startStream(T), console.log(`[${n}] Text stream activated (synced to audio, wordTiming=${g})`), !g)
+      for (const e of b)
+        o.appendText(e);
+    b = [], T = null;
+  }
+}
+function se() {
+  if (W = !1, T = null, b = [], r && h > r.currentTime) {
+    C = h;
+    const e = (h - r.currentTime) * 1e3;
+    console.log(`[${n}] Stream ended, audio finishes in ${e.toFixed(0)}ms`), setTimeout(() => {
+      p({ event: "stream_ended" }), console.log(`[${n}] Audio playback complete, sent stream_ended`);
+    }, e + 100);
+  } else
+    C = 0, console.log(`[${n}] Stream ended, no pending audio`), p({ event: "stream_ended" });
+}
+function ce() {
+  console.log(`[${n}] Stop stream: forcefully stopping audio (${y.length} sources tracked)`);
+  let e = 0, t = "", a = 0;
+  if (r && E > 0) {
+    e = r.currentTime - E;
+    for (const u of f)
+      if (u.start <= e)
+        t && (t += " "), t += u.word, a++;
+      else
+        break;
+  }
+  console.log(`[${n}] Stop at ${e.toFixed(2)}s - ${a}/${f.length} words played: "${t.substring(0, 50)}..."`), r && (r.close().catch(() => {
+  }), r = null), y = [], W = !1, h = 0, C = 0, N = !1, E = 0, g = !1, f = [], m = 0, $ = !1, T = null, b = [], o && o.clear(), p({
+    event: "stream_stopped",
+    playback_time: e,
+    spoken_text: t,
+    word_count: a
+  });
+}
+function de(e) {
+  if (!o) {
+    console.warn(`[${n}] TextAnimator not available`);
+    return;
+  }
+  o.show({
+    text: e.text,
+    style: e.style || "typewriter",
+    duration: e.duration || 3e3,
+    x: e.position_x ?? 0.5,
+    y: e.position_y ?? 0.5,
+    fontFamily: e.font_family || "Arial",
+    fontSize: e.font_size || 48,
+    color: e.color || "#ffffff",
+    strokeColor: e.stroke_color,
+    strokeWidth: e.stroke_width || 0,
+    onComplete: () => {
+      p({ event: "text_complete" });
     }
-
-    // =========================================================================
-    // Health Poll Fallback
-    // =========================================================================
-
-    function startHealthPoll() {
-        if (healthPollInterval) return;
-        healthPollInterval = setInterval(async () => {
-            // Skip if WebSocket is connected
-            if (ws && ws.readyState === WebSocket.OPEN) return;
-
-            try {
-                const res = await fetch('/health', { signal: AbortSignal.timeout(5000) });
-                if (res.ok && reconnectAttempts >= MAX_RECONNECT_ATTEMPTS / 2) {
-                    // Server is healthy but WebSocket keeps failing - reload
-                    console.log(`[${channelName}] Server healthy but WebSocket failing, reloading page...`);
-                    location.reload();
-                }
-            } catch (e) {
-                // Server unreachable, reconnect logic will handle it
-            }
-        }, HEALTH_POLL_INTERVAL);
-    }
-
-    function stopHealthPoll() {
-        if (healthPollInterval) {
-            clearInterval(healthPollInterval);
-            healthPollInterval = null;
-        }
-    }
-
-    // =========================================================================
-    // Version Check (Auto-refresh on server update)
-    // =========================================================================
-
-    function handleHello(msg) {
-        const newBuildId = msg.build_id;
-
-        if (serverBuildId === null) {
-            // First connection - store the build ID
-            serverBuildId = newBuildId;
-            console.log(`[${channelName}] Server build ID: ${serverBuildId}`);
-        } else if (serverBuildId !== newBuildId) {
-            // Server restarted with new version - refresh to get new JS/CSS
-            console.log(`[${channelName}] Server version changed (${serverBuildId} -> ${newBuildId}), refreshing page...`);
-            location.reload();
-            return;
-        } else {
-            console.log(`[${channelName}] Reconnected to same server version`);
-        }
-    }
-
-    // =========================================================================
-    // Message Handler
-    // =========================================================================
-
-    function handleMessage(data) {
-        try {
-            const msg = JSON.parse(data);
-            console.log(`[${channelName}] Received:`, msg);
-
-            switch (msg.action) {
-                case 'hello':
-                    handleHello(msg);
-                    break;
-                case 'ping':
-                    sendEvent({ event: 'pong', ts: msg.ts });
-                    lastPingTime = Date.now();
-                    break;
-                case 'play':
-                    playAudio(msg);
-                    break;
-                case 'stop':
-                    stopAudio();
-                    break;
-                case 'volume':
-                    setVolume(msg.level);
-                    break;
-                case 'stream_start':
-                    startStream(msg);
-                    break;
-                case 'stream_end':
-                    endStream();
-                    break;
-                case 'stop_stream':
-                    stopStream();
-                    break;
-                case 'text':
-                    showText(msg);
-                    break;
-                case 'clear_text':
-                    clearText();
-                    break;
-                case 'text_stream_start':
-                    startTextStream(msg);
-                    break;
-                case 'text_chunk':
-                    handleTextChunk(msg);
-                    break;
-                case 'text_stream_end':
-                    endTextStream();
-                    break;
-                case 'word_timing':
-                    handleWordTiming(msg);
-                    break;
-                default:
-                    console.warn(`[${channelName}] Unknown action:`, msg.action);
-            }
-        } catch (e) {
-            console.error(`[${channelName}] Error parsing message:`, e);
-        }
-    }
-
-    // =========================================================================
-    // Audio Playback (File-based)
-    // =========================================================================
-
-    function playAudio(msg) {
-        // Stop any current audio
-        if (currentAudio) {
-            currentAudio.pause();
-            currentAudio = null;
-        }
-
-        currentAudio = new Audio(msg.file);
-        currentAudio.volume = msg.volume ?? 1.0;
-        currentAudio.loop = msg.loop ?? false;
-
-        currentAudio.onended = () => {
-            if (!currentAudio.loop) {
-                sendEvent({ event: 'ended', file: msg.file });
-            }
-        };
-
-        currentAudio.onerror = (e) => {
-            sendEvent({ event: 'error', message: `Failed to load: ${msg.file}` });
-        };
-
-        currentAudio.play().catch((e) => {
-            sendEvent({ event: 'error', message: `Playback failed: ${e.message}` });
-        });
-    }
-
-    function stopAudio() {
-        if (currentAudio) {
-            currentAudio.pause();
-            currentAudio.currentTime = 0;
-            currentAudio = null;
-        }
-    }
-
-    function setVolume(level) {
-        if (currentAudio) {
-            currentAudio.volume = Math.max(0, Math.min(1, level));
-        }
-    }
-
-    // =========================================================================
-    // Audio Streaming
-    // =========================================================================
-
-    function startStream(msg) {
-        // Create audio context if needed
-        if (!audioContext) {
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        }
-
-        // Resume audio context if suspended
-        if (audioContext.state === 'suspended') {
-            audioContext.resume();
-        }
-
-        streamSampleRate = msg.sample_rate || 24000;
-        streamChannels = msg.channels || 1;
-        streamBuffer = [];
-        isStreaming = true;
-        nextPlayTime = audioContext.currentTime;
-        firstAudioChunkReceived = false;
-        scheduledSources = [];  // Clear any leftover sources
-
-        console.log(`[${channelName}] Stream started: ${streamSampleRate}Hz, ${streamChannels}ch`);
-    }
-
-    function handleStreamData(data) {
-        if (!isStreaming || !audioContext) return;
-
-        try {
-            // Validate data before processing
-            if (!data || !(data instanceof ArrayBuffer) || data.byteLength === 0) {
-                console.warn(`[${channelName}] Invalid stream data received`);
-                return;
-            }
-
-            // Convert ArrayBuffer to Int16Array (PCM16 format)
-            const int16Data = new Int16Array(data);
-
-            // Convert to Float32 for Web Audio API
-            const float32Data = new Float32Array(int16Data.length);
-            for (let i = 0; i < int16Data.length; i++) {
-                float32Data[i] = int16Data[i] / 32768.0;
-            }
-
-            // Create audio buffer
-            const samplesPerChannel = float32Data.length / streamChannels;
-            if (samplesPerChannel <= 0) {
-                console.warn(`[${channelName}] Empty audio chunk, skipping`);
-                return;
-            }
-
-            const audioBuffer = audioContext.createBuffer(
-                streamChannels,
-                samplesPerChannel,
-                streamSampleRate
-            );
-
-            // Fill buffer channels
-            for (let channel = 0; channel < streamChannels; channel++) {
-                const channelData = audioBuffer.getChannelData(channel);
-                for (let i = 0; i < samplesPerChannel; i++) {
-                    channelData[i] = float32Data[i * streamChannels + channel];
-                }
-            }
-
-            // Schedule playback
-            const source = audioContext.createBufferSource();
-            source.buffer = audioBuffer;
-            source.connect(audioContext.destination);
-
-            // Ensure we don't schedule in the past
-            if (nextPlayTime < audioContext.currentTime) {
-                nextPlayTime = audioContext.currentTime;
-            }
-
-            source.start(nextPlayTime);
-
-            // Track source for potential stopping
-            scheduledSources.push(source);
-            source.onended = () => {
-                const idx = scheduledSources.indexOf(source);
-                if (idx !== -1) scheduledSources.splice(idx, 1);
-            };
-
-            // On first audio chunk, trigger pending text display and record start time
-            if (!firstAudioChunkReceived) {
-                firstAudioChunkReceived = true;
-                audioStartContextTime = nextPlayTime;  // When this first chunk will start playing
-                flushPendingText();
-            }
-
-            nextPlayTime += audioBuffer.duration;
-        } catch (err) {
-            console.error(`[${channelName}] Error processing audio stream data:`, err);
-            // Don't crash the stream - try to continue with next chunk
-        }
-    }
-
-    // Flush pending text to animator when audio starts
-    function flushPendingText() {
-        if (!textAnimator || !pendingTextSettings) return;
-
-        // Start the text stream now that audio is playing
-        // Words are added via word timing, then revealed with typewriter effect
-        textAnimator.startStream(pendingTextSettings);
-        console.log(`[${channelName}] Text stream activated (synced to audio, wordTiming=${wordTimingEnabled})`);
-
-        // Send any buffered text chunks (only if not using word timing)
-        if (!wordTimingEnabled) {
-            for (const chunk of pendingTextChunks) {
-                textAnimator.appendText(chunk);
-            }
-        }
-        pendingTextChunks = [];
-        pendingTextSettings = null;
-    }
-
-    function endStream() {
-        isStreaming = false;
-        streamBuffer = [];
-
-        // Clear pending text state (it should have been flushed by now)
-        pendingTextSettings = null;
-        pendingTextChunks = [];
-
-        // Calculate when all scheduled audio will finish playing
-        if (audioContext && nextPlayTime > audioContext.currentTime) {
-            audioStreamEndTime = nextPlayTime;
-            const remainingMs = (nextPlayTime - audioContext.currentTime) * 1000;
-            console.log(`[${channelName}] Stream ended, audio finishes in ${remainingMs.toFixed(0)}ms`);
-
-            // Send stream_ended AFTER audio actually finishes playing
-            setTimeout(() => {
-                sendEvent({ event: 'stream_ended' });
-                console.log(`[${channelName}] Audio playback complete, sent stream_ended`);
-            }, remainingMs + 100); // Small buffer to ensure audio is done
-        } else {
-            audioStreamEndTime = 0;
-            console.log(`[${channelName}] Stream ended, no pending audio`);
-            sendEvent({ event: 'stream_ended' });
-        }
-    }
-
-    function stopStream() {
-        console.log(`[${channelName}] Stop stream: forcefully stopping audio (${scheduledSources.length} sources tracked)`);
-
-        // Calculate actual playback position and what was really spoken
-        let actualPlaybackTime = 0;
-        let actualSpokenText = '';
-        let actualWordCount = 0;
-
-        if (audioContext && audioStartContextTime > 0) {
-            actualPlaybackTime = audioContext.currentTime - audioStartContextTime;
-
-            // Build spoken text from words that were actually played (based on timing)
-            for (const word of wordTimingData) {
-                if (word.start <= actualPlaybackTime) {
-                    if (actualSpokenText) actualSpokenText += ' ';
-                    actualSpokenText += word.word;
-                    actualWordCount++;
-                } else {
-                    break;  // Words are in order, so stop when we hit one that hasn't played
-                }
-            }
-        }
-
-        console.log(`[${channelName}] Stop at ${actualPlaybackTime.toFixed(2)}s - ${actualWordCount}/${wordTimingData.length} words played: "${actualSpokenText.substring(0, 50)}..."`);
-
-        // NUCLEAR OPTION: Close the entire AudioContext to immediately stop all audio
-        // This is the only reliable way to stop scheduled AudioBufferSourceNodes
-        if (audioContext) {
-            audioContext.close().catch(() => {});
-            audioContext = null;
-        }
-        scheduledSources = [];
-
-        // Reset streaming state
-        isStreaming = false;
-        streamBuffer = [];
-        nextPlayTime = 0;
-        audioStreamEndTime = 0;
-        firstAudioChunkReceived = false;
-        audioStartContextTime = 0;
-
-        // Clear word timing state
-        wordTimingEnabled = false;
-        wordTimingData = [];
-        revealedWordCount = 0;
-        lastAppendWasNewline = false;
-
-        // Clear pending text state
-        pendingTextSettings = null;
-        pendingTextChunks = [];
-
-        // Clear any visible text immediately
-        if (textAnimator) {
-            textAnimator.clear();
-        }
-
-        // Report actual playback position and spoken text
-        sendEvent({
-            event: 'stream_stopped',
-            playback_time: actualPlaybackTime,
-            spoken_text: actualSpokenText,
-            word_count: actualWordCount
-        });
-    }
-
-    // =========================================================================
-    // Text Overlay
-    // =========================================================================
-
-    function showText(msg) {
-        if (!textAnimator) {
-            console.warn(`[${channelName}] TextAnimator not available`);
-            return;
-        }
-
-        textAnimator.show({
-            text: msg.text,
-            style: msg.style || 'typewriter',
-            duration: msg.duration || 3000,
-            x: msg.position_x ?? 0.5,
-            y: msg.position_y ?? 0.5,
-            fontFamily: msg.font_family || 'Arial',
-            fontSize: msg.font_size || 48,
-            color: msg.color || '#ffffff',
-            strokeColor: msg.stroke_color,
-            strokeWidth: msg.stroke_width || 0,
-            onComplete: () => {
-                sendEvent({ event: 'text_complete' });
-            }
-        });
-    }
-
-    function clearText() {
-        if (textAnimator) {
-            textAnimator.clear();
-        }
-    }
-
-    // =========================================================================
-    // Streaming Text Overlay
-    // =========================================================================
-
-    function startTextStream(msg) {
-        if (!textAnimator) {
-            console.warn(`[${channelName}] TextAnimator not available`);
-            return;
-        }
-
-        const settings = {
-            fontFamily: msg.font_family || 'Arial',
-            fontSize: msg.font_size || 48,
-            color: msg.color || '#ffffff',
-            strokeColor: msg.stroke_color,
-            strokeWidth: msg.stroke_width || 0,
-            positionX: msg.position_x ?? 0.5,
-            positionY: msg.position_y ?? 0.5,
-            instantReveal: msg.instant_reveal || false,
-        };
-
-        // Reset word timing state for new stream
-        wordTimingEnabled = false;
-        wordTimingData = [];
-        revealedWordCount = 0;
-        lastAppendWasNewline = false;
-
-        // Always buffer text settings - flushPendingText will activate when audio starts
-        // This ensures correct ordering even if text_stream_start arrives before stream_start resets flags
-        pendingTextSettings = settings;
-        pendingTextChunks = [];
-        console.log(`[${channelName}] Text stream pending (waiting for audio)`);
-    }
-
-    function handleTextChunk(msg) {
-        if (!textAnimator) return;
-
-        // If word timing is enabled, we ignore text chunks (words come from timing data)
-        if (wordTimingEnabled) return;
-
-        // If text stream hasn't started yet, buffer chunks
-        if (pendingTextSettings) {
-            pendingTextChunks.push(msg.text);
-        } else {
-            textAnimator.appendText(msg.text);
-        }
-    }
-
-    function handleWordTiming(msg) {
-        if (!msg.words || msg.words.length === 0) return;
-
-        // Enable word timing mode
-        wordTimingEnabled = true;
-
-        // Append words to our timing data
-        for (const word of msg.words) {
-            wordTimingData.push({
-                word: word.word,
-                start: word.start,
-                end: word.end
-            });
-        }
-
-        console.log(`[${channelName}] Word timing received: ${msg.words.map(w => `"${w.word}"@${w.start.toFixed(2)}s`).join(', ')} (total: ${wordTimingData.length})`);
-    }
-
-    function endTextStream() {
-        if (!textAnimator) return;
-
-        // Calculate delay until audio finishes, then linger for 2 seconds
-        const lingerTime = 2000;  // How long text stays after audio ends
-        let fadeDelay = lingerTime;  // Default if no audio
-        if (audioContext && audioStreamEndTime > audioContext.currentTime) {
-            // Wait until audio finishes, then linger
-            fadeDelay = (audioStreamEndTime - audioContext.currentTime) * 1000 + lingerTime;
-        }
-
-        // DON'T reset wordTimingEnabled yet - let the reveal continue until audio ends
-        // Schedule the reset after the fade delay
-        setTimeout(() => {
-            wordTimingEnabled = false;
-            wordTimingData = [];
-            revealedWordCount = 0;
-            lastAppendWasNewline = false;
-        }, fadeDelay);
-
-        textAnimator.endStream(fadeDelay);
-        console.log(`[${channelName}] Text stream ended, fade in ${fadeDelay.toFixed(0)}ms, unrevealed words: ${wordTimingData.length - revealedWordCount}`);
-        sendEvent({ event: 'text_stream_complete' });
-    }
-
-    // =========================================================================
-    // Error Display
-    // =========================================================================
-
-    function showErrorMessage(title, subtitle) {
-        // Mark as error state to stop animation loop
-        hasError = true;
-
-        // Stop any animations
-        if (textAnimator) {
-            textAnimator.clear();
-        }
-
-        // Draw error message on canvas
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        // Semi-transparent background
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        // Error icon
-        ctx.font = '48px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillStyle = '#ff4444';
-        ctx.fillText('\u26A0', canvas.width / 2, canvas.height / 2 - 40);
-
-        // Title
-        ctx.font = 'bold 24px sans-serif';
-        ctx.fillStyle = '#ffffff';
-        ctx.fillText(title, canvas.width / 2, canvas.height / 2 + 10);
-
-        // Subtitle
-        ctx.font = '16px sans-serif';
-        ctx.fillStyle = '#aaaaaa';
-        ctx.fillText(subtitle, canvas.width / 2, canvas.height / 2 + 40);
-    }
-
-    // =========================================================================
-    // Animation Loop
-    // =========================================================================
-
-    // Pause thresholds for natural line breaks (seconds)
-    const PAUSE_THRESHOLD = 0.3;      // 300ms pause = new line
-    const LONG_PAUSE_THRESHOLD = 1.0; // 1s pause = treat as new thought (could trigger clear)
-
-    // Track if last append was a newline (avoid consecutive newlines)
-    let lastAppendWasNewline = false;
-
-    function updateWordTimingReveal() {
-        // Check if we should reveal more words based on audio playback time
-        if (!wordTimingEnabled || !audioContext || wordTimingData.length === 0) {
-            return;
-        }
-
-        // Check text animator exists
-        if (!textAnimator) {
-            return;
-        }
-
-        // Calculate current audio playback position (seconds since audio started)
-        const currentAudioTime = audioContext.currentTime - audioStartContextTime;
-
-        // Reveal words whose start time has passed
-        while (revealedWordCount < wordTimingData.length) {
-            const word = wordTimingData[revealedWordCount];
-            if (currentAudioTime >= word.start) {
-                // Determine prefix based on pause duration from previous word
-                let prefix = '';
-                let pauseDuration = 0;
-
-                if (revealedWordCount > 0) {
-                    const prevWord = wordTimingData[revealedWordCount - 1];
-                    pauseDuration = word.start - prevWord.end;
-
-                    // Longer pause = new line (mimics natural speech cadence)
-                    // Only use pause duration, not punctuation, to avoid too many line breaks
-                    if (pauseDuration >= PAUSE_THRESHOLD && !lastAppendWasNewline) {
-                        prefix = '\n';
-                        lastAppendWasNewline = true;
-                    } else {
-                        prefix = ' ';
-                        lastAppendWasNewline = false;
-                    }
-                } else {
-                    lastAppendWasNewline = false;
-                }
-
-                const fullText = prefix + word.word;
-                if (pauseDuration >= PAUSE_THRESHOLD) {
-                    console.log(`[REVEAL] "${word.word}" at ${currentAudioTime.toFixed(2)}s (pause: ${(pauseDuration * 1000).toFixed(0)}ms → newline)`);
-                } else {
-                    console.log(`[REVEAL] "${word.word}" at ${currentAudioTime.toFixed(2)}s`);
-                }
-                textAnimator.appendText(fullText);
-                revealedWordCount++;
-            } else {
-                break;  // Not time for this word yet
-            }
-        }
-    }
-
-    function animate() {
-        // Don't animate if in error state
-        if (hasError) {
-            return;
-        }
-
-        // Check for stale connection (no ping received from server)
-        if (ws && ws.readyState === WebSocket.OPEN && Date.now() - lastPingTime > PING_TIMEOUT) {
-            console.log(`[${channelName}] No ping received in ${PING_TIMEOUT}ms, connection stale - reconnecting...`);
-            lastPingTime = Date.now();  // Reset to prevent spam
-            ws.close();  // Will trigger reconnect via onclose
-        }
-
-        // Clear canvas
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        // Update word timing reveal
-        updateWordTimingReveal();
-
-        // Update and draw text animator
-        if (textAnimator) {
-            // Handle streaming text
-            if (textAnimator.isStreaming || textAnimator.streamText) {
-                textAnimator.updateStream();
-                textAnimator.drawStream();
-            } else {
-                // Handle regular animated text
-                textAnimator.update();
-                textAnimator.draw();
-            }
-        }
-
-        requestAnimationFrame(animate);
-    }
-
-    // Start animation loop
-    animate();
-
-    // Connect to WebSocket
-    connect();
-
-    // Log channel info
-    console.log(`[${channelName}] Browser source initialized`);
-})();
+  });
+}
+function fe() {
+  o && o.clear();
+}
+function ue(e) {
+  if (!o) {
+    console.warn(`[${n}] TextAnimator not available`);
+    return;
+  }
+  const t = {
+    fontFamily: e.font_family || "Arial",
+    fontSize: e.font_size || 48,
+    color: e.color || "#ffffff",
+    strokeColor: e.stroke_color,
+    strokeWidth: e.stroke_width || 0,
+    positionX: e.position_x ?? 0.5,
+    positionY: e.position_y ?? 0.5,
+    instantReveal: e.instant_reveal || !1
+  };
+  g = !1, f = [], m = 0, $ = !1, T = t, b = [], console.log(`[${n}] Text stream pending (waiting for audio)`);
+}
+function he(e) {
+  o && (g || (T ? b.push(e.text) : o.appendText(e.text)));
+}
+function me(e) {
+  if (!(!e.words || e.words.length === 0)) {
+    g = !0;
+    for (const t of e.words)
+      f.push({
+        word: t.word,
+        start: t.start,
+        end: t.end
+      });
+    console.log(`[${n}] Word timing received: ${e.words.map((t) => `"${t.word}"@${t.start.toFixed(2)}s`).join(", ")} (total: ${f.length})`);
+  }
+}
+function pe() {
+  if (!o) return;
+  const e = 2e3;
+  let t = e;
+  r && C > r.currentTime && (t = (C - r.currentTime) * 1e3 + e), setTimeout(() => {
+    g = !1, f = [], m = 0, $ = !1;
+  }, t), o.endStream(t), console.log(`[${n}] Text stream ended, fade in ${t.toFixed(0)}ms, unrevealed words: ${f.length - m}`), p({ event: "text_stream_complete" });
+}
+function B(e, t) {
+  H = !0, o && o.clear(), s.clearRect(0, 0, l.width, l.height), s.fillStyle = "rgba(0, 0, 0, 0.7)", s.fillRect(0, 0, l.width, l.height), s.font = "48px sans-serif", s.textAlign = "center", s.fillStyle = "#ff4444", s.fillText("⚠", l.width / 2, l.height / 2 - 40), s.font = "bold 24px sans-serif", s.fillStyle = "#ffffff", s.fillText(e, l.width / 2, l.height / 2 + 10), s.font = "16px sans-serif", s.fillStyle = "#aaaaaa", s.fillText(t, l.width / 2, l.height / 2 + 40);
+}
+const z = 0.3;
+let $ = !1;
+function we() {
+  if (!g || !r || f.length === 0 || !o)
+    return;
+  const e = r.currentTime - E;
+  for (; m < f.length; ) {
+    const t = f[m];
+    if (e >= t.start) {
+      let a = "", u = 0;
+      if (m > 0) {
+        const w = f[m - 1];
+        u = t.start - w.end, u >= z && !$ ? (a = `
+`, $ = !0) : (a = " ", $ = !1);
+      } else
+        $ = !1;
+      const v = a + t.word;
+      u >= z ? console.log(`[REVEAL] "${t.word}" at ${e.toFixed(2)}s (pause: ${(u * 1e3).toFixed(0)}ms → newline)`) : console.log(`[REVEAL] "${t.word}" at ${e.toFixed(2)}s`), o.appendText(v), m++;
+    } else
+      break;
+  }
+}
+function X() {
+  H || (c && c.readyState === WebSocket.OPEN && Date.now() - P > F && (console.log(`[${n}] No ping received in ${F}ms, connection stale - reconnecting...`), P = Date.now(), c.close()), s.clearRect(0, 0, l.width, l.height), we(), o && (o.isStreaming || o.streamText ? (o.updateStream(), o.drawStream()) : (o.update(), o.draw())), requestAnimationFrame(X));
+}
+X();
+V();
+console.log(`[${n}] Browser source initialized`);

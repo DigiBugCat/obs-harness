@@ -27,3 +27,6 @@ cloudflare/terraform/.terraform.lock.hcl
 
 # Data directory
 data/
+
+# Node
+node_modules/

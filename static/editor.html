@@ -301,8 +301,9 @@
         </div>
     </div>
 
-    <script src="/static/js/text-animator.js"></script>
-    <script>
+    <script type="module">
+        import { TextAnimator } from '/static/js/text-animator.js';
+
         const canvas = document.getElementById('preview-canvas');
         const ctx = canvas.getContext('2d');
         let textAnimator = new TextAnimator(ctx, canvas.width, canvas.height);
@@ -453,6 +454,13 @@
                 console.error('Failed to delete preset:', e);
             }
         }
+
+        // Expose functions for onclick handlers
+        window.playPreview = playPreview;
+        window.stopPreview = stopPreview;
+        window.savePreset = savePreset;
+        window.loadPreset = loadPreset;
+        window.deletePreset = deletePreset;
 
         // Initialize
         updatePreview();

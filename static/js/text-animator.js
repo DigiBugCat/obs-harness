@@ -1,948 +1,464 @@
-/**
- * Text Animator for OBS Browser Sources
- * Supports: typewriter, fade, slide, bounce, wave animations
- */
-
-class TextAnimator {
-    constructor(ctx, width, height) {
-        this.ctx = ctx;
-        this.width = width;
-        this.height = height;
-
-        this.queue = [];
-        this.current = null;
-        this.startTime = 0;
-
-        // Streaming text state
-        this.isStreaming = false;
-        this.streamText = '';
-        this.revealIndex = 0;
-        this.streamSettings = null;
-        this.lastRevealTime = 0;
-        this.revealRate = 40; // chars per second
-        this.streamFadeStart = null;
-        this.streamFadeDuration = 1000;
-        this.streamOpacity = 1;
-
-        // Max lines to display at once (cull old sentences when exceeded)
-        this.maxDisplayLines = 4;
-        // Hard cap - force clear everything if we hit this many lines
-        this.hardMaxLines = 7;
-
-        // Fade-out state for clearing old sentences
-        this.clearFadeStart = null;
-        this.clearFadeDuration = 400; // ms
-        this.pendingSentencesToRemove = null;
-
-        // Committed sentences - each sentence is an array of lines
-        this.committedSentences = [];
-        this.lastCommittedIndex = 0; // Index in streamText where we last committed
+var O = Object.defineProperty;
+var R = (T, t, e) => t in T ? O(T, t, { enumerable: !0, configurable: !0, writable: !0, value: e }) : T[t] = e;
+var h = (T, t, e) => R(T, typeof t != "symbol" ? t + "" : t, e);
+class z {
+  constructor(t, e, i) {
+    h(this, "ctx");
+    h(this, "width");
+    h(this, "height");
+    h(this, "queue");
+    h(this, "current");
+    h(this, "startTime");
+    // Streaming text state
+    h(this, "isStreaming");
+    h(this, "streamText");
+    h(this, "revealIndex");
+    h(this, "streamSettings");
+    h(this, "lastRevealTime");
+    h(this, "revealRate");
+    h(this, "streamFadeStart");
+    h(this, "streamFadeDuration");
+    h(this, "streamOpacity");
+    // Max lines to display at once
+    h(this, "maxDisplayLines");
+    h(this, "hardMaxLines");
+    // Fade-out state for clearing old sentences
+    h(this, "clearFadeStart");
+    h(this, "clearFadeDuration");
+    h(this, "pendingSentencesToRemove");
+    // Committed sentences (for streaming mode)
+    h(this, "committedSentences");
+    h(this, "lastCommittedIndex");
+    this.ctx = t, this.width = e, this.height = i, this.queue = [], this.current = null, this.startTime = 0, this.isStreaming = !1, this.streamText = "", this.revealIndex = 0, this.streamSettings = null, this.lastRevealTime = 0, this.revealRate = 40, this.streamFadeStart = null, this.streamFadeDuration = 1e3, this.streamOpacity = 1, this.maxDisplayLines = 4, this.hardMaxLines = 7, this.clearFadeStart = null, this.clearFadeDuration = 400, this.pendingSentencesToRemove = null, this.committedSentences = [], this.lastCommittedIndex = 0;
+  }
+  resize(t, e) {
+    this.width = t, this.height = e;
+  }
+  show(t) {
+    const e = {
+      text: t.text || "",
+      style: t.style || "typewriter",
+      duration: t.duration || 3e3,
+      x: t.x ?? 0.5,
+      y: t.y ?? 0.5,
+      fontFamily: t.fontFamily || "Arial",
+      fontSize: t.fontSize || 48,
+      color: t.color || "#ffffff",
+      strokeColor: t.strokeColor || null,
+      strokeWidth: t.strokeWidth || 0,
+      onComplete: t.onComplete || null,
+      // Animation state
+      progress: 0,
+      chars: t.text.split(""),
+      charStates: [],
+      // Text wrapping - will be calculated in next()
+      lines: [],
+      lineHeight: (t.fontSize || 48) * 1.3
+    };
+    for (let i = 0; i < e.chars.length; i++)
+      e.charStates.push({
+        visible: !1,
+        offset: 0,
+        opacity: 0,
+        scale: 1
+      });
+    this.queue.push(e), this.current || this.next();
+  }
+  clear() {
+    this.queue = [], this.current = null;
+  }
+  next() {
+    this.queue.length > 0 ? (this.current = this.queue.shift(), this.startTime = performance.now(), this.current.lines = this.wrapText(this.current)) : this.current = null;
+  }
+  wrapText(t) {
+    this.ctx.font = `${t.fontSize}px ${t.fontFamily}`;
+    const e = this.width * 0.9, i = t.text.split(" "), r = [];
+    let s = "", a = 0;
+    for (let n = 0; n < i.length; n++) {
+      const o = i[n], l = s ? s + " " + o : o;
+      if (this.ctx.measureText(l).width > e && s) {
+        const x = s.split("");
+        r.push({
+          text: s,
+          startIndex: a,
+          endIndex: a + x.length
+        }), a += x.length + 1, s = o;
+      } else
+        s = l;
     }
-
-    resize(width, height) {
-        this.width = width;
-        this.height = height;
+    return s && r.push({
+      text: s,
+      startIndex: a,
+      endIndex: a + s.length
+    }), r;
+  }
+  update() {
+    if (!this.current) return;
+    const t = performance.now() - this.startTime, e = this.current;
+    switch (e.progress = Math.min(t / e.duration, 1), e.style) {
+      case "typewriter":
+        this.updateTypewriter(e, t);
+        break;
+      case "fade":
+        this.updateFade(e, t);
+        break;
+      case "slide":
+        this.updateSlide(e, t);
+        break;
+      case "bounce":
+        this.updateBounce(e, t);
+        break;
+      case "wave":
+        this.updateWave(e, t);
+        break;
+      default:
+        this.updateTypewriter(e, t);
     }
-
-    show(options) {
-        const item = {
-            text: options.text || '',
-            style: options.style || 'typewriter',
-            duration: options.duration || 3000,
-            x: options.x ?? 0.5,
-            y: options.y ?? 0.5,
-            fontFamily: options.fontFamily || 'Arial',
-            fontSize: options.fontSize || 48,
-            color: options.color || '#ffffff',
-            strokeColor: options.strokeColor || null,
-            strokeWidth: options.strokeWidth || 0,
-            onComplete: options.onComplete || null,
-            // Animation state
-            progress: 0,
-            chars: options.text.split(''),
-            charStates: [],
-            // Text wrapping - will be calculated in next()
-            lines: [],
-            lineHeight: (options.fontSize || 48) * 1.3,
-        };
-
-        // Initialize character states for per-character animations
-        for (let i = 0; i < item.chars.length; i++) {
-            item.charStates.push({
-                visible: false,
-                offset: 0,
-                opacity: 0,
-                scale: 1,
-            });
-        }
-
-        this.queue.push(item);
-
-        if (!this.current) {
-            this.next();
-        }
+    e.progress >= 1 && (e.onComplete && e.onComplete(), this.next());
+  }
+  // =========================================================================
+  // Animation Updates
+  // =========================================================================
+  updateTypewriter(t, e) {
+    const i = t.duration * 0.6, r = Math.min(e / i, 1), s = Math.floor(r * t.chars.length);
+    for (let n = 0; n < t.chars.length; n++)
+      t.charStates[n].visible = n < s, t.charStates[n].opacity = t.charStates[n].visible ? 1 : 0;
+    const a = t.duration * 0.8;
+    if (e > a) {
+      const o = 1 - (e - a) / (t.duration * 0.2);
+      for (let l = 0; l < t.chars.length; l++)
+        t.charStates[l].visible && (t.charStates[l].opacity = o);
     }
-
-    clear() {
-        this.queue = [];
-        this.current = null;
+  }
+  updateFade(t, e) {
+    const i = t.duration * 0.2, r = t.duration * 0.8;
+    let s = 1;
+    e < i ? s = e / i : e > r && (s = 1 - (e - r) / (t.duration * 0.2));
+    for (let a = 0; a < t.chars.length; a++)
+      t.charStates[a].visible = !0, t.charStates[a].opacity = s;
+  }
+  updateSlide(t, e) {
+    const i = t.duration * 0.2, r = t.duration * 0.8;
+    let s = 0, a = 1;
+    if (e < i) {
+      const n = e / i;
+      s = (1 - this.easeOutCubic(n)) * -this.width * 0.3, a = n;
+    } else if (e > r) {
+      const n = (e - r) / (t.duration * 0.2);
+      s = this.easeInCubic(n) * this.width * 0.3, a = 1 - n;
     }
-
-    next() {
-        if (this.queue.length > 0) {
-            this.current = this.queue.shift();
-            this.startTime = performance.now();
-            // Calculate wrapped lines for the new item
-            this.current.lines = this.wrapText(this.current);
-        } else {
-            this.current = null;
-        }
+    for (let n = 0; n < t.chars.length; n++)
+      t.charStates[n].visible = !0, t.charStates[n].offset = s, t.charStates[n].opacity = a;
+  }
+  updateBounce(t, e) {
+    const i = t.duration * 0.4, r = t.duration * 0.8;
+    for (let s = 0; s < t.chars.length; s++) {
+      const a = s / t.chars.length * i * 0.5, n = e - a;
+      if (n < 0) {
+        t.charStates[s].visible = !1, t.charStates[s].opacity = 0, t.charStates[s].offset = -50;
+        continue;
+      }
+      t.charStates[s].visible = !0;
+      const o = i * 0.5;
+      if (n < o) {
+        const l = n / o, S = this.easeOutBounce(l);
+        t.charStates[s].offset = (1 - S) * -50, t.charStates[s].opacity = Math.min(l * 2, 1);
+      } else
+        t.charStates[s].offset = 0, t.charStates[s].opacity = 1;
     }
-
-    wrapText(item) {
-        // Set up font for measurement
-        this.ctx.font = `${item.fontSize}px ${item.fontFamily}`;
-
-        // Use 90% of canvas width as max width, with padding
-        const maxWidth = this.width * 0.9;
-        const words = item.text.split(' ');
-        const lines = [];
-        let currentLine = '';
-        let charIndex = 0;
-
-        for (let i = 0; i < words.length; i++) {
-            const word = words[i];
-            const testLine = currentLine ? currentLine + ' ' + word : word;
-            const metrics = this.ctx.measureText(testLine);
-
-            if (metrics.width > maxWidth && currentLine) {
-                // Push current line and start new one
-                const lineChars = currentLine.split('');
-                lines.push({
-                    text: currentLine,
-                    startIndex: charIndex,
-                    endIndex: charIndex + lineChars.length,
-                });
-                charIndex += lineChars.length + 1; // +1 for space
-                currentLine = word;
-            } else {
-                currentLine = testLine;
-            }
-        }
-
-        // Push the last line
-        if (currentLine) {
-            lines.push({
-                text: currentLine,
-                startIndex: charIndex,
-                endIndex: charIndex + currentLine.length,
-            });
-        }
-
-        return lines;
+    if (e > r) {
+      const s = (e - r) / (t.duration * 0.2);
+      for (let a = 0; a < t.chars.length; a++)
+        t.charStates[a].opacity = 1 - s;
     }
-
-    update() {
-        if (!this.current) return;
-
-        const elapsed = performance.now() - this.startTime;
-        const item = this.current;
-        item.progress = Math.min(elapsed / item.duration, 1);
-
-        // Update based on animation style
-        switch (item.style) {
-            case 'typewriter':
-                this.updateTypewriter(item, elapsed);
-                break;
-            case 'fade':
-                this.updateFade(item, elapsed);
-                break;
-            case 'slide':
-                this.updateSlide(item, elapsed);
-                break;
-            case 'bounce':
-                this.updateBounce(item, elapsed);
-                break;
-            case 'wave':
-                this.updateWave(item, elapsed);
-                break;
-            default:
-                this.updateTypewriter(item, elapsed);
+  }
+  updateWave(t, e) {
+    const i = t.duration * 0.1, r = t.duration * 0.8;
+    let s = 1;
+    e < i ? s = e / i : e > r && (s = 1 - (e - r) / (t.duration * 0.2));
+    const a = 5e-3, n = 15;
+    for (let o = 0; o < t.chars.length; o++)
+      t.charStates[o].visible = !0, t.charStates[o].opacity = s, t.charStates[o].offset = Math.sin(e * a + o * 0.5) * n;
+  }
+  // =========================================================================
+  // Drawing
+  // =========================================================================
+  draw() {
+    if (!this.current) return;
+    const t = this.current, e = this.ctx, i = t.x * this.width, r = t.y * this.height;
+    e.font = `${t.fontSize}px ${t.fontFamily}`, e.textAlign = "center", e.textBaseline = "middle";
+    const s = t.lines.length * t.lineHeight, a = r - s / 2 + t.lineHeight / 2;
+    for (let n = 0; n < t.lines.length; n++) {
+      const o = t.lines[n], l = a + n * t.lineHeight, S = e.measureText(o.text).width;
+      let x = i - S / 2;
+      for (let p = o.startIndex; p < o.endIndex && p < t.chars.length; p++) {
+        p - o.startIndex;
+        const u = t.charStates[p];
+        if (!u.visible || u.opacity <= 0) {
+          x += e.measureText(t.chars[p]).width;
+          continue;
         }
-
-        // Check if animation is complete
-        if (item.progress >= 1) {
-            if (item.onComplete) {
-                item.onComplete();
-            }
-            this.next();
-        }
+        const m = t.chars[p], w = e.measureText(m).width, F = x + w / 2 + (u.offset || 0), v = l + (t.style === "wave" || t.style === "bounce" ? u.offset : 0);
+        e.save(), e.globalAlpha = u.opacity, t.strokeColor && t.strokeWidth > 0 && (e.strokeStyle = t.strokeColor, e.lineWidth = t.strokeWidth, e.strokeText(m, F, v)), e.fillStyle = t.color, e.fillText(m, F, v), e.restore(), x += w;
+      }
     }
-
-    // =========================================================================
-    // Animation Updates
-    // =========================================================================
-
-    updateTypewriter(item, elapsed) {
-        // Reveal characters one by one over first 60% of duration
-        const revealDuration = item.duration * 0.6;
-        const revealProgress = Math.min(elapsed / revealDuration, 1);
-        const charsToShow = Math.floor(revealProgress * item.chars.length);
-
-        for (let i = 0; i < item.chars.length; i++) {
-            item.charStates[i].visible = i < charsToShow;
-            item.charStates[i].opacity = item.charStates[i].visible ? 1 : 0;
+  }
+  // =========================================================================
+  // Easing Functions
+  // =========================================================================
+  easeOutCubic(t) {
+    return 1 - Math.pow(1 - t, 3);
+  }
+  easeInCubic(t) {
+    return t * t * t;
+  }
+  easeOutBounce(t) {
+    return t < 1 / 2.75 ? 7.5625 * t * t : t < 2 / 2.75 ? 7.5625 * (t -= 1.5 / 2.75) * t + 0.75 : t < 2.5 / 2.75 ? 7.5625 * (t -= 2.25 / 2.75) * t + 0.9375 : 7.5625 * (t -= 2.625 / 2.75) * t + 0.984375;
+  }
+  // =========================================================================
+  // Streaming Text Support
+  // =========================================================================
+  /**
+   * Start streaming text display mode.
+   */
+  startStream(t) {
+    this.isStreaming = !0, this.streamText = "", this.revealIndex = 0, this.clearFadeStart = null, this.pendingSentencesToRemove = null, this.committedSentences = [], this.lastCommittedIndex = 0, this.streamSettings = {
+      fontFamily: t.fontFamily || "Arial",
+      fontSize: t.fontSize || 48,
+      color: t.color || "#ffffff",
+      strokeColor: t.strokeColor || null,
+      strokeWidth: t.strokeWidth || 0,
+      positionX: t.positionX ?? 0.5,
+      positionY: t.positionY ?? 0.5,
+      instantReveal: t.instantReveal || !1
+    }, this.lastRevealTime = performance.now(), this.streamFadeStart = null, this.streamOpacity = 1, this.current = null, this.queue = [];
+  }
+  /**
+   * Append text to the streaming buffer.
+   */
+  appendText(t) {
+    this.isStreaming && (this.streamText += t);
+  }
+  /**
+   * End streaming mode and schedule fade-out.
+   */
+  endStream(t = 500) {
+    setTimeout(() => {
+      this.isStreaming = !1, this.streamFadeStart = performance.now();
+    }, t);
+  }
+  /**
+   * Clear streaming text immediately.
+   */
+  clearStream() {
+    this.isStreaming = !1, this.streamText = "", this.revealIndex = 0, this.clearFadeStart = null, this.pendingSentencesToRemove = null, this.committedSentences = [], this.lastCommittedIndex = 0, this.streamFadeStart = null, this.streamSettings = null;
+  }
+  /**
+   * Truncate streaming text to only show what was actually spoken.
+   * Used when audio is stopped mid-stream.
+   */
+  truncateToSpoken(t, e = 1500) {
+    this.isStreaming && (this.committedSentences = [], this.lastCommittedIndex = 0, this.clearFadeStart = null, this.pendingSentencesToRemove = null, this.streamText = t, this.revealIndex = t.length, console.log(`[TextAnimator] Truncated to spoken: "${t.substring(0, 50)}..." (${t.length} chars)`), setTimeout(() => {
+      this.isStreaming && this.streamText === t && (this.streamFadeStart = performance.now());
+    }, e), setTimeout(() => {
+      this.streamText === t && this.clearStream();
+    }, e + this.streamFadeDuration + 100));
+  }
+  /**
+   * Update streaming text state (progressive reveal).
+   */
+  updateStream() {
+    if (this.streamText) {
+      if (this.streamFadeStart) {
+        const t = performance.now() - this.streamFadeStart;
+        if (this.streamOpacity = 1 - t / this.streamFadeDuration, this.streamOpacity <= 0) {
+          this.streamText = "", this.streamFadeStart = null, this.streamSettings = null;
+          return;
         }
-
-        // Fade out in last 20% of duration
-        const fadeStart = item.duration * 0.8;
-        if (elapsed > fadeStart) {
-            const fadeProgress = (elapsed - fadeStart) / (item.duration * 0.2);
-            const fadeOpacity = 1 - fadeProgress;
-            for (let i = 0; i < item.chars.length; i++) {
-                if (item.charStates[i].visible) {
-                    item.charStates[i].opacity = fadeOpacity;
-                }
-            }
-        }
+      }
+      if (this.streamSettings && this.streamSettings.instantReveal) {
+        this.revealIndex = this.streamText.length;
+        return;
+      }
+      if (this.isStreaming || this.revealIndex < this.streamText.length) {
+        const t = performance.now(), e = t - this.lastRevealTime, i = Math.floor(e / (1e3 / this.revealRate));
+        i > 0 && (this.revealIndex = Math.min(
+          this.revealIndex + i,
+          this.streamText.length
+        ), this.lastRevealTime = t);
+      }
     }
-
-    updateFade(item, elapsed) {
-        // Fade in over first 20%, hold, fade out over last 20%
-        const fadeInEnd = item.duration * 0.2;
-        const fadeOutStart = item.duration * 0.8;
-
-        let opacity = 1;
-        if (elapsed < fadeInEnd) {
-            opacity = elapsed / fadeInEnd;
-        } else if (elapsed > fadeOutStart) {
-            opacity = 1 - (elapsed - fadeOutStart) / (item.duration * 0.2);
-        }
-
-        for (let i = 0; i < item.chars.length; i++) {
-            item.charStates[i].visible = true;
-            item.charStates[i].opacity = opacity;
-        }
+  }
+  /**
+   * Parse text into formatted segments.
+   * Supports **bold**, *italic*, ^whisper^, and newlines.
+   */
+  parseFormattedText(t) {
+    const e = [];
+    let i = t, r = !1, s = !1, a = !1;
+    for (; i.length > 0; ) {
+      if (i[0] === `
+`) {
+        e.push({ text: "", newline: !0, bold: !1, italic: !1, whisper: !1 }), i = i.substring(1);
+        continue;
+      }
+      if (i.startsWith("**")) {
+        r = !r, i = i.substring(2);
+        continue;
+      }
+      if (i[0] === "*" && !i.startsWith("**")) {
+        s = !s, i = i.substring(1);
+        continue;
+      }
+      if (i[0] === "^") {
+        a = !a, i = i.substring(1);
+        continue;
+      }
+      let n = i.length;
+      const o = [
+        i.indexOf("**"),
+        i.indexOf("*"),
+        i.indexOf("^"),
+        i.indexOf(`
+`)
+      ].filter((S) => S > 0);
+      o.length > 0 && (n = Math.min(...o));
+      const l = i.substring(0, n);
+      l && e.push({
+        text: l,
+        bold: r,
+        italic: s,
+        whisper: a,
+        newline: !1
+      }), i = i.substring(n);
     }
-
-    updateSlide(item, elapsed) {
-        // Slide in from left over first 20%, hold, slide out right over last 20%
-        const slideInEnd = item.duration * 0.2;
-        const slideOutStart = item.duration * 0.8;
-
-        let offset = 0;
-        let opacity = 1;
-
-        if (elapsed < slideInEnd) {
-            const progress = elapsed / slideInEnd;
-            const eased = this.easeOutCubic(progress);
-            offset = (1 - eased) * -this.width * 0.3;
-            opacity = progress;
-        } else if (elapsed > slideOutStart) {
-            const progress = (elapsed - slideOutStart) / (item.duration * 0.2);
-            const eased = this.easeInCubic(progress);
-            offset = eased * this.width * 0.3;
-            opacity = 1 - progress;
-        }
-
-        for (let i = 0; i < item.chars.length; i++) {
-            item.charStates[i].visible = true;
-            item.charStates[i].offset = offset;
-            item.charStates[i].opacity = opacity;
-        }
+    return e;
+  }
+  /**
+   * Measure width of formatted segments.
+   */
+  measureFormattedText(t, e) {
+    const i = this.ctx;
+    let r = 0;
+    for (const s of t) {
+      if (s.newline) continue;
+      const a = s.italic || s.whisper, n = s.whisper ? e.fontSize * 0.85 : e.fontSize, o = (s.bold ? "bold " : "") + (a ? "italic " : "");
+      i.font = `${o}${n}px ${e.fontFamily}`, r += i.measureText(s.text).width;
     }
-
-    updateBounce(item, elapsed) {
-        // Bounce in characters sequentially
-        const bounceInDuration = item.duration * 0.4;
-        const fadeOutStart = item.duration * 0.8;
-
-        for (let i = 0; i < item.chars.length; i++) {
-            const charDelay = (i / item.chars.length) * bounceInDuration * 0.5;
-            const charElapsed = elapsed - charDelay;
-
-            if (charElapsed < 0) {
-                item.charStates[i].visible = false;
-                item.charStates[i].opacity = 0;
-                item.charStates[i].offset = -50;
-                continue;
-            }
-
-            item.charStates[i].visible = true;
-
-            const charDuration = bounceInDuration * 0.5;
-            if (charElapsed < charDuration) {
-                const progress = charElapsed / charDuration;
-                const bounce = this.easeOutBounce(progress);
-                item.charStates[i].offset = (1 - bounce) * -50;
-                item.charStates[i].opacity = Math.min(progress * 2, 1);
-            } else {
-                item.charStates[i].offset = 0;
-                item.charStates[i].opacity = 1;
-            }
-        }
-
-        // Fade out
-        if (elapsed > fadeOutStart) {
-            const fadeProgress = (elapsed - fadeOutStart) / (item.duration * 0.2);
-            for (let i = 0; i < item.chars.length; i++) {
-                item.charStates[i].opacity = 1 - fadeProgress;
-            }
-        }
+    return r;
+  }
+  /**
+   * Wrap a paragraph into lines while preserving formatting across line breaks.
+   */
+  wrapFormattedParagraph(t, e, i, r = !1) {
+    const s = this.parseFormattedText(t), a = [];
+    let n = [], o = 0;
+    for (const l of s) {
+      if (l.newline) {
+        n.length > 0 && (a.push({ segments: n, isQuote: r }), n = [], o = 0);
+        continue;
+      }
+      const S = l.italic || l.whisper, x = l.whisper ? i.fontSize * 0.85 : i.fontSize, p = (l.bold ? "bold " : "") + (S ? "italic " : "");
+      this.ctx.font = `${p}${x}px ${i.fontFamily}`;
+      const u = l.text.split(/(\s+)/);
+      for (const m of u) {
+        if (m === "") continue;
+        const w = this.ctx.measureText(m).width;
+        o + w > e && n.length > 0 && (a.push({ segments: n, isQuote: r }), n = [], o = 0), (m.trim() || n.length > 0) && (n.push({ text: m, bold: l.bold, italic: l.italic, whisper: l.whisper, newline: !1 }), o += w);
+      }
     }
-
-    updateWave(item, elapsed) {
-        // Wave motion on characters
-        const fadeInEnd = item.duration * 0.1;
-        const fadeOutStart = item.duration * 0.8;
-
-        let baseOpacity = 1;
-        if (elapsed < fadeInEnd) {
-            baseOpacity = elapsed / fadeInEnd;
-        } else if (elapsed > fadeOutStart) {
-            baseOpacity = 1 - (elapsed - fadeOutStart) / (item.duration * 0.2);
-        }
-
-        const waveSpeed = 0.005;
-        const waveHeight = 15;
-
-        for (let i = 0; i < item.chars.length; i++) {
-            item.charStates[i].visible = true;
-            item.charStates[i].opacity = baseOpacity;
-            item.charStates[i].offset = Math.sin(elapsed * waveSpeed + i * 0.5) * waveHeight;
-        }
+    return n.length > 0 && a.push({ segments: n, isQuote: r }), a;
+  }
+  /**
+   * Get the formatting state (bold/italic) at a given position in the text.
+   * Scans from the start to count formatting marker toggles.
+   */
+  getFormattingStateAt(t, e) {
+    let i = !1, r = !1, s = 0;
+    for (; s < e && s < t.length; )
+      t.substring(s, s + 2) === "**" ? (i = !i, s += 2) : (t[s] === "*" && (r = !r), s += 1);
+    return { bold: i, italic: r };
+  }
+  /**
+   * Find sentence ending in text, returns index after the ending or -1.
+   */
+  findSentenceEnd(t, e = 0) {
+    const i = [". ", "! ", "? ", `.
+`, `!
+`, `?
+`, '."', '!"', '?"', ".'", "!'", "?'"];
+    let r = -1, s = null;
+    for (const a of i) {
+      const n = t.indexOf(a, e);
+      n !== -1 && (r === -1 || n < r) && (r = n, s = a);
     }
-
-    // =========================================================================
-    // Drawing
-    // =========================================================================
-
-    draw() {
-        if (!this.current) return;
-
-        const item = this.current;
-        const ctx = this.ctx;
-
-        // Calculate base position
-        const centerX = item.x * this.width;
-        const centerY = item.y * this.height;
-
-        // Set font
-        ctx.font = `${item.fontSize}px ${item.fontFamily}`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-
-        // Calculate total height of all lines for vertical centering
-        const totalHeight = item.lines.length * item.lineHeight;
-        const startY = centerY - totalHeight / 2 + item.lineHeight / 2;
-
-        // Draw each line
-        for (let lineIdx = 0; lineIdx < item.lines.length; lineIdx++) {
-            const line = item.lines[lineIdx];
-            const lineY = startY + lineIdx * item.lineHeight;
-
-            // Measure this line's width for horizontal centering
-            const lineWidth = ctx.measureText(line.text).width;
-            let startX = centerX - lineWidth / 2;
-
-            // Draw each character in this line
-            for (let i = line.startIndex; i < line.endIndex && i < item.chars.length; i++) {
-                const localIdx = i - line.startIndex;
-                const state = item.charStates[i];
-
-                if (!state.visible || state.opacity <= 0) {
-                    startX += ctx.measureText(item.chars[i]).width;
-                    continue;
-                }
-
-                const char = item.chars[i];
-                const charWidth = ctx.measureText(char).width;
-                const charX = startX + charWidth / 2 + (state.offset || 0);
-                const charY = lineY + (item.style === 'wave' || item.style === 'bounce' ? state.offset : 0);
-
-                ctx.save();
-                ctx.globalAlpha = state.opacity;
-
-                // Draw stroke if configured
-                if (item.strokeColor && item.strokeWidth > 0) {
-                    ctx.strokeStyle = item.strokeColor;
-                    ctx.lineWidth = item.strokeWidth;
-                    ctx.strokeText(char, charX, charY);
-                }
-
-                // Draw fill
-                ctx.fillStyle = item.color;
-                ctx.fillText(char, charX, charY);
-
-                ctx.restore();
-
-                startX += charWidth;
-            }
-        }
+    return r !== -1 && s ? r + s.length : -1;
+  }
+  /**
+   * Draw streaming text with word wrapping and formatting.
+   * Uses committed sentences to prevent text from shifting.
+   */
+  drawStream() {
+    if (!this.streamText || !this.streamSettings) return;
+    const t = this.streamSettings, e = this.ctx, i = this.width * 0.9, r = t.fontSize * 1.3;
+    let s = 1;
+    if (this.clearFadeStart !== null && (s = 1 - (performance.now() - this.clearFadeStart) / this.clearFadeDuration, s <= 0)) {
+      const c = this.pendingSentencesToRemove || 1;
+      this.committedSentences.splice(0, c), this.pendingSentencesToRemove = null, this.clearFadeStart = null, s = 1;
     }
-
-    // =========================================================================
-    // Easing Functions
-    // =========================================================================
-
-    easeOutCubic(t) {
-        return 1 - Math.pow(1 - t, 3);
+    const a = this.streamText.substring(0, this.revealIndex);
+    if (!a) return;
+    const n = a.substring(this.lastCommittedIndex);
+    let o = 0, l = this.findSentenceEnd(n, o);
+    for (; l !== -1; ) {
+      const f = n.substring(o, l);
+      if (f.trim()) {
+        const c = this.getFormattingStateAt(this.streamText, this.lastCommittedIndex + o);
+        let d = f;
+        c.bold && (d = "**" + d), c.italic && (d = "*" + d);
+        const y = d.trimStart().startsWith(">"), b = y ? d.trimStart().substring(1).trimStart() : d, g = this.wrapFormattedParagraph(b, i, t, y);
+        this.committedSentences.push({
+          lines: g
+        });
+      }
+      for (o = l; o < n.length && /\s/.test(n[o]); )
+        o++;
+      l = this.findSentenceEnd(n, o);
     }
-
-    easeInCubic(t) {
-        return t * t * t;
+    this.lastCommittedIndex += o;
+    const S = a.substring(this.lastCommittedIndex);
+    let x = [];
+    if (S.trim()) {
+      const f = this.getFormattingStateAt(this.streamText, this.lastCommittedIndex);
+      let c = S;
+      f.bold && (c = "**" + c), f.italic && (c = "*" + c);
+      const d = c.trimStart().startsWith(">"), y = d ? c.trimStart().substring(1).trimStart() : c;
+      x = this.wrapFormattedParagraph(y, i, t, d);
     }
-
-    easeOutBounce(t) {
-        const n1 = 7.5625;
-        const d1 = 2.75;
-
-        if (t < 1 / d1) {
-            return n1 * t * t;
-        } else if (t < 2 / d1) {
-            return n1 * (t -= 1.5 / d1) * t + 0.75;
-        } else if (t < 2.5 / d1) {
-            return n1 * (t -= 2.25 / d1) * t + 0.9375;
-        } else {
-            return n1 * (t -= 2.625 / d1) * t + 0.984375;
-        }
+    const u = [...this.committedSentences.flatMap((f) => f.lines), ...x], m = u.length;
+    if (m >= this.hardMaxLines && this.clearFadeStart === null) {
+      this.committedSentences = [], this.lastCommittedIndex = this.revealIndex, this.clearFadeStart = null, this.pendingSentencesToRemove = null, console.log(`[TextAnimator] Hard cap hit (${m} lines) - force clearing`);
+      return;
     }
-
-    // =========================================================================
-    // Streaming Text Support
-    // =========================================================================
-
-    /**
-     * Start streaming text display mode.
-     * @param {Object} settings - Text styling settings
-     */
-    startStream(settings) {
-        this.isStreaming = true;
-        this.streamText = '';
-        this.revealIndex = 0;
-        this.clearFadeStart = null;
-        this.pendingSentencesToRemove = null;
-        this.committedSentences = [];
-        this.lastCommittedIndex = 0;
-        this.streamSettings = {
-            fontFamily: settings.fontFamily || 'Arial',
-            fontSize: settings.fontSize || 48,
-            color: settings.color || '#ffffff',
-            strokeColor: settings.strokeColor || null,
-            strokeWidth: settings.strokeWidth || 0,
-            positionX: settings.positionX ?? 0.5,
-            positionY: settings.positionY ?? 0.5,
-            instantReveal: settings.instantReveal || false,
-        };
-        this.lastRevealTime = performance.now();
-        this.streamFadeStart = null;
-        this.streamOpacity = 1;
-
-        // Clear any existing animation
-        this.current = null;
-        this.queue = [];
+    if (m > this.maxDisplayLines && this.clearFadeStart === null && this.committedSentences.length > 0 && (this.pendingSentencesToRemove = this.committedSentences.length, this.clearFadeStart = performance.now()), u.length === 0) return;
+    const w = t.positionX * this.width, v = this.height * 0.08 + r / 2;
+    e.save(), e.textAlign = "left", e.textBaseline = "middle", e.globalAlpha = this.streamOpacity * s;
+    for (let f = 0; f < u.length; f++) {
+      const c = u[f], d = v + f * r, y = this.measureFormattedText(c.segments, t);
+      let b = w - y / 2;
+      c.isQuote && (e.font = `${t.fontSize}px ${t.fontFamily}`, e.fillStyle = t.quoteColor || "#888888", e.fillText("│ ", b - e.measureText("│ ").width, d));
+      for (const g of c.segments) {
+        if (g.newline) continue;
+        const I = g.italic || g.whisper, C = g.whisper ? t.fontSize * 0.85 : t.fontSize, W = (g.bold ? "bold " : "") + (I ? "italic " : "");
+        e.font = `${W}${C}px ${t.fontFamily}`;
+        const k = e.measureText(g.text).width;
+        t.strokeColor && t.strokeWidth > 0 && (e.strokeStyle = t.strokeColor, e.lineWidth = t.strokeWidth, e.strokeText(g.text, b, d)), g.whisper ? e.fillStyle = t.whisperColor || "rgba(255, 255, 255, 0.6)" : c.isQuote ? e.fillStyle = t.quoteColor || "#aaaaaa" : e.fillStyle = t.color, e.fillText(g.text, b, d), b += k;
+      }
     }
-
-    /**
-     * Append text to the streaming buffer.
-     * @param {string} text - Text chunk to append
-     */
-    appendText(text) {
-        if (!this.isStreaming) return;
-        this.streamText += text;
-    }
-
-    /**
-     * End streaming mode and schedule fade-out.
-     * @param {number} fadeDelay - Delay in ms before starting fade (default 500ms)
-     */
-    endStream(fadeDelay = 500) {
-        // Keep isStreaming true until fadeDelay so appendText() continues to work
-        // This allows word-synced reveals to continue until audio finishes
-        setTimeout(() => {
-            this.isStreaming = false;
-            this.streamFadeStart = performance.now();
-        }, fadeDelay);
-    }
-
-    /**
-     * Clear streaming text immediately.
-     */
-    clearStream() {
-        this.isStreaming = false;
-        this.streamText = '';
-        this.revealIndex = 0;
-        this.clearFadeStart = null;
-        this.pendingSentencesToRemove = null;
-        this.committedSentences = [];
-        this.lastCommittedIndex = 0;
-        this.streamFadeStart = null;
-        this.streamSettings = null;
-    }
-
-    /**
-     * Truncate streaming text to only show what was actually spoken.
-     * Used when audio is stopped mid-stream.
-     * @param {string} spokenText - The text that was actually spoken
-     * @param {number} fadeDelay - How long before starting fade out (ms)
-     */
-    truncateToSpoken(spokenText, fadeDelay = 1500) {
-        if (!this.isStreaming) return;
-
-        // Clear committed sentences - they may have text beyond what was spoken
-        this.committedSentences = [];
-        this.lastCommittedIndex = 0;
-        this.clearFadeStart = null;
-        this.pendingSentencesToRemove = null;
-
-        // Set the text to only what was spoken
-        this.streamText = spokenText;
-        // Reveal all of it immediately
-        this.revealIndex = spokenText.length;
-
-        console.log(`[TextAnimator] Truncated to spoken: "${spokenText.substring(0, 50)}..." (${spokenText.length} chars)`);
-
-        // Schedule fade out
-        setTimeout(() => {
-            if (this.isStreaming && this.streamText === spokenText) {
-                this.streamFadeStart = performance.now();
-            }
-        }, fadeDelay);
-
-        // Schedule cleanup
-        setTimeout(() => {
-            if (this.streamText === spokenText) {
-                this.clearStream();
-            }
-        }, fadeDelay + this.streamFadeDuration + 100);
-    }
-
-    /**
-     * Update streaming text state (progressive reveal).
-     */
-    updateStream() {
-        if (!this.streamText) return;
-
-        // Handle fade out
-        if (this.streamFadeStart) {
-            const fadeElapsed = performance.now() - this.streamFadeStart;
-            this.streamOpacity = 1 - (fadeElapsed / this.streamFadeDuration);
-            if (this.streamOpacity <= 0) {
-                this.streamText = '';
-                this.streamFadeStart = null;
-                this.streamSettings = null;
-                return;
-            }
-        }
-
-        // Instant reveal mode - show all text immediately
-        if (this.streamSettings && this.streamSettings.instantReveal) {
-            this.revealIndex = this.streamText.length;
-            return;
-        }
-
-        // Progressive reveal while streaming
-        if (this.isStreaming || this.revealIndex < this.streamText.length) {
-            const now = performance.now();
-            const elapsed = now - this.lastRevealTime;
-            const charsToReveal = Math.floor(elapsed / (1000 / this.revealRate));
-
-            if (charsToReveal > 0) {
-                this.revealIndex = Math.min(
-                    this.revealIndex + charsToReveal,
-                    this.streamText.length
-                );
-                this.lastRevealTime = now;
-            }
-        }
-    }
-
-    /**
-     * Parse text into formatted segments.
-     * Supports **bold**, *italic*, ^whisper^, and newlines.
-     * @param {string} text - Raw text with formatting markers
-     * @returns {Array} Array of {text, bold, italic, whisper, newline} segments
-     */
-    parseFormattedText(text) {
-        const segments = [];
-        let remaining = text;
-        let currentBold = false;
-        let currentItalic = false;
-        let currentWhisper = false;
-
-        while (remaining.length > 0) {
-            // Check for newline
-            if (remaining[0] === '\n') {
-                segments.push({ text: '', newline: true, bold: false, italic: false, whisper: false });
-                remaining = remaining.substring(1);
-                continue;
-            }
-
-            // Check for bold marker **
-            if (remaining.startsWith('**')) {
-                currentBold = !currentBold;
-                remaining = remaining.substring(2);
-                continue;
-            }
-
-            // Check for italic marker * (but not **)
-            if (remaining[0] === '*' && !remaining.startsWith('**')) {
-                currentItalic = !currentItalic;
-                remaining = remaining.substring(1);
-                continue;
-            }
-
-            // Check for whisper marker ^
-            if (remaining[0] === '^') {
-                currentWhisper = !currentWhisper;
-                remaining = remaining.substring(1);
-                continue;
-            }
-
-            // Find next marker or newline
-            let nextMarker = remaining.length;
-            const markers = [
-                remaining.indexOf('**'),
-                remaining.indexOf('*'),
-                remaining.indexOf('^'),
-                remaining.indexOf('\n')
-            ].filter(i => i > 0);
-
-            if (markers.length > 0) {
-                nextMarker = Math.min(...markers);
-            }
-
-            // Extract text up to next marker
-            const chunk = remaining.substring(0, nextMarker);
-            if (chunk) {
-                segments.push({
-                    text: chunk,
-                    bold: currentBold,
-                    italic: currentItalic,
-                    whisper: currentWhisper,
-                    newline: false
-                });
-            }
-            remaining = remaining.substring(nextMarker);
-        }
-
-        return segments;
-    }
-
-    /**
-     * Measure width of formatted segments.
-     * @param {Array} segments - Parsed segments
-     * @param {Object} settings - Font settings
-     * @returns {number} Total width in pixels
-     */
-    measureFormattedText(segments, settings) {
-        const ctx = this.ctx;
-        let width = 0;
-
-        for (const seg of segments) {
-            if (seg.newline) continue;
-            // Whisper uses italic and smaller font
-            const isItalic = seg.italic || seg.whisper;
-            const fontSize = seg.whisper ? settings.fontSize * 0.85 : settings.fontSize;
-            const fontStyle = (seg.bold ? 'bold ' : '') + (isItalic ? 'italic ' : '');
-            ctx.font = `${fontStyle}${fontSize}px ${settings.fontFamily}`;
-            width += ctx.measureText(seg.text).width;
-        }
-
-        return width;
-    }
-
-    /**
-     * Wrap a paragraph into lines while preserving formatting across line breaks.
-     * @param {string} paraText - Paragraph text with formatting markers
-     * @param {number} maxWidth - Maximum line width in pixels
-     * @param {Object} settings - Font settings
-     * @param {boolean} isQuote - Whether this is a quote line
-     * @returns {Array} Array of lines, each with segments array and isQuote flag
-     */
-    wrapFormattedParagraph(paraText, maxWidth, settings, isQuote = false) {
-        const segments = this.parseFormattedText(paraText);
-        const lines = [];
-        let currentLine = [];
-        let currentLineWidth = 0;
-
-        for (const seg of segments) {
-            // Handle explicit newlines - finish current line and start new one
-            if (seg.newline) {
-                if (currentLine.length > 0) {
-                    lines.push({ segments: currentLine, isQuote });
-                    currentLine = [];
-                    currentLineWidth = 0;
-                }
-                continue;
-            }
-
-            // Set font for accurate measurement (whisper uses smaller font)
-            const isItalic = seg.italic || seg.whisper;
-            const fontSize = seg.whisper ? settings.fontSize * 0.85 : settings.fontSize;
-            const fontStyle = (seg.bold ? 'bold ' : '') + (isItalic ? 'italic ' : '');
-            this.ctx.font = `${fontStyle}${fontSize}px ${settings.fontFamily}`;
-
-            // Split segment text by word boundaries (keeping whitespace)
-            const parts = seg.text.split(/(\s+)/);
-
-            for (const part of parts) {
-                if (part === '') continue;
-
-                const partWidth = this.ctx.measureText(part).width;
-
-                // Check if adding this part would exceed maxWidth
-                if (currentLineWidth + partWidth > maxWidth && currentLine.length > 0) {
-                    // Push current line and start new one
-                    lines.push({ segments: currentLine, isQuote });
-                    currentLine = [];
-                    currentLineWidth = 0;
-                }
-
-                // Add part to current line (preserving formatting from original segment)
-                if (part.trim() || currentLine.length > 0) {
-                    currentLine.push({ text: part, bold: seg.bold, italic: seg.italic, whisper: seg.whisper, newline: false });
-                    currentLineWidth += partWidth;
-                }
-            }
-        }
-
-        // Push final line if non-empty
-        if (currentLine.length > 0) {
-            lines.push({ segments: currentLine, isQuote });
-        }
-
-        return lines;
-    }
-
-    /**
-     * Get the formatting state (bold/italic) at a given position in the text.
-     * Scans from the start to count formatting marker toggles.
-     * @param {string} text - The full text
-     * @param {number} position - Position to check state at
-     * @returns {Object} {bold: boolean, italic: boolean}
-     */
-    getFormattingStateAt(text, position) {
-        let bold = false;
-        let italic = false;
-        let i = 0;
-
-        while (i < position && i < text.length) {
-            if (text.substring(i, i + 2) === '**') {
-                bold = !bold;
-                i += 2;
-            } else if (text[i] === '*') {
-                italic = !italic;
-                i += 1;
-            } else {
-                i += 1;
-            }
-        }
-
-        return { bold, italic };
-    }
-
-    /**
-     * Find sentence ending in text, returns index after the ending or -1.
-     */
-    findSentenceEnd(text, startFrom = 0) {
-        const endings = ['. ', '! ', '? ', '.\n', '!\n', '?\n', '."', '!"', '?"', ".'", "!'", "?'"];
-        let earliest = -1;
-        let matchedEnding = null;
-
-        for (const ending of endings) {
-            const idx = text.indexOf(ending, startFrom);
-            if (idx !== -1 && (earliest === -1 || idx < earliest)) {
-                earliest = idx;
-                matchedEnding = ending;
-            }
-        }
-
-        if (earliest !== -1 && matchedEnding) {
-            // Return position after the full ending pattern (e.g., after ." not just .)
-            return earliest + matchedEnding.length;
-        }
-        return -1;
-    }
-
-    /**
-     * Draw streaming text with word wrapping and formatting.
-     * Uses committed sentences to prevent text from shifting.
-     */
-    drawStream() {
-        if (!this.streamText || !this.streamSettings) return;
-
-        const settings = this.streamSettings;
-        const ctx = this.ctx;
-        const maxWidth = this.width * 0.9;
-        const lineHeight = settings.fontSize * 1.3;
-
-        // Handle fade-out animation for clearing old sentences
-        let clearFadeOpacity = 1;
-        if (this.clearFadeStart !== null) {
-            const fadeElapsed = performance.now() - this.clearFadeStart;
-            clearFadeOpacity = 1 - (fadeElapsed / this.clearFadeDuration);
-
-            if (clearFadeOpacity <= 0) {
-                // Fade complete - remove oldest committed sentences
-                const sentencesToRemove = this.pendingSentencesToRemove || 1;
-                this.committedSentences.splice(0, sentencesToRemove);
-                this.pendingSentencesToRemove = null;
-                this.clearFadeStart = null;
-                clearFadeOpacity = 1;
-            }
-        }
-
-        // Get revealed text
-        const revealedText = this.streamText.substring(0, this.revealIndex);
-        if (!revealedText) return;
-
-        // Check for new sentence endings to commit
-        const unprocessedText = revealedText.substring(this.lastCommittedIndex);
-        let searchPos = 0;
-        let sentenceEnd = this.findSentenceEnd(unprocessedText, searchPos);
-
-        while (sentenceEnd !== -1) {
-            // Found a sentence ending - commit this sentence
-            const sentenceText = unprocessedText.substring(searchPos, sentenceEnd);
-
-            if (sentenceText.trim()) {
-                // Get formatting state at start of this sentence
-                const formatState = this.getFormattingStateAt(this.streamText, this.lastCommittedIndex + searchPos);
-                let textToWrap = sentenceText;
-                if (formatState.bold) textToWrap = '**' + textToWrap;
-                if (formatState.italic) textToWrap = '*' + textToWrap;
-
-                // Wrap this sentence into lines
-                const isQuote = textToWrap.trimStart().startsWith('>');
-                const paraText = isQuote ? textToWrap.trimStart().substring(1).trimStart() : textToWrap;
-                const wrappedLines = this.wrapFormattedParagraph(paraText, maxWidth, settings, isQuote);
-
-                // Store as a sentence (group of lines)
-                this.committedSentences.push({
-                    lines: wrappedLines
-                });
-            }
-
-            searchPos = sentenceEnd;
-            // Skip any whitespace after sentence
-            while (searchPos < unprocessedText.length && /\s/.test(unprocessedText[searchPos])) {
-                searchPos++;
-            }
-            sentenceEnd = this.findSentenceEnd(unprocessedText, searchPos);
-        }
-
-        // Update last committed index
-        this.lastCommittedIndex += searchPos;
-
-        // Get current (uncommitted) text
-        const currentText = revealedText.substring(this.lastCommittedIndex);
-        let currentLines = [];
-
-        if (currentText.trim()) {
-            // Get formatting state for current text
-            const formatState = this.getFormattingStateAt(this.streamText, this.lastCommittedIndex);
-            let textToWrap = currentText;
-            if (formatState.bold) textToWrap = '**' + textToWrap;
-            if (formatState.italic) textToWrap = '*' + textToWrap;
-
-            const isQuote = textToWrap.trimStart().startsWith('>');
-            const paraText = isQuote ? textToWrap.trimStart().substring(1).trimStart() : textToWrap;
-            currentLines = this.wrapFormattedParagraph(paraText, maxWidth, settings, isQuote);
-        }
-
-        // Flatten committed sentences into lines array
-        const committedLines = this.committedSentences.flatMap(s => s.lines);
-
-        // Combine committed + current lines
-        const allLines = [...committedLines, ...currentLines];
-        const totalLines = allLines.length;
-
-        // Hard cap - if we hit max lines, force clear everything immediately
-        if (totalLines >= this.hardMaxLines && this.clearFadeStart === null) {
-            // Force clear all - reset everything
-            this.committedSentences = [];
-            this.lastCommittedIndex = this.revealIndex;  // Skip to current position
-            this.clearFadeStart = null;
-            this.pendingSentencesToRemove = null;
-            console.log(`[TextAnimator] Hard cap hit (${totalLines} lines) - force clearing`);
-            return;  // Skip this frame, next frame will have fresh start
-        }
-
-        // Soft cap - when total lines exceed max, fade out committed sentences
-        // (only if we have committed sentences to clear)
-        if (totalLines > this.maxDisplayLines && this.clearFadeStart === null && this.committedSentences.length > 0) {
-            // Fade out all committed lines, then reset
-            this.pendingSentencesToRemove = this.committedSentences.length;
-            this.clearFadeStart = performance.now();
-        }
-
-        if (allLines.length === 0) return;
-
-        // Calculate position - anchor near top of screen, horizontally centered
-        const centerX = settings.positionX * this.width;
-        const topY = this.height * 0.08;  // Start 8% from top
-        const startY = topY + lineHeight / 2;
-
-        // Draw each line
-        ctx.save();
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'middle';
-        ctx.globalAlpha = this.streamOpacity * clearFadeOpacity;
-
-        for (let i = 0; i < allLines.length; i++) {
-            const line = allLines[i];
-            const lineY = startY + i * lineHeight;
-
-            // Calculate line width for centering
-            const lineWidth = this.measureFormattedText(line.segments, settings);
-            let lineX = centerX - lineWidth / 2;
-
-            // Draw quote indicator
-            if (line.isQuote) {
-                ctx.font = `${settings.fontSize}px ${settings.fontFamily}`;
-                ctx.fillStyle = settings.quoteColor || '#888888';
-                ctx.fillText('│ ', lineX - ctx.measureText('│ ').width, lineY);
-            }
-
-            // Draw each segment
-            for (const seg of line.segments) {
-                if (seg.newline) continue;
-
-                // Whisper uses italic and smaller font
-                const isItalic = seg.italic || seg.whisper;
-                const fontSize = seg.whisper ? settings.fontSize * 0.85 : settings.fontSize;
-                const fontStyle = (seg.bold ? 'bold ' : '') + (isItalic ? 'italic ' : '');
-                ctx.font = `${fontStyle}${fontSize}px ${settings.fontFamily}`;
-
-                const segWidth = ctx.measureText(seg.text).width;
-
-                // Draw stroke if configured
-                if (settings.strokeColor && settings.strokeWidth > 0) {
-                    ctx.strokeStyle = settings.strokeColor;
-                    ctx.lineWidth = settings.strokeWidth;
-                    ctx.strokeText(seg.text, lineX, lineY);
-                }
-
-                // Draw fill - whisper uses lighter color, quote uses quote color
-                if (seg.whisper) {
-                    ctx.fillStyle = settings.whisperColor || 'rgba(255, 255, 255, 0.6)';
-                } else if (line.isQuote) {
-                    ctx.fillStyle = settings.quoteColor || '#aaaaaa';
-                } else {
-                    ctx.fillStyle = settings.color;
-                }
-                ctx.fillText(seg.text, lineX, lineY);
-
-                lineX += segWidth;
-            }
-        }
-
-        ctx.restore();
-    }
+    e.restore();
+  }
 }
-
-// Export for use in other scripts
-if (typeof window !== 'undefined') {
-    window.TextAnimator = TextAnimator;
-}
+typeof window < "u" && (window.TextAnimator = z);
+export {
+  z as TextAnimator
+};
