@@ -498,9 +498,18 @@
     <div class="container">
         <header>
             <h1>Santa Timmy Dashboard</h1>
-            <div class="nav-links">
-                <a href="/">Main Dashboard</a>
-                <a href="/twitch">Twitch Config</a>
+            <div style="display: flex; align-items: center; gap: 1.5rem;">
+                <!-- View As dropdown (hidden if only one channel) -->
+                <div id="channelSwitcher" style="display: none;">
+                    <label style="font-size: 0.875rem; color: var(--text-secondary); display: flex; align-items: center; gap: 0.5rem;">
+                        Viewing as:
+                        <select id="channelSelect" style="padding: 0.5rem; background: var(--bg-secondary); color: var(--text-primary); border: none; border-radius: 4px; cursor: pointer;"></select>
+                    </label>
+                </div>
+                <div class="nav-links">
+                    <a href="/">Main Dashboard</a>
+                    <a href="/configuration">Configuration</a>
+                </div>
             </div>
         </header>
 
@@ -626,7 +635,9 @@
                         </select>
                         <div style="display: flex; gap: 0.5rem;">
                             <button class="btn btn-secondary" id="refreshRewardsDropdownBtn" style="flex: 1;">↻ Refresh</button>
-                            <button class="btn btn-success" id="createRewardBtn" style="flex: 1;">+ Create New Reward</button>
+                            <div id="createRewardContainer" style="flex: 1;">
+                                <button class="btn btn-success" id="createRewardBtn" style="width: 100%;">+ Create New Reward</button>
+                            </div>
                         </div>
                     </div>
                     <div class="form-group">

@@ -6,10 +6,13 @@ Serves dashboard, channel browser sources, and auth-related pages.
 from html import escape
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from sqlmodel import select
 
 from ..auth import require_auth_redirect
+from ..database import get_session
+from ..models import Character
 from . import get_state, require_santa_feature
 from ..state import AppState
 
@@ -34,8 +37,27 @@ async def dashboard(
 
 
 @router.get("/channel/{name}", response_class=HTMLResponse)
-async def channel_page(name: str, static_dir: Path = Depends(get_static_dir)):
-    """Serve the browser source page for a channel."""
+async def channel_page(
+    name: str,
+    token: str = Query(..., description="Auth token from character settings"),
+    static_dir: Path = Depends(get_static_dir),
+):
+    """Serve the browser source page for a channel.
+
+    Requires token query parameter for authentication.
+    Example: /channel/alice?token=abc123...
+    """
+    # Validate token matches character
+    async with get_session() as session:
+        result = await session.execute(
+            select(Character).where(
+                Character.name == name,
+                Character.ws_token == token,
+            )
+        )
+        if not result.scalar_one_or_none():
+            raise HTTPException(status_code=401, detail="Invalid character or token")
+
     channel_path = static_dir / "channel.html"
     if channel_path.exists():
         return FileResponse(channel_path)
@@ -71,16 +93,16 @@ async def logout():
     return response
 
 
-@router.get("/twitch", response_class=HTMLResponse)
-async def twitch_page(
+@router.get("/configuration", response_class=HTMLResponse)
+async def configuration_page(
     static_dir: Path = Depends(get_static_dir),
     tenant_id: str = Depends(require_auth_redirect),
 ):
-    """Serve the Twitch OAuth sign-in page."""
-    twitch_path = static_dir / "twitch.html"
-    if twitch_path.exists():
-        return FileResponse(twitch_path)
-    return HTMLResponse("<html><body><h1>Twitch</h1><p>Twitch page not found.</p></body></html>")
+    """Serve the Configuration page (Twitch settings, moderators, etc)."""
+    config_path = static_dir / "configuration.html"
+    if config_path.exists():
+        return FileResponse(config_path)
+    return HTMLResponse("<html><body><h1>Configuration</h1><p>Configuration page not found.</p></body></html>")
 
 
 @router.get("/santa", response_class=HTMLResponse)

@@ -49,6 +49,13 @@ interface TwitchReward {
     is_paused: boolean;
 }
 
+interface AccessibleChannel {
+    tenant_id: string;
+    username: string;
+    is_own: boolean;
+}
+
+
 class SantaDashboard {
     // WebSocket state
     private ws: WebSocket | null = null;
@@ -57,6 +64,11 @@ class SantaDashboard {
     private sessionActive: boolean = false;
     private sessionHeld: boolean = false;
     private configuredRewardId: string | null = null;
+
+    // Channel switching state (for moderator access)
+    private isOwner: boolean = true;
+    private currentChannel: string | null = null;
+    private accessibleChannels: AccessibleChannel[] = [];
 
     // DOM Elements - Status indicators
     private wsStatus: HTMLElement | null;
@@ -117,6 +129,13 @@ class SantaDashboard {
     private resetSantaBtn: HTMLButtonElement | null;
     private clearMemoryBtn: HTMLButtonElement | null;
 
+    // Channel switcher elements (moderator access)
+    private channelSwitcher: HTMLElement | null;
+    private channelSelect: HTMLSelectElement | null;
+
+    // Owner-only UI elements
+    private createRewardContainer: HTMLElement | null;
+
     constructor() {
         // DOM Elements
         this.wsStatus = document.getElementById('wsStatus');
@@ -173,10 +192,20 @@ class SantaDashboard {
         this.resetSantaBtn = document.getElementById('resetSantaBtn') as HTMLButtonElement | null;
         this.clearMemoryBtn = document.getElementById('clearMemoryBtn') as HTMLButtonElement | null;
 
+        // Channel switcher (moderator access)
+        this.channelSwitcher = document.getElementById('channelSwitcher');
+        this.channelSelect = document.getElementById('channelSelect') as HTMLSelectElement | null;
+
+        // Owner-only UI elements
+        this.createRewardContainer = document.getElementById('createRewardContainer');
+
         this.init();
     }
 
-    init() {
+    async init() {
+        // Load accessible channels first to determine current channel
+        await this.loadAccessibleChannels();
+
         this.connectWebSocket();
         this.loadConfig();
         this.loadEventSubStatus();
@@ -194,7 +223,12 @@ class SantaDashboard {
 
     connectWebSocket() {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws/santa`;
+        let wsUrl = `${protocol}//${window.location.host}/ws/santa`;
+
+        // Include channel parameter if viewing another channel
+        if (this.currentChannel) {
+            wsUrl += `?channel=${encodeURIComponent(this.currentChannel)}`;
+        }
 
         this.ws = new WebSocket(wsUrl);
 
@@ -327,7 +361,7 @@ class SantaDashboard {
 
     async loadPastSessions() {
         try {
-            const response = await fetch('/api/santa/sessions?limit=10');
+            const response = await fetch(`/api/santa/sessions?limit=10${this.getChannelParam(true)}`);
             const data = await response.json();
 
             if (!data.sessions || data.sessions.length === 0) {
@@ -400,12 +434,123 @@ class SantaDashboard {
     }
 
     // -------------------------------------------------------------------------
+    // Channel Switching (Moderator Access)
+    // -------------------------------------------------------------------------
+
+    private getCookie(name: string): string | null {
+        const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+        return match ? decodeURIComponent(match[2]) : null;
+    }
+
+    private setCookie(name: string, value: string, days: number = 30) {
+        const expires = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toUTCString();
+        document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/`;
+    }
+
+    async loadAccessibleChannels() {
+        try {
+            const response = await fetch('/api/moderators/accessible-channels');
+            if (!response.ok) {
+                console.error('Failed to load accessible channels');
+                return;
+            }
+
+            const data = await response.json();
+            this.accessibleChannels = data.channels || [];
+
+            // Determine current channel from URL param → cookie → own channel
+            const urlParams = new URLSearchParams(window.location.search);
+            const urlChannel = urlParams.get('channel');
+            const cookieChannel = this.getCookie('effective_channel');
+
+            // Find own channel
+            const ownChannel = this.accessibleChannels.find(c => c.is_own);
+            const ownChannelId = ownChannel?.tenant_id || null;
+
+            // Determine effective channel
+            if (urlChannel && this.accessibleChannels.some(c => c.tenant_id === urlChannel)) {
+                this.currentChannel = urlChannel;
+            } else if (cookieChannel && this.accessibleChannels.some(c => c.tenant_id === cookieChannel)) {
+                this.currentChannel = cookieChannel;
+            } else {
+                this.currentChannel = ownChannelId;
+            }
+
+            // Update isOwner flag
+            this.isOwner = this.currentChannel === ownChannelId;
+
+            // Save to cookie
+            if (this.currentChannel) {
+                this.setCookie('effective_channel', this.currentChannel);
+            }
+
+            // Update UI
+            this.updateChannelSwitcher();
+            this.updateOwnerOnlyUI();
+        } catch (e: unknown) {
+            console.error('Failed to load accessible channels:', e);
+        }
+    }
+
+    updateChannelSwitcher() {
+        if (!this.channelSwitcher || !this.channelSelect) return;
+
+        // Only show switcher if user has access to multiple channels
+        if (this.accessibleChannels.length <= 1) {
+            this.channelSwitcher.style.display = 'none';
+            return;
+        }
+
+        this.channelSwitcher.style.display = 'flex';
+
+        // Populate dropdown
+        this.channelSelect.innerHTML = this.accessibleChannels.map(channel => {
+            const label = channel.is_own
+                ? `${escapeHtml(channel.username)} (You)`
+                : escapeHtml(channel.username);
+            return `<option value="${channel.tenant_id}" ${channel.tenant_id === this.currentChannel ? 'selected' : ''}>${label}</option>`;
+        }).join('');
+    }
+
+    switchChannel(channelId: string) {
+        if (channelId === this.currentChannel) return;
+
+        // Update cookie and reload page
+        this.setCookie('effective_channel', channelId);
+
+        // Update URL without full reload - just update query param
+        const url = new URL(window.location.href);
+        url.searchParams.set('channel', channelId);
+        window.location.href = url.toString();
+    }
+
+    updateOwnerOnlyUI() {
+        // Show/hide create reward button (owner only)
+        if (this.createRewardContainer) {
+            this.createRewardContainer.style.display = this.isOwner ? 'block' : 'none';
+        }
+
+        // Disable character settings for moderators (these use tenant-scoped endpoints)
+        // TODO: Update character routes to support cross-tenant moderator access
+        if (this.savePromptBtn) this.savePromptBtn.disabled = !this.isOwner;
+        if (this.resetPromptBtn) this.resetPromptBtn.disabled = !this.isOwner;
+        if (this.clearMemoryBtn) this.clearMemoryBtn.disabled = !this.isOwner;
+        if (this.systemPrompt) this.systemPrompt.disabled = !this.isOwner;
+    }
+
+    // -------------------------------------------------------------------------
     // API Calls
     // -------------------------------------------------------------------------
 
+    private getChannelParam(hasExistingParams: boolean = false): string {
+        if (!this.currentChannel) return '';
+        const prefix = hasExistingParams ? '&' : '?';
+        return `${prefix}channel=${encodeURIComponent(this.currentChannel)}`;
+    }
+
     async loadConfig() {
         try {
-            const response = await fetch('/api/santa/config');
+            const response = await fetch(`/api/santa/config${this.getChannelParam()}`);
             const config = await response.json();
 
             this.enabledToggle.checked = config.enabled;
@@ -434,7 +579,7 @@ class SantaDashboard {
                 debounce_seconds: parseInt(this.debounceSeconds.value),
             };
 
-            const response = await fetch('/api/santa/config', {
+            const response = await fetch(`/api/santa/config${this.getChannelParam()}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(config),
@@ -453,7 +598,7 @@ class SantaDashboard {
 
     async loadEventSubStatus() {
         try {
-            const response = await fetch('/api/santa/eventsub/status');
+            const response = await fetch(`/api/santa/eventsub/status${this.getChannelParam()}`);
             const status = await response.json();
 
             this.eventsubConnected = status.connected;
@@ -504,7 +649,7 @@ class SantaDashboard {
 
     async loadRewards() {
         try {
-            const response = await fetch('/api/santa/rewards');
+            const response = await fetch(`/api/santa/rewards${this.getChannelParam()}`);
             const data = await response.json();
 
             // Store current selection (prefer configured value on first load)
@@ -535,7 +680,7 @@ class SantaDashboard {
         if (!message) return;
 
         try {
-            const response = await fetch('/api/santa/session/message', {
+            const response = await fetch(`/api/santa/session/message${this.getChannelParam()}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ message }),
@@ -555,7 +700,7 @@ class SantaDashboard {
 
     async forceVerdict(verdict: string) {
         try {
-            const response = await fetch('/api/santa/session/verdict', {
+            const response = await fetch(`/api/santa/session/verdict${this.getChannelParam()}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ verdict }),
@@ -574,7 +719,7 @@ class SantaDashboard {
 
     async cancelSession() {
         try {
-            const response = await fetch('/api/santa/session/cancel', { method: 'POST' });
+            const response = await fetch(`/api/santa/session/cancel${this.getChannelParam()}`, { method: 'POST' });
 
             if (response.ok) {
                 this.log('Session cancelled');
@@ -589,7 +734,7 @@ class SantaDashboard {
 
     async toggleHold() {
         try {
-            const response = await fetch('/api/santa/session/hold', { method: 'POST' });
+            const response = await fetch(`/api/santa/session/hold${this.getChannelParam()}`, { method: 'POST' });
             const result = await response.json();
 
             if (response.ok) {
@@ -677,7 +822,7 @@ You remember everything from this stream. Reference past visitors, chat's previo
             // Send through Santa's interrupt endpoint (uses speech lock)
             const message = `[MALL DIRECTOR INTERRUPTION]: ${text}`;
 
-            const response = await fetch('/api/santa/interrupt', {
+            const response = await fetch(`/api/santa/interrupt${this.getChannelParam()}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ message }),
@@ -706,7 +851,7 @@ You remember everything from this stream. Reference past visitors, chat's previo
             this.resetSantaBtn.disabled = true;
             this.log('🔄 Resetting Santa...');
 
-            const response = await fetch('/api/santa/reset', { method: 'POST' });
+            const response = await fetch(`/api/santa/reset${this.getChannelParam()}`, { method: 'POST' });
             const result = await response.json();
 
             if (response.ok) {
@@ -755,7 +900,7 @@ You remember everything from this stream. Reference past visitors, chat's previo
 
         try {
             this.clearSessionsBtn.disabled = true;
-            const response = await fetch('/api/santa/sessions', {
+            const response = await fetch(`/api/santa/sessions${this.getChannelParam()}`, {
                 method: 'DELETE',
             });
 
@@ -790,7 +935,7 @@ You remember everything from this stream. Reference past visitors, chat's previo
             this.createRewardBtn.disabled = true;
             this.log('Creating reward...');
 
-            const response = await fetch('/api/santa/reward/create', {
+            const response = await fetch(`/api/santa/reward/create${this.getChannelParam()}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -860,11 +1005,17 @@ You remember everything from this stream. Reference past visitors, chat's previo
 
         // Enabled toggle - immediate action
         this.enabledToggle.addEventListener('change', () => this.toggleEnabled());
+
+        // Channel switcher
+        this.channelSelect?.addEventListener('change', (e) => {
+            const select = e.target as HTMLSelectElement;
+            this.switchChannel(select.value);
+        });
     }
 
     async toggleEnabled() {
         try {
-            const response = await fetch('/api/santa/toggle', { method: 'POST' });
+            const response = await fetch(`/api/santa/toggle${this.getChannelParam()}`, { method: 'POST' });
             const result = await response.json();
 
             if (response.ok) {

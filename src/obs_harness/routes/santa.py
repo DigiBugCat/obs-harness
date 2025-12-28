@@ -7,10 +7,11 @@ import json
 import logging
 from datetime import datetime
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import delete, select
 
-from ..auth import require_auth
+from ..auth import require_auth, require_owner_only, require_santa_auth, SantaAuthContext
 from ..config import settings
 from ..database import get_session
 from ..helpers.santa import (
@@ -20,10 +21,14 @@ from ..helpers.santa import (
 from ..helpers.twitch import create_chat_callback
 from ..models import (
     Character,
+    SantaAccessibleChannel,
     SantaConfig,
     SantaConfigResponse,
     SantaConfigUpdate,
     SantaMessageRequest,
+    SantaModerator,
+    SantaModeratorAdd,
+    SantaModeratorResponse,
     SantaSession,
     SantaSessionStatus,
     SantaVerdictRequest,
@@ -40,10 +45,11 @@ router = APIRouter(prefix="/api/santa", tags=["Santa"])
 @router.get("/config")
 async def get_santa_config(
     state: AppState = Depends(get_state),
-    tenant_id: str = Depends(require_auth),
+    auth: SantaAuthContext = Depends(require_santa_auth),
     _santa: None = Depends(require_santa_feature),
 ) -> SantaConfigResponse:
     """Get Santa configuration for the current tenant."""
+    tenant_id = auth.effective_tenant_id
     async with get_session() as session:
         result = await session.execute(
             select(SantaConfig).where(SantaConfig.tenant_id == tenant_id)
@@ -70,10 +76,11 @@ async def get_santa_config(
 async def update_santa_config(
     request: SantaConfigUpdate,
     state: AppState = Depends(get_state),
-    tenant_id: str = Depends(require_auth),
+    auth: SantaAuthContext = Depends(require_santa_auth),
     _santa: None = Depends(require_santa_feature),
 ) -> SantaConfigResponse:
     """Update Santa configuration."""
+    tenant_id = auth.effective_tenant_id
     async with get_session() as session:
         result = await session.execute(
             select(SantaConfig).where(SantaConfig.tenant_id == tenant_id)
@@ -130,10 +137,11 @@ async def update_santa_config(
 @router.get("/session")
 async def get_santa_session(
     state: AppState = Depends(get_state),
-    tenant_id: str = Depends(require_auth),
+    auth: SantaAuthContext = Depends(require_santa_auth),
     _santa: None = Depends(require_santa_feature),
 ) -> SantaSessionStatus:
     """Get current Santa session status."""
+    tenant_id = auth.effective_tenant_id
     santa_mgr = state.get_santa_manager(tenant_id)
     if not santa_mgr:
         return SantaSessionStatus(active=False)
@@ -146,10 +154,11 @@ async def get_santa_session(
 async def get_santa_sessions(
     limit: int = 20,
     state: AppState = Depends(get_state),
-    tenant_id: str = Depends(require_auth),
+    auth: SantaAuthContext = Depends(require_santa_auth),
     _santa: None = Depends(require_santa_feature),
 ) -> dict:
     """Get past Santa sessions with conversation history."""
+    tenant_id = auth.effective_tenant_id
     async with get_session() as session:
         result = await session.execute(
             select(SantaSession)
@@ -179,10 +188,11 @@ async def get_santa_sessions(
 @router.delete("/sessions")
 async def clear_santa_sessions(
     state: AppState = Depends(get_state),
-    tenant_id: str = Depends(require_auth),
+    auth: SantaAuthContext = Depends(require_santa_auth),
     _santa: None = Depends(require_santa_feature),
 ) -> dict:
     """Clear all past Santa sessions for the current tenant."""
+    tenant_id = auth.effective_tenant_id
     async with get_session() as session:
         await session.execute(
             delete(SantaSession).where(SantaSession.tenant_id == tenant_id)
@@ -196,10 +206,11 @@ async def clear_santa_sessions(
 @router.post("/reset")
 async def reset_santa(
     state: AppState = Depends(get_state),
-    tenant_id: str = Depends(require_auth),
+    auth: SantaAuthContext = Depends(require_santa_auth),
     _santa: None = Depends(require_santa_feature),
 ) -> dict:
     """Full Santa reset: clear sessions, clear memory, restart EventSub."""
+    tenant_id = auth.effective_tenant_id
     results = []
 
     # 1. Clear sessions for this tenant
@@ -250,6 +261,7 @@ async def reset_santa(
                 client_id=settings.twitch_client_id,
                 broadcaster_user_id=twitch.user_id,
                 user_id=twitch.user_id,
+                refresh_token=twitch.refresh_token,
                 reward_id=santa_config.reward_id if santa_config else None,
                 on_redemption=create_redemption_callback(state, tenant_id),
                 subscribe_to_chat=True,
@@ -266,10 +278,11 @@ async def reset_santa(
 async def santa_session_message(
     request: SantaMessageRequest,
     state: AppState = Depends(get_state),
-    tenant_id: str = Depends(require_auth),
+    auth: SantaAuthContext = Depends(require_santa_auth),
     _santa: None = Depends(require_santa_feature),
 ) -> dict:
     """Send a message to the active Santa session (dashboard override)."""
+    tenant_id = auth.effective_tenant_id
     santa_mgr = state.get_santa_manager(tenant_id)
     if not santa_mgr:
         raise HTTPException(status_code=500, detail="Santa manager not initialized")
@@ -285,10 +298,11 @@ async def santa_session_message(
 async def santa_session_verdict(
     request: SantaVerdictRequest,
     state: AppState = Depends(get_state),
-    tenant_id: str = Depends(require_auth),
+    auth: SantaAuthContext = Depends(require_santa_auth),
     _santa: None = Depends(require_santa_feature),
 ) -> dict:
     """Force a verdict on the active Santa session (skip chat voting)."""
+    tenant_id = auth.effective_tenant_id
     santa_mgr = state.get_santa_manager(tenant_id)
     if not santa_mgr:
         raise HTTPException(status_code=500, detail="Santa manager not initialized")
@@ -306,10 +320,11 @@ async def santa_session_verdict(
 @router.post("/session/cancel")
 async def santa_session_cancel(
     state: AppState = Depends(get_state),
-    tenant_id: str = Depends(require_auth),
+    auth: SantaAuthContext = Depends(require_santa_auth),
     _santa: None = Depends(require_santa_feature),
 ) -> dict:
     """Cancel the active Santa session."""
+    tenant_id = auth.effective_tenant_id
     santa_mgr = state.get_santa_manager(tenant_id)
     if not santa_mgr:
         raise HTTPException(status_code=500, detail="Santa manager not initialized")
@@ -325,10 +340,11 @@ async def santa_session_cancel(
 @router.post("/session/hold")
 async def santa_session_hold(
     state: AppState = Depends(get_state),
-    tenant_id: str = Depends(require_auth),
+    auth: SantaAuthContext = Depends(require_santa_auth),
     _santa: None = Depends(require_santa_feature),
 ) -> dict:
     """Toggle hold state on active session (pauses timeouts)."""
+    tenant_id = auth.effective_tenant_id
     santa_mgr = state.get_santa_manager(tenant_id)
     if not santa_mgr:
         raise HTTPException(status_code=500, detail="Santa manager not initialized")
@@ -340,10 +356,11 @@ async def santa_session_hold(
 @router.post("/start")
 async def santa_start(
     state: AppState = Depends(get_state),
-    tenant_id: str = Depends(require_auth),
+    auth: SantaAuthContext = Depends(require_santa_auth),
     _santa: None = Depends(require_santa_feature),
 ) -> dict:
     """Start listening for channel point redemptions."""
+    tenant_id = auth.effective_tenant_id
     # Get Twitch config
     async with get_session() as session:
         result = await session.execute(
@@ -370,6 +387,7 @@ async def santa_start(
             access_token=twitch_config.access_token,
             client_id=settings.twitch_client_id,
             broadcaster_user_id=twitch_config.user_id,
+            refresh_token=twitch_config.refresh_token,
             reward_id=santa_config.reward_id if santa_config else None,
             on_redemption=create_redemption_callback(state, tenant_id),
         )
@@ -381,10 +399,11 @@ async def santa_start(
 @router.post("/stop")
 async def santa_stop(
     state: AppState = Depends(get_state),
-    tenant_id: str = Depends(require_auth),
+    auth: SantaAuthContext = Depends(require_santa_auth),
     _santa: None = Depends(require_santa_feature),
 ) -> dict:
     """Stop listening for channel point redemptions."""
+    tenant_id = auth.effective_tenant_id
     eventsub_mgr = state.eventsub_managers.get(tenant_id)
     if eventsub_mgr:
         await eventsub_mgr.stop()
@@ -394,10 +413,11 @@ async def santa_stop(
 @router.get("/rewards")
 async def get_santa_rewards(
     state: AppState = Depends(get_state),
-    tenant_id: str = Depends(require_auth),
+    auth: SantaAuthContext = Depends(require_santa_auth),
     _santa: None = Depends(require_santa_feature),
 ) -> dict:
     """Get available channel point rewards."""
+    tenant_id = auth.effective_tenant_id
     eventsub_mgr = state.eventsub_managers.get(tenant_id)
     if not eventsub_mgr or not eventsub_mgr.is_connected:
         return {"rewards": [], "message": "EventSub not connected"}
@@ -409,10 +429,11 @@ async def get_santa_rewards(
 @router.get("/eventsub/status")
 async def get_eventsub_status(
     state: AppState = Depends(get_state),
-    tenant_id: str = Depends(require_auth),
+    auth: SantaAuthContext = Depends(require_santa_auth),
     _santa: None = Depends(require_santa_feature),
 ) -> dict:
     """Get EventSub connection status."""
+    tenant_id = auth.effective_tenant_id
     eventsub_mgr = state.eventsub_managers.get(tenant_id)
     return {
         "connected": eventsub_mgr.is_connected if eventsub_mgr else False,
@@ -423,10 +444,11 @@ async def get_eventsub_status(
 async def santa_interrupt(
     request: dict,
     state: AppState = Depends(get_state),
-    tenant_id: str = Depends(require_auth),
+    auth: SantaAuthContext = Depends(require_santa_auth),
     _santa: None = Depends(require_santa_feature),
 ) -> dict:
     """Send a Mall Director interruption through Santa (uses speech lock)."""
+    tenant_id = auth.effective_tenant_id
     message = request.get("message", "").strip()
     if not message:
         raise HTTPException(status_code=400, detail="Message required")
@@ -445,10 +467,11 @@ async def santa_interrupt(
 @router.post("/toggle")
 async def toggle_santa_enabled(
     state: AppState = Depends(get_state),
-    tenant_id: str = Depends(require_auth),
+    auth: SantaAuthContext = Depends(require_santa_auth),
     _santa: None = Depends(require_santa_feature),
 ) -> dict:
     """Toggle Santa enabled state - restarts EventSub to subscribe/unsubscribe from redemptions."""
+    tenant_id = auth.effective_tenant_id
     async with get_session() as session:
         result = await session.execute(
             select(SantaConfig).where(SantaConfig.tenant_id == tenant_id)
@@ -485,7 +508,6 @@ async def toggle_santa_enabled(
             channel_user_id = twitch_config.user_id
             if twitch_config.channel and twitch_config.channel.lower() != (twitch_config.username or "").lower():
                 try:
-                    import httpx
                     async with httpx.AsyncClient() as client:
                         resp = await client.get(
                             f"https://api.twitch.tv/helix/users?login={twitch_config.channel}",
@@ -508,6 +530,7 @@ async def toggle_santa_enabled(
                 client_id=settings.twitch_client_id,
                 broadcaster_user_id=channel_user_id,
                 user_id=twitch_config.user_id,
+                refresh_token=twitch_config.refresh_token,
                 reward_id=reward_id if new_enabled else None,
                 on_redemption=create_redemption_callback(state, tenant_id) if new_enabled else None,
                 subscribe_to_chat=True,
@@ -537,10 +560,11 @@ async def create_santa_reward(
     cost: int = 100,
     prompt: str = "Tell Santa your Christmas wish!",
     state: AppState = Depends(get_state),
-    tenant_id: str = Depends(require_auth),
+    auth: SantaAuthContext = Depends(require_owner_only),  # Owner only
     _santa: None = Depends(require_santa_feature),
 ) -> dict:
-    """Create a new channel point reward for Santa wishes."""
+    """Create a new channel point reward for Santa wishes (owner only)."""
+    tenant_id = auth.effective_tenant_id
     eventsub_mgr = state.eventsub_managers.get(tenant_id)
     if not eventsub_mgr or not eventsub_mgr.is_connected:
         raise HTTPException(status_code=400, detail="EventSub not connected")

@@ -40,7 +40,7 @@ from .models import (
     VolumeCommand,
     WordTimingCommand,
 )
-from .routes import auth, characters, pages, presets, santa, system, tts_providers, twitch, websockets
+from .routes import auth, characters, moderators, pages, presets, santa, system, tts_providers, twitch, websockets
 from .santa_session import SantaSessionManager
 from .state import AppState
 
@@ -440,6 +440,7 @@ def create_app(
             client_id=settings.twitch_client_id,
             broadcaster_user_id=channel_user_id,
             user_id=twitch_config.user_id,
+            refresh_token=twitch_config.refresh_token,
             reward_id=reward_id if santa_enabled else None,
             on_redemption=create_redemption_callback(app_state, tenant_id) if santa_enabled else None,
             subscribe_to_chat=True,
@@ -581,6 +582,7 @@ def create_app(
                             client_id=settings.twitch_client_id,
                             broadcaster_user_id=channel_user_id,
                             user_id=twitch_config.user_id,
+                            refresh_token=twitch_config.refresh_token,
                             reward_id=reward_id if santa_enabled else None,
                             on_redemption=create_redemption_callback(app_state, tenant_id) if santa_enabled else None,
                             subscribe_to_chat=True,
@@ -667,6 +669,16 @@ def create_app(
         lifespan=lifespan,
     )
 
+    # Add exception handler for auth redirects
+    from fastapi import Request
+    from fastapi.responses import RedirectResponse
+    from .auth import RedirectToLogin
+
+    @app.exception_handler(RedirectToLogin)
+    async def redirect_to_login_handler(request: Request, exc: RedirectToLogin):
+        """Redirect to login page when authentication is required."""
+        return RedirectResponse(url="/login", status_code=302)
+
     # Store state on app for access from routes
     app.state.app_state = app_state
     app.state.harness = harness
@@ -685,5 +697,6 @@ def create_app(
     app.include_router(presets.router)
     app.include_router(characters.router)
     app.include_router(santa.router)
+    app.include_router(moderators.router)
 
     return app

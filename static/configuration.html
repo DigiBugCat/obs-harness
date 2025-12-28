@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Twitch Integration</title>
+    <title>Configuration</title>
     <style>
         :root {
             --bg-primary: #1a1a2e;
@@ -229,12 +229,42 @@
             font-size: 0.875rem;
             margin-bottom: 1rem;
         }
+
+        .input-row {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .input-row input {
+            flex: 1;
+        }
+
+        .input-row .btn {
+            width: auto;
+        }
+
+        .moderator-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--bg-secondary);
+        }
+
+        .moderator-item:last-child {
+            border-bottom: none;
+        }
+
+        .moderator-item .btn {
+            padding: 0.25rem 0.75rem;
+            font-size: 0.75rem;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>Twitch Integration</h1>
+            <h1>&#9881; Configuration</h1>
             <a href="/" class="back-link">Back to Dashboard</a>
         </header>
 
@@ -294,6 +324,26 @@
             <div class="card-title">Recent Chat (Last 60 seconds)</div>
             <div id="chat-preview" style="background: var(--bg-secondary); border-radius: 6px; padding: 1rem; max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.875rem; white-space: pre-wrap; color: var(--text-secondary);"></div>
             <button id="refresh-btn" class="btn btn-secondary" style="margin-top: 1rem;">Refresh</button>
+        </div>
+
+        <!-- Moderator Access -->
+        <div class="card">
+            <div class="card-title">3. Santa Dashboard Moderators</div>
+            <p class="section-description">
+                Add moderators who can control Santa sessions on your channel. Moderators can control sessions and change configuration, but cannot create or delete rewards.
+            </p>
+
+            <div class="form-group">
+                <label for="mod-username">Add Moderator by Twitch Username</label>
+                <div class="input-row">
+                    <input type="text" id="mod-username" placeholder="twitch_username">
+                    <button id="add-mod-btn" class="btn btn-twitch" style="width: auto;">Add</button>
+                </div>
+            </div>
+
+            <div id="moderator-list">
+                <p style="color: var(--text-secondary); font-size: 0.875rem;">No moderators added yet.</p>
+            </div>
         </div>
     </div>
 
@@ -392,8 +442,7 @@
                 disconnectChatWebSocket();
                 const response = await fetch('/api/twitch/disconnect', { method: 'POST' });
                 if (response.ok) {
-                    showMessage('Logged out');
-                    await checkStatus();
+                    window.location.href = '/logout';  // Clear session cookie and redirect to login
                 }
             } catch (e) {
                 showError('Failed to logout: ' + e.message);
@@ -553,9 +602,103 @@
             if (e.key === 'Enter') connectToChannel();
         });
 
+        // Moderator management
+        const modUsernameInput = document.getElementById('mod-username');
+        const moderatorList = document.getElementById('moderator-list');
+
+        async function loadModerators() {
+            try {
+                const response = await fetch('/api/moderators');
+                if (!response.ok) {
+                    moderatorList.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.875rem;">Failed to load moderators.</p>';
+                    return;
+                }
+
+                const data = await response.json();
+                const moderators = data.moderators || [];
+
+                if (moderators.length === 0) {
+                    moderatorList.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.875rem;">No moderators added yet.</p>';
+                    return;
+                }
+
+                moderatorList.innerHTML = moderators.map(mod => `
+                    <div class="moderator-item" data-user-id="${mod.user_id}">
+                        <span>${escapeHtml(mod.username)}</span>
+                        <button class="btn btn-danger remove-mod-btn" data-user-id="${mod.user_id}">Remove</button>
+                    </div>
+                `).join('');
+
+                // Attach remove handlers
+                moderatorList.querySelectorAll('.remove-mod-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        const userId = e.target.dataset.userId;
+                        if (userId) removeModerator(userId);
+                    });
+                });
+            } catch (e) {
+                console.error('Failed to load moderators:', e);
+                moderatorList.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.875rem;">Failed to load moderators.</p>';
+            }
+        }
+
+        async function addModerator() {
+            const username = modUsernameInput.value.trim();
+            if (!username) return;
+
+            try {
+                const response = await fetch('/api/moderators', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username }),
+                });
+
+                if (response.ok) {
+                    showMessage(`Added moderator: ${username}`);
+                    modUsernameInput.value = '';
+                    loadModerators();
+                } else {
+                    const error = await response.json();
+                    showError('Failed to add moderator: ' + error.detail);
+                }
+            } catch (e) {
+                showError('Failed to add moderator: ' + e.message);
+            }
+        }
+
+        async function removeModerator(userId) {
+            try {
+                const response = await fetch(`/api/moderators/${userId}`, {
+                    method: 'DELETE',
+                });
+
+                if (response.ok) {
+                    showMessage('Removed moderator');
+                    loadModerators();
+                } else {
+                    const error = await response.json();
+                    showError('Failed to remove moderator: ' + error.detail);
+                }
+            } catch (e) {
+                showError('Failed to remove moderator: ' + e.message);
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        document.getElementById('add-mod-btn').addEventListener('click', addModerator);
+        modUsernameInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') addModerator();
+        });
+
         // Initialize
         handleOAuthCallback();
         checkStatus();
+        loadModerators();
 
         // WebSocket handles real-time updates, no polling needed
         // Keep refresh button for manual refresh of historical messages

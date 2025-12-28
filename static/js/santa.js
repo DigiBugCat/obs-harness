@@ -1,11 +1,11 @@
 var S = Object.defineProperty;
-var v = (r, e, t) => e in r ? S(r, e, { enumerable: !0, configurable: !0, writable: !0, value: t }) : r[e] = t;
-var s = (r, e, t) => v(r, typeof e != "symbol" ? e + "" : e, t);
-function d(r) {
+var w = (l, e, t) => e in l ? S(l, e, { enumerable: !0, configurable: !0, writable: !0, value: t }) : l[e] = t;
+var s = (l, e, t) => w(l, typeof e != "symbol" ? e + "" : e, t);
+function c(l) {
   const e = document.createElement("div");
-  return e.textContent = r, e.innerHTML;
+  return e.textContent = l, e.innerHTML;
 }
-class f {
+class v {
   constructor() {
     // WebSocket state
     s(this, "ws", null);
@@ -14,6 +14,10 @@ class f {
     s(this, "sessionActive", !1);
     s(this, "sessionHeld", !1);
     s(this, "configuredRewardId", null);
+    // Channel switching state (for moderator access)
+    s(this, "isOwner", !0);
+    s(this, "currentChannel", null);
+    s(this, "accessibleChannels", []);
     // DOM Elements - Status indicators
     s(this, "wsStatus");
     s(this, "wsStatusText");
@@ -64,17 +68,22 @@ class f {
     // Quick action buttons
     s(this, "resetSantaBtn");
     s(this, "clearMemoryBtn");
-    this.wsStatus = document.getElementById("wsStatus"), this.wsStatusText = document.getElementById("wsStatusText"), this.eventsubStatus = document.getElementById("eventsubStatus"), this.eventsubStatusText = document.getElementById("eventsubStatusText"), this.sessionStatusEl = document.getElementById("sessionStatus"), this.sessionState = document.getElementById("sessionState"), this.sessionVisitor = document.getElementById("sessionVisitor"), this.sessionWish = document.getElementById("sessionWish"), this.sessionFollowups = document.getElementById("sessionFollowups"), this.messageInput = document.getElementById("messageInput"), this.sendMessageBtn = document.getElementById("sendMessageBtn"), this.grantBtn = document.getElementById("grantBtn"), this.denyBtn = document.getElementById("denyBtn"), this.holdToggle = document.getElementById("holdToggle"), this.holdLabel = document.getElementById("holdLabel"), this.cancelBtn = document.getElementById("cancelBtn"), this.conversationArea = document.getElementById("conversationArea"), this.pastSessionsArea = document.getElementById("pastSessionsArea"), this.refreshSessionsBtn = document.getElementById("refreshSessionsBtn"), this.clearSessionsBtn = document.getElementById("clearSessionsBtn"), this.connectionBanner = document.getElementById("connectionBanner"), this.overallStatusIcon = document.getElementById("overallStatusIcon"), this.overallStatusText = document.getElementById("overallStatusText"), this.enabledToggle = document.getElementById("enabledToggle"), this.characterName = document.getElementById("characterName"), this.rewardId = document.getElementById("rewardId"), this.chatVoteSeconds = document.getElementById("chatVoteSeconds"), this.maxFollowups = document.getElementById("maxFollowups"), this.responseTimeout = document.getElementById("responseTimeout"), this.debounceSeconds = document.getElementById("debounceSeconds"), this.saveConfigBtn = document.getElementById("saveConfigBtn"), this.logArea = document.getElementById("logArea"), this.refreshRewardsDropdownBtn = document.getElementById("refreshRewardsDropdownBtn"), this.createRewardBtn = document.getElementById("createRewardBtn"), this.directorInput = document.getElementById("directorInput"), this.speakDirectBtn = document.getElementById("speakDirectBtn"), this.systemPrompt = document.getElementById("systemPrompt"), this.savePromptBtn = document.getElementById("savePromptBtn"), this.resetPromptBtn = document.getElementById("resetPromptBtn"), this.resetSantaBtn = document.getElementById("resetSantaBtn"), this.clearMemoryBtn = document.getElementById("clearMemoryBtn"), this.init();
+    // Channel switcher elements (moderator access)
+    s(this, "channelSwitcher");
+    s(this, "channelSelect");
+    // Owner-only UI elements
+    s(this, "createRewardContainer");
+    this.wsStatus = document.getElementById("wsStatus"), this.wsStatusText = document.getElementById("wsStatusText"), this.eventsubStatus = document.getElementById("eventsubStatus"), this.eventsubStatusText = document.getElementById("eventsubStatusText"), this.sessionStatusEl = document.getElementById("sessionStatus"), this.sessionState = document.getElementById("sessionState"), this.sessionVisitor = document.getElementById("sessionVisitor"), this.sessionWish = document.getElementById("sessionWish"), this.sessionFollowups = document.getElementById("sessionFollowups"), this.messageInput = document.getElementById("messageInput"), this.sendMessageBtn = document.getElementById("sendMessageBtn"), this.grantBtn = document.getElementById("grantBtn"), this.denyBtn = document.getElementById("denyBtn"), this.holdToggle = document.getElementById("holdToggle"), this.holdLabel = document.getElementById("holdLabel"), this.cancelBtn = document.getElementById("cancelBtn"), this.conversationArea = document.getElementById("conversationArea"), this.pastSessionsArea = document.getElementById("pastSessionsArea"), this.refreshSessionsBtn = document.getElementById("refreshSessionsBtn"), this.clearSessionsBtn = document.getElementById("clearSessionsBtn"), this.connectionBanner = document.getElementById("connectionBanner"), this.overallStatusIcon = document.getElementById("overallStatusIcon"), this.overallStatusText = document.getElementById("overallStatusText"), this.enabledToggle = document.getElementById("enabledToggle"), this.characterName = document.getElementById("characterName"), this.rewardId = document.getElementById("rewardId"), this.chatVoteSeconds = document.getElementById("chatVoteSeconds"), this.maxFollowups = document.getElementById("maxFollowups"), this.responseTimeout = document.getElementById("responseTimeout"), this.debounceSeconds = document.getElementById("debounceSeconds"), this.saveConfigBtn = document.getElementById("saveConfigBtn"), this.logArea = document.getElementById("logArea"), this.refreshRewardsDropdownBtn = document.getElementById("refreshRewardsDropdownBtn"), this.createRewardBtn = document.getElementById("createRewardBtn"), this.directorInput = document.getElementById("directorInput"), this.speakDirectBtn = document.getElementById("speakDirectBtn"), this.systemPrompt = document.getElementById("systemPrompt"), this.savePromptBtn = document.getElementById("savePromptBtn"), this.resetPromptBtn = document.getElementById("resetPromptBtn"), this.resetSantaBtn = document.getElementById("resetSantaBtn"), this.clearMemoryBtn = document.getElementById("clearMemoryBtn"), this.channelSwitcher = document.getElementById("channelSwitcher"), this.channelSelect = document.getElementById("channelSelect"), this.createRewardContainer = document.getElementById("createRewardContainer"), this.init();
   }
-  init() {
-    this.connectWebSocket(), this.loadConfig(), this.loadEventSubStatus(), this.loadCharacter(), this.loadPastSessions(), this.attachEventListeners(), setInterval(() => this.loadEventSubStatus(), 5e3);
+  async init() {
+    await this.loadAccessibleChannels(), this.connectWebSocket(), this.loadConfig(), this.loadEventSubStatus(), this.loadCharacter(), this.loadPastSessions(), this.attachEventListeners(), setInterval(() => this.loadEventSubStatus(), 5e3);
   }
   // -------------------------------------------------------------------------
   // WebSocket Connection
   // -------------------------------------------------------------------------
   connectWebSocket() {
-    const t = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws/santa`;
-    this.ws = new WebSocket(t), this.ws.onopen = () => {
+    let t = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws/santa`;
+    this.currentChannel && (t += `?channel=${encodeURIComponent(this.currentChannel)}`), this.ws = new WebSocket(t), this.ws.onopen = () => {
       var a;
       this.connected = !0, (a = this.wsStatus) == null || a.classList.add("connected"), this.wsStatusText && (this.wsStatusText.textContent = "Dashboard"), this.log("WebSocket connected"), this.updateConnectionBanner();
     }, this.ws.onclose = () => {
@@ -108,72 +117,72 @@ class f {
   // Session Status
   // -------------------------------------------------------------------------
   updateSessionStatus(e) {
-    var a, n, o, l;
+    var a, n, i, r;
     this.sessionActive = e.active, this.sessionHeld = e.held || !1;
     const t = e.state || "idle";
-    this.sessionState && (this.sessionState.textContent = t.replace("_", " ") + (this.sessionHeld ? " (HELD)" : ""), this.sessionState.className = `state-badge ${t}`), this.sessionVisitor && (this.sessionVisitor.textContent = e.redeemer_display_name || "-"), this.sessionWish && (this.sessionWish.textContent = e.wish_text || "-"), this.sessionFollowups && (this.sessionFollowups.textContent = String(e.followup_count || "0")), e.active ? ((a = this.sessionStatusEl) == null || a.classList.remove("idle"), (n = this.sessionStatusEl) == null || n.classList.add("active")) : ((o = this.sessionStatusEl) == null || o.classList.remove("active"), (l = this.sessionStatusEl) == null || l.classList.add("idle")), this.holdToggle && (this.holdToggle.checked = this.sessionHeld), this.holdLabel && (this.holdLabel.textContent = this.sessionHeld ? "On Hold" : "Hold"), this.updateConversation(e.conversation || []), this.updateButtonStates(), e.state && e.state !== "idle" && this.log(`Session state: ${t}`);
+    this.sessionState && (this.sessionState.textContent = t.replace("_", " ") + (this.sessionHeld ? " (HELD)" : ""), this.sessionState.className = `state-badge ${t}`), this.sessionVisitor && (this.sessionVisitor.textContent = e.redeemer_display_name || "-"), this.sessionWish && (this.sessionWish.textContent = e.wish_text || "-"), this.sessionFollowups && (this.sessionFollowups.textContent = String(e.followup_count || "0")), e.active ? ((a = this.sessionStatusEl) == null || a.classList.remove("idle"), (n = this.sessionStatusEl) == null || n.classList.add("active")) : ((i = this.sessionStatusEl) == null || i.classList.remove("active"), (r = this.sessionStatusEl) == null || r.classList.add("idle")), this.holdToggle && (this.holdToggle.checked = this.sessionHeld), this.holdLabel && (this.holdLabel.textContent = this.sessionHeld ? "On Hold" : "Hold"), this.updateConversation(e.conversation || []), this.updateButtonStates(), e.state && e.state !== "idle" && this.log(`Session state: ${t}`);
   }
   updateConversation(e) {
-    var n, o, l, g;
+    var n, i, r, d;
     const t = (n = this.conversationArea) == null ? void 0 : n.querySelector("#conversation-empty");
     if (!e || e.length === 0) {
-      t && (t.style.display = "block"), (o = this.conversationArea) == null || o.querySelectorAll(".chat-bubble").forEach((i) => i.remove());
+      t && (t.style.display = "block"), (i = this.conversationArea) == null || i.querySelectorAll(".chat-bubble").forEach((o) => o.remove());
       return;
     }
     t && (t.style.display = "none");
-    const a = e.map((i) => {
-      const c = i.role === "user" ? "👤 CHILD" : "🎅 SANTA";
-      let h = i.content;
-      if (i.role === "assistant")
+    const a = e.map((o) => {
+      const h = o.role === "user" ? "👤 CHILD" : "🎅 SANTA";
+      let m = o.content;
+      if (o.role === "assistant")
         try {
-          h = JSON.parse(h).speech || h;
+          m = JSON.parse(m).speech || m;
         } catch {
         }
-      return `<div class="chat-bubble ${i.role}">
-                <div class="chat-bubble-label">${c}</div>
-                <div class="chat-bubble-content">${d(h)}</div>
+      return `<div class="chat-bubble ${o.role}">
+                <div class="chat-bubble-label">${h}</div>
+                <div class="chat-bubble-content">${c(m)}</div>
             </div>`;
     }).join("");
-    (l = this.conversationArea) == null || l.querySelectorAll(".chat-bubble").forEach((i) => i.remove()), (g = this.conversationArea) == null || g.insertAdjacentHTML("beforeend", a), this.conversationArea && (this.conversationArea.scrollTop = this.conversationArea.scrollHeight);
+    (r = this.conversationArea) == null || r.querySelectorAll(".chat-bubble").forEach((o) => o.remove()), (d = this.conversationArea) == null || d.insertAdjacentHTML("beforeend", a), this.conversationArea && (this.conversationArea.scrollTop = this.conversationArea.scrollHeight);
   }
   async loadPastSessions() {
     try {
-      const t = await (await fetch("/api/santa/sessions?limit=10")).json();
+      const t = await (await fetch(`/api/santa/sessions?limit=10${this.getChannelParam(!0)}`)).json();
       if (!t.sessions || t.sessions.length === 0) {
         this.pastSessionsArea.innerHTML = '<div style="color: var(--text-secondary); text-align: center; padding: 2rem;">No past sessions</div>';
         return;
       }
       const a = t.sessions.map((n) => {
-        var u;
-        const o = n.outcome || "unknown", l = n.outcome ? n.outcome.toUpperCase() : "IN PROGRESS", g = n.started_at ? new Date(n.started_at).toLocaleString() : "Unknown";
-        let i = "";
-        return n.conversation && n.conversation.length > 0 ? i = n.conversation.map((c) => {
-          const p = c.role === "user" ? "👤 CHILD" : "🎅 SANTA";
-          let m = c.content;
-          if (c.role === "assistant")
+        var g;
+        const i = n.outcome || "unknown", r = n.outcome ? n.outcome.toUpperCase() : "IN PROGRESS", d = n.started_at ? new Date(n.started_at).toLocaleString() : "Unknown";
+        let o = "";
+        return n.conversation && n.conversation.length > 0 ? o = n.conversation.map((h) => {
+          const p = h.role === "user" ? "👤 CHILD" : "🎅 SANTA";
+          let u = h.content;
+          if (h.role === "assistant")
             try {
-              m = JSON.parse(m).speech || m;
+              u = JSON.parse(u).speech || u;
             } catch {
             }
-          return `<div class="chat-bubble ${c.role}">
+          return `<div class="chat-bubble ${h.role}">
                             <div class="chat-bubble-label">${p}</div>
-                            <div class="chat-bubble-content">${d(m)}</div>
+                            <div class="chat-bubble-content">${c(u)}</div>
                         </div>`;
-        }).join("") : i = '<div style="color: var(--text-secondary); font-size: 0.8rem;">No conversation recorded</div>', `<div class="session-card">
+        }).join("") : o = '<div style="color: var(--text-secondary); font-size: 0.8rem;">No conversation recorded</div>', `<div class="session-card">
                     <div class="session-card-header">
                         <div>
-                            <strong>${d(n.redeemer_display_name)}</strong>
-                            <span style="color: var(--text-secondary); font-size: 0.75rem; margin-left: 0.5rem;">${g}</span>
+                            <strong>${c(n.redeemer_display_name)}</strong>
+                            <span style="color: var(--text-secondary); font-size: 0.75rem; margin-left: 0.5rem;">${d}</span>
                         </div>
-                        <span class="session-outcome ${o}">${l}</span>
+                        <span class="session-outcome ${i}">${r}</span>
                     </div>
                     <div style="color: var(--text-secondary); font-size: 0.8rem; margin-bottom: 0.5rem;">
-                        Wish: "${d(n.wish_text || "No wish")}"
+                        Wish: "${c(n.wish_text || "No wish")}"
                     </div>
                     <details>
-                        <summary style="cursor: pointer; font-size: 0.8rem; color: var(--text-secondary);">Show conversation (${((u = n.conversation) == null ? void 0 : u.length) || 0} messages)</summary>
+                        <summary style="cursor: pointer; font-size: 0.8rem; color: var(--text-secondary);">Show conversation (${((g = n.conversation) == null ? void 0 : g.length) || 0} messages)</summary>
                         <div style="margin-top: 0.5rem; padding: 0.5rem; background: var(--bg-primary); border-radius: 4px; max-height: 200px; overflow-y: auto;">
-                            ${i}
+                            ${o}
                         </div>
                     </details>
                 </div>`;
@@ -188,11 +197,61 @@ class f {
     this.sendMessageBtn.disabled = !e, this.grantBtn.disabled = !e, this.denyBtn.disabled = !e, this.cancelBtn.disabled = !e;
   }
   // -------------------------------------------------------------------------
+  // Channel Switching (Moderator Access)
+  // -------------------------------------------------------------------------
+  getCookie(e) {
+    const t = document.cookie.match(new RegExp("(^| )" + e + "=([^;]+)"));
+    return t ? decodeURIComponent(t[2]) : null;
+  }
+  setCookie(e, t, a = 30) {
+    const n = new Date(Date.now() + a * 24 * 60 * 60 * 1e3).toUTCString();
+    document.cookie = `${e}=${encodeURIComponent(t)}; expires=${n}; path=/`;
+  }
+  async loadAccessibleChannels() {
+    try {
+      const e = await fetch("/api/moderators/accessible-channels");
+      if (!e.ok) {
+        console.error("Failed to load accessible channels");
+        return;
+      }
+      const t = await e.json();
+      this.accessibleChannels = t.channels || [];
+      const n = new URLSearchParams(window.location.search).get("channel"), i = this.getCookie("effective_channel"), r = this.accessibleChannels.find((o) => o.is_own), d = (r == null ? void 0 : r.tenant_id) || null;
+      n && this.accessibleChannels.some((o) => o.tenant_id === n) ? this.currentChannel = n : i && this.accessibleChannels.some((o) => o.tenant_id === i) ? this.currentChannel = i : this.currentChannel = d, this.isOwner = this.currentChannel === d, this.currentChannel && this.setCookie("effective_channel", this.currentChannel), this.updateChannelSwitcher(), this.updateOwnerOnlyUI();
+    } catch (e) {
+      console.error("Failed to load accessible channels:", e);
+    }
+  }
+  updateChannelSwitcher() {
+    if (!(!this.channelSwitcher || !this.channelSelect)) {
+      if (this.accessibleChannels.length <= 1) {
+        this.channelSwitcher.style.display = "none";
+        return;
+      }
+      this.channelSwitcher.style.display = "flex", this.channelSelect.innerHTML = this.accessibleChannels.map((e) => {
+        const t = e.is_own ? `${c(e.username)} (You)` : c(e.username);
+        return `<option value="${e.tenant_id}" ${e.tenant_id === this.currentChannel ? "selected" : ""}>${t}</option>`;
+      }).join("");
+    }
+  }
+  switchChannel(e) {
+    if (e === this.currentChannel) return;
+    this.setCookie("effective_channel", e);
+    const t = new URL(window.location.href);
+    t.searchParams.set("channel", e), window.location.href = t.toString();
+  }
+  updateOwnerOnlyUI() {
+    this.createRewardContainer && (this.createRewardContainer.style.display = this.isOwner ? "block" : "none"), this.savePromptBtn && (this.savePromptBtn.disabled = !this.isOwner), this.resetPromptBtn && (this.resetPromptBtn.disabled = !this.isOwner), this.clearMemoryBtn && (this.clearMemoryBtn.disabled = !this.isOwner), this.systemPrompt && (this.systemPrompt.disabled = !this.isOwner);
+  }
+  // -------------------------------------------------------------------------
   // API Calls
   // -------------------------------------------------------------------------
+  getChannelParam(e = !1) {
+    return this.currentChannel ? `${e ? "&" : "?"}channel=${encodeURIComponent(this.currentChannel)}` : "";
+  }
   async loadConfig() {
     try {
-      const t = await (await fetch("/api/santa/config")).json();
+      const t = await (await fetch(`/api/santa/config${this.getChannelParam()}`)).json();
       this.enabledToggle.checked = t.enabled, this.characterName.value = t.character_name, this.configuredRewardId = t.reward_id || "", this.rewardId.value = this.configuredRewardId, this.chatVoteSeconds.value = t.chat_vote_seconds, this.maxFollowups.value = t.max_followups, this.responseTimeout.value = t.response_timeout_seconds, this.debounceSeconds.value = t.debounce_seconds, this.log("Configuration loaded");
     } catch (e) {
       this.log("Failed to load config: " + (e instanceof Error ? e.message : String(e)));
@@ -207,7 +266,7 @@ class f {
         max_followups: parseInt(this.maxFollowups.value),
         response_timeout_seconds: parseInt(this.responseTimeout.value),
         debounce_seconds: parseInt(this.debounceSeconds.value)
-      }, t = await fetch("/api/santa/config", {
+      }, t = await fetch(`/api/santa/config${this.getChannelParam()}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(e)
@@ -224,7 +283,7 @@ class f {
   }
   async loadEventSubStatus() {
     try {
-      const t = await (await fetch("/api/santa/eventsub/status")).json();
+      const t = await (await fetch(`/api/santa/eventsub/status${this.getChannelParam()}`)).json();
       this.eventsubConnected = t.connected, t.connected ? (this.eventsubStatus.classList.add("connected"), this.eventsubStatusText.textContent = "EventSub", this.loadRewards()) : (this.eventsubStatus.classList.remove("connected"), this.eventsubStatusText.textContent = "EventSub"), this.updateConnectionBanner();
     } catch {
       this.eventsubConnected = !1, this.updateConnectionBanner();
@@ -236,9 +295,9 @@ class f {
   }
   async loadRewards() {
     try {
-      const t = await (await fetch("/api/santa/rewards")).json(), a = this.rewardId.value || this.configuredRewardId || "";
+      const t = await (await fetch(`/api/santa/rewards${this.getChannelParam()}`)).json(), a = this.rewardId.value || this.configuredRewardId || "";
       t.rewards && t.rewards.length > 0 ? (this.rewardId.innerHTML = '<option value="">All rewards</option>' + t.rewards.map(
-        (n) => `<option value="${n.id}">${d(n.title)} (${n.cost} pts)${n.is_paused ? " [PAUSED]" : ""}</option>`
+        (n) => `<option value="${n.id}">${c(n.title)} (${n.cost} pts)${n.is_paused ? " [PAUSED]" : ""}</option>`
       ).join(""), this.rewardId.value = a, this.log(`Loaded ${t.rewards.length} rewards`)) : (this.rewardId.innerHTML = '<option value="">All rewards</option>', this.log("No rewards found"));
     } catch (e) {
       this.log("Failed to load rewards: " + (e instanceof Error ? e.message : String(e)));
@@ -248,7 +307,7 @@ class f {
     const e = this.messageInput.value.trim();
     if (e)
       try {
-        const t = await fetch("/api/santa/session/message", {
+        const t = await fetch(`/api/santa/session/message${this.getChannelParam()}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message: e })
@@ -265,7 +324,7 @@ class f {
   }
   async forceVerdict(e) {
     try {
-      const t = await fetch("/api/santa/session/verdict", {
+      const t = await fetch(`/api/santa/session/verdict${this.getChannelParam()}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ verdict: e })
@@ -282,7 +341,7 @@ class f {
   }
   async cancelSession() {
     try {
-      const e = await fetch("/api/santa/session/cancel", { method: "POST" });
+      const e = await fetch(`/api/santa/session/cancel${this.getChannelParam()}`, { method: "POST" });
       if (e.ok)
         this.log("Session cancelled");
       else {
@@ -295,7 +354,7 @@ class f {
   }
   async toggleHold() {
     try {
-      const e = await fetch("/api/santa/session/hold", { method: "POST" }), t = await e.json();
+      const e = await fetch(`/api/santa/session/hold${this.getChannelParam()}`, { method: "POST" }), t = await e.json();
       e.ok ? this.log(t.held ? "⏸ Session on hold" : "▶ Session resumed") : this.log("Failed to toggle hold: " + t.detail);
     } catch (e) {
       this.log("Failed to toggle hold: " + (e instanceof Error ? e.message : String(e)));
@@ -361,7 +420,7 @@ You remember everything from this stream. Reference past visitors, chat's previo
     if (e)
       try {
         this.speakDirectBtn.disabled = !0, this.log("Mall Director interrupting: " + e);
-        const t = `[MALL DIRECTOR INTERRUPTION]: ${e}`, a = await fetch("/api/santa/interrupt", {
+        const t = `[MALL DIRECTOR INTERRUPTION]: ${e}`, a = await fetch(`/api/santa/interrupt${this.getChannelParam()}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message: t })
@@ -382,7 +441,7 @@ You remember everything from this stream. Reference past visitors, chat's previo
     if (confirm("Reset Santa completely? This will clear sessions, memory, and restart EventSub."))
       try {
         this.resetSantaBtn.disabled = !0, this.log("🔄 Resetting Santa...");
-        const e = await fetch("/api/santa/reset", { method: "POST" }), t = await e.json();
+        const e = await fetch(`/api/santa/reset${this.getChannelParam()}`, { method: "POST" }), t = await e.json();
         e.ok ? (this.log("✅ Reset complete: " + t.results.join(", ")), this.loadEventSubStatus(), this.loadPastSessions()) : this.log("Failed to reset: " + t.detail);
       } catch (e) {
         this.log("Failed to reset: " + (e instanceof Error ? e.message : String(e)));
@@ -413,7 +472,7 @@ You remember everything from this stream. Reference past visitors, chat's previo
     if (confirm("Clear ALL past Santa sessions? This will delete session history but NOT Santa's memory."))
       try {
         this.clearSessionsBtn.disabled = !0;
-        const e = await fetch("/api/santa/sessions", {
+        const e = await fetch(`/api/santa/sessions${this.getChannelParam()}`, {
           method: "DELETE"
         });
         if (e.ok)
@@ -440,7 +499,7 @@ You remember everything from this stream. Reference past visitors, chat's previo
     }
     try {
       this.createRewardBtn.disabled = !0, this.log("Creating reward...");
-      const n = await fetch("/api/santa/reward/create", {
+      const n = await fetch(`/api/santa/reward/create${this.getChannelParam()}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -450,11 +509,11 @@ You remember everything from this stream. Reference past visitors, chat's previo
         })
       });
       if (n.ok) {
-        const o = await n.json();
-        this.log(`✅ Created reward: ${o.reward.title} (${o.reward.cost} pts)`), await this.loadRewards(), this.rewardId.value = o.reward.id, await this.saveConfig();
+        const i = await n.json();
+        this.log(`✅ Created reward: ${i.reward.title} (${i.reward.cost} pts)`), await this.loadRewards(), this.rewardId.value = i.reward.id, await this.saveConfig();
       } else {
-        const o = await n.json();
-        this.log("Failed to create reward: " + o.detail);
+        const i = await n.json();
+        this.log("Failed to create reward: " + i.detail);
       }
     } catch (n) {
       this.log("Failed to create reward: " + (n instanceof Error ? n.message : String(n)));
@@ -466,15 +525,19 @@ You remember everything from this stream. Reference past visitors, chat's previo
   // Event Listeners
   // -------------------------------------------------------------------------
   attachEventListeners() {
-    this.saveConfigBtn.addEventListener("click", () => this.saveConfig()), this.refreshRewardsDropdownBtn.addEventListener("click", () => this.loadRewards()), this.createRewardBtn.addEventListener("click", () => this.createReward()), this.sendMessageBtn.addEventListener("click", () => this.sendMessage()), this.messageInput.addEventListener("keypress", (e) => {
-      e.key === "Enter" && !this.sendMessageBtn.disabled && this.sendMessage();
-    }), this.grantBtn.addEventListener("click", () => this.forceVerdict("grant")), this.denyBtn.addEventListener("click", () => this.forceVerdict("deny")), this.holdToggle.addEventListener("change", () => this.toggleHold()), this.cancelBtn.addEventListener("click", () => this.cancelSession()), this.refreshSessionsBtn.addEventListener("click", () => this.loadPastSessions()), this.clearSessionsBtn.addEventListener("click", () => this.clearSessions()), this.speakDirectBtn.addEventListener("click", () => this.speakDirect()), this.directorInput.addEventListener("keypress", (e) => {
-      e.key === "Enter" && this.speakDirect();
-    }), this.savePromptBtn.addEventListener("click", () => this.saveSystemPrompt()), this.resetPromptBtn.addEventListener("click", () => this.resetSystemPrompt()), this.resetSantaBtn.addEventListener("click", () => this.resetSanta()), this.clearMemoryBtn.addEventListener("click", () => this.clearMemory()), this.enabledToggle.addEventListener("change", () => this.toggleEnabled());
+    var e;
+    this.saveConfigBtn.addEventListener("click", () => this.saveConfig()), this.refreshRewardsDropdownBtn.addEventListener("click", () => this.loadRewards()), this.createRewardBtn.addEventListener("click", () => this.createReward()), this.sendMessageBtn.addEventListener("click", () => this.sendMessage()), this.messageInput.addEventListener("keypress", (t) => {
+      t.key === "Enter" && !this.sendMessageBtn.disabled && this.sendMessage();
+    }), this.grantBtn.addEventListener("click", () => this.forceVerdict("grant")), this.denyBtn.addEventListener("click", () => this.forceVerdict("deny")), this.holdToggle.addEventListener("change", () => this.toggleHold()), this.cancelBtn.addEventListener("click", () => this.cancelSession()), this.refreshSessionsBtn.addEventListener("click", () => this.loadPastSessions()), this.clearSessionsBtn.addEventListener("click", () => this.clearSessions()), this.speakDirectBtn.addEventListener("click", () => this.speakDirect()), this.directorInput.addEventListener("keypress", (t) => {
+      t.key === "Enter" && this.speakDirect();
+    }), this.savePromptBtn.addEventListener("click", () => this.saveSystemPrompt()), this.resetPromptBtn.addEventListener("click", () => this.resetSystemPrompt()), this.resetSantaBtn.addEventListener("click", () => this.resetSanta()), this.clearMemoryBtn.addEventListener("click", () => this.clearMemory()), this.enabledToggle.addEventListener("change", () => this.toggleEnabled()), (e = this.channelSelect) == null || e.addEventListener("change", (t) => {
+      const a = t.target;
+      this.switchChannel(a.value);
+    });
   }
   async toggleEnabled() {
     try {
-      const e = await fetch("/api/santa/toggle", { method: "POST" }), t = await e.json();
+      const e = await fetch(`/api/santa/toggle${this.getChannelParam()}`, { method: "POST" }), t = await e.json();
       e.ok ? (this.enabledToggle.checked = t.enabled, this.log(t.enabled ? "✅ Santa enabled" : "⏸️ Santa disabled"), this.loadRewards()) : (this.enabledToggle.checked = !this.enabledToggle.checked, this.log("Failed to toggle: " + t.detail));
     } catch (e) {
       this.enabledToggle.checked = !this.enabledToggle.checked, this.log("Failed to toggle: " + (e instanceof Error ? e.message : String(e)));
@@ -485,14 +548,14 @@ You remember everything from this stream. Reference past visitors, chat's previo
   // -------------------------------------------------------------------------
   log(e) {
     const t = (/* @__PURE__ */ new Date()).toLocaleTimeString(), a = document.createElement("div");
-    for (a.className = "log-entry", a.innerHTML = `<span class="log-time">[${t}]</span> ${d(e)}`, this.logArea.appendChild(a), this.logArea.scrollTop = this.logArea.scrollHeight; this.logArea.children.length > 100; )
+    for (a.className = "log-entry", a.innerHTML = `<span class="log-time">[${t}]</span> ${c(e)}`, this.logArea.appendChild(a), this.logArea.scrollTop = this.logArea.scrollHeight; this.logArea.children.length > 100; )
       this.logArea.removeChild(this.logArea.firstChild);
   }
 }
 document.addEventListener("DOMContentLoaded", () => {
-  window.santaDashboard = new f();
+  window.santaDashboard = new v();
 });
 export {
-  f as SantaDashboard,
-  d as escapeHtml
+  v as SantaDashboard,
+  c as escapeHtml
 };
