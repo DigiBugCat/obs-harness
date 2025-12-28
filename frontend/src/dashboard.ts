@@ -488,8 +488,8 @@ const historyList = document.getElementById('history-list')!
         }
     }
 
-    async function loadVoiceModels(voiceId) {
-        const select = document.getElementById('character-tts-model');
+    async function loadVoiceModels(voiceId: string) {
+        const select = document.getElementById('character-tts-model') as HTMLSelectElement | null;
         const infoEl = document.getElementById('tts-model-info');
         if (!select || !voiceId) return;
 
@@ -500,8 +500,8 @@ const historyList = document.getElementById('history-list')!
             const voice = await apiCall(`/api/elevenlabs/voices/${voiceId}`, 'GET', null, false);
             if (voice && voice.high_quality_base_model_ids && voice.high_quality_base_model_ids.length > 0) {
                 // Highlight compatible models
-                const compatibleIds = new Set(voice.high_quality_base_model_ids);
-                Array.from(select.options).forEach(option => {
+                const compatibleIds = new Set(voice.high_quality_base_model_ids as string[]);
+                Array.from(select.options).forEach((option: HTMLOptionElement) => {
                     if (compatibleIds.has(option.value)) {
                         // Mark as recommended
                         const model = elevenlabsModels.find(m => m.model_id === option.value);
@@ -588,28 +588,29 @@ const historyList = document.getElementById('history-list')!
         }
     }
 
-    function selectCartesiaVoice(voiceId) {
+    function selectCartesiaVoice(voiceId: string) {
         // When a voice is selected from dropdown, update the manual ID field
-        const manualInput = document.getElementById('cartesia-voice-id');
+        const manualInput = document.getElementById('cartesia-voice-id') as HTMLInputElement | null;
         if (manualInput && voiceId) {
             manualInput.value = voiceId;
         }
         updateCartesiaVoiceInfo(voiceId);
     }
 
-    function onCartesiaManualIdChange(voiceId) {
+    function onCartesiaManualIdChange(voiceId: string) {
         // When manual ID is entered, try to find and select in dropdown
-        const select = document.getElementById('cartesia-voice-select');
+        const select = document.getElementById('cartesia-voice-select') as HTMLSelectElement | null;
         if (select && voiceId) {
             // Check if this ID exists in the dropdown
-            const option = Array.from(select.options).find(o => o.value === voiceId);
+            const option = Array.from(select.options).find((o: HTMLOptionElement) => o.value === voiceId);
             if (option) {
                 select.value = voiceId;
                 updateCartesiaVoiceInfo(voiceId);
             } else {
                 // Custom ID - clear dropdown selection
                 select.value = '';
-                document.getElementById('cartesia-voice-info').textContent = 'Custom voice ID';
+                const infoEl = document.getElementById('cartesia-voice-info');
+                if (infoEl) infoEl.textContent = 'Custom voice ID';
             }
         }
     }
