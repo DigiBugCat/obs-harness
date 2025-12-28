@@ -302,6 +302,8 @@ export interface ElevenLabsModel {
   model_id: string;
   name: string;
   description?: string;
+  can_use_style?: boolean;
+  can_use_speaker_boost?: boolean;
 }
 
 /** ElevenLabs voice */

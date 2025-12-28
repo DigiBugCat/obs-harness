@@ -4,6 +4,41 @@
  */
 
 import { TextAnimator } from './text-animator';
+import type { Character, TextPreset, ElevenLabsModel } from './types';
+
+// =============================================================================
+// DOM Helper Functions
+// =============================================================================
+
+/** Get element by ID with type assertion */
+function $(id: string): HTMLElement {
+    return document.getElementById(id)!;
+}
+
+/** Get input element by ID */
+function $input(id: string): HTMLInputElement {
+    return document.getElementById(id) as HTMLInputElement;
+}
+
+/** Get select element by ID */
+function $select(id: string): HTMLSelectElement {
+    return document.getElementById(id) as HTMLSelectElement;
+}
+
+/** Get button element by ID */
+function $button(id: string): HTMLButtonElement {
+    return document.getElementById(id) as HTMLButtonElement;
+}
+
+/** Get textarea element by ID */
+function $textarea(id: string): HTMLTextAreaElement {
+    return document.getElementById(id) as HTMLTextAreaElement;
+}
+
+/** Get canvas element by ID */
+function $canvas(id: string): HTMLCanvasElement {
+    return document.getElementById(id) as HTMLCanvasElement;
+}
 
 // Character status from WebSocket
 interface CharacterStatus {
@@ -12,43 +47,49 @@ interface CharacterStatus {
     streaming?: boolean;
 }
 
+// Pending image for chat
+interface PendingImage {
+    data: string;
+    mediaType: string;
+}
+
 // WebSocket connection
-    let ws = null;
-    let reconnectTimeout = null;
+let ws: WebSocket | null = null;
+let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
-    // Reconnection with exponential backoff
-    let reconnectAttempts = 0;
-    const BASE_RECONNECT_DELAY = 1000;  // Start at 1 second
-    const MAX_RECONNECT_DELAY = 30000;  // Max 30 seconds
-    const MAX_RECONNECT_ATTEMPTS = 10;  // Reload page after this many failures
+// Reconnection with exponential backoff
+let reconnectAttempts = 0;
+const BASE_RECONNECT_DELAY = 1000;  // Start at 1 second
+const MAX_RECONNECT_DELAY = 30000;  // Max 30 seconds
+const MAX_RECONNECT_ATTEMPTS = 10;  // Reload page after this many failures
 
-    // Heartbeat tracking
-    const PING_TIMEOUT = 60000;  // 60 seconds - consider connection dead if no ping
-    const HEALTH_POLL_INTERVAL = 30000;  // 30 seconds - fallback health check
-    let lastPingTime = Date.now();
-    let healthPollInterval = null;
+// Heartbeat tracking
+const PING_TIMEOUT = 60000;  // 60 seconds - consider connection dead if no ping
+const HEALTH_POLL_INTERVAL = 30000;  // 30 seconds - fallback health check
+let lastPingTime = Date.now();
+let healthPollInterval: ReturnType<typeof setInterval> | null = null;
 
-    // Server version tracking for auto-refresh on updates
-    let serverBuildId = null;
+// Server version tracking for auto-refresh on updates
+let serverBuildId: string | null = null;
 
-    // State
-    let presets = [];
-    let characters = [];
-    let editingCharacter = null;
-    let chatCharacter = null;
-    let speakCharacter = null;
-    let elevenlabsModels = [];  // Cached ElevenLabs models
-    let activeGenerationCharacter = null;  // Track which character has active generation
-    let activeGenerationModal = null;  // 'speak' or 'chat'
-    let sawStreamingStart = false;  // Track if we've seen streaming=true
-    let pendingImages = [];  // Images to attach to next chat message: [{data, mediaType}]
-    let currentTenantId = null;  // Tenant ID from server (for status key matching)
+// State
+let presets: TextPreset[] = [];
+let characters: Character[] = [];
+let editingCharacter: Character | null = null;
+let chatCharacter: Character | null = null;
+let speakCharacter: Character | null = null;
+let elevenlabsModels: ElevenLabsModel[] = [];  // Cached ElevenLabs models
+let activeGenerationCharacter: string | null = null;  // Track which character has active generation
+let activeGenerationModal: 'speak' | 'chat' | null = null;  // 'speak' or 'chat'
+let sawStreamingStart = false;  // Track if we've seen streaming=true
+let pendingImages: PendingImage[] = [];  // Images to attach to next chat message
+let currentTenantId: string | null = null;  // Tenant ID from server (for status key matching)
 
-    // DOM elements
-    const wsStatus = document.getElementById('ws-status');
-    const wsStatusText = document.getElementById('ws-status-text');
-    const charactersContainer = document.getElementById('characters-container');
-    const historyList = document.getElementById('history-list');
+// DOM elements
+const wsStatus = document.getElementById('ws-status')!;
+const wsStatusText = document.getElementById('ws-status-text')!;
+const charactersContainer = document.getElementById('characters-container')!;
+const historyList = document.getElementById('history-list')!
 
     // =========================================================================
     // Security Helpers
@@ -58,7 +99,7 @@ interface CharacterStatus {
      * Escape HTML special characters to prevent XSS.
      * Uses the browser's built-in escaping via textContent.
      */
-    function escapeHtml(text) {
+    function escapeHtml(text: unknown): string {
         if (text == null) return '';
         const div = document.createElement('div');
         div.textContent = String(text);
@@ -69,7 +110,7 @@ interface CharacterStatus {
      * Validate and sanitize a CSS color value.
      * Only allows valid hex colors, returns fallback otherwise.
      */
-    function sanitizeColor(color, fallback = '#9146ff') {
+    function sanitizeColor(color: string | null | undefined, fallback = '#9146ff'): string {
         if (!color) return fallback;
         // Allow 3, 4, 6, or 8 character hex colors
         if (/^#[0-9a-fA-F]{3,4}$|^#[0-9a-fA-F]{6}$|^#[0-9a-fA-F]{8}$/.test(color)) {
@@ -231,7 +272,7 @@ interface CharacterStatus {
             // Merge connection status into character list
             // Status uses full "tenant_id:name" keys, so we construct full keys for lookup
             const tenantId = getTenantId();
-            const statusMap = new Map(msg.characters.map(c => [c.name, c]));
+            const statusMap = new Map<string, CharacterStatus>(msg.characters.map((c: CharacterStatus) => [c.name, c]));
             characters = characters.map(ch => {
                 const fullKey = `${tenantId}:${ch.name}`;
                 return {
@@ -309,8 +350,8 @@ interface CharacterStatus {
     // API Calls
     // =========================================================================
 
-    async function apiCall(endpoint, method = 'GET', body = null, showErrors = true) {
-        const options = {
+    async function apiCall(endpoint: string, method = 'GET', body: unknown = null, showErrors = true): Promise<unknown> {
+        const options: RequestInit = {
             method,
             headers: { 'Content-Type': 'application/json' },
         };
@@ -333,7 +374,7 @@ interface CharacterStatus {
 
             return data;
         } catch (error) {
-            const errorMsg = error.message || 'Network error';
+            const errorMsg = (error as Error).message || 'Network error';
             if (showErrors) {
                 showToast(`Connection Error: ${errorMsg}`, 'error');
             }
