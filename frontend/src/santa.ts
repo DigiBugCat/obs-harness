@@ -893,7 +893,7 @@ You remember everything from this stream. Reference past visitors, chat's previo
         const time = new Date().toLocaleTimeString();
         const entry = document.createElement('div');
         entry.className = 'log-entry';
-        entry.innerHTML = `<span class="log-time">[${time}]</span> ${message}`;
+        entry.innerHTML = `<span class="log-time">[${time}]</span> ${escapeHtml(message)}`;
         this.logArea.appendChild(entry);
         this.logArea.scrollTop = this.logArea.scrollHeight;
 

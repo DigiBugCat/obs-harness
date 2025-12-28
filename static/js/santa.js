@@ -1,7 +1,7 @@
 var S = Object.defineProperty;
 var v = (r, e, t) => e in r ? S(r, e, { enumerable: !0, configurable: !0, writable: !0, value: t }) : r[e] = t;
 var s = (r, e, t) => v(r, typeof e != "symbol" ? e + "" : e, t);
-function h(r) {
+function d(r) {
   const e = document.createElement("div");
   return e.textContent = r, e.innerHTML;
 }
@@ -123,15 +123,15 @@ class f {
     t && (t.style.display = "none");
     const a = e.map((i) => {
       const c = i.role === "user" ? "👤 CHILD" : "🎅 SANTA";
-      let d = i.content;
+      let h = i.content;
       if (i.role === "assistant")
         try {
-          d = JSON.parse(d).speech || d;
+          h = JSON.parse(h).speech || h;
         } catch {
         }
       return `<div class="chat-bubble ${i.role}">
                 <div class="chat-bubble-label">${c}</div>
-                <div class="chat-bubble-content">${h(d)}</div>
+                <div class="chat-bubble-content">${d(h)}</div>
             </div>`;
     }).join("");
     (l = this.conversationArea) == null || l.querySelectorAll(".chat-bubble").forEach((i) => i.remove()), (g = this.conversationArea) == null || g.insertAdjacentHTML("beforeend", a), this.conversationArea && (this.conversationArea.scrollTop = this.conversationArea.scrollHeight);
@@ -157,18 +157,18 @@ class f {
             }
           return `<div class="chat-bubble ${c.role}">
                             <div class="chat-bubble-label">${p}</div>
-                            <div class="chat-bubble-content">${h(m)}</div>
+                            <div class="chat-bubble-content">${d(m)}</div>
                         </div>`;
         }).join("") : i = '<div style="color: var(--text-secondary); font-size: 0.8rem;">No conversation recorded</div>', `<div class="session-card">
                     <div class="session-card-header">
                         <div>
-                            <strong>${h(n.redeemer_display_name)}</strong>
+                            <strong>${d(n.redeemer_display_name)}</strong>
                             <span style="color: var(--text-secondary); font-size: 0.75rem; margin-left: 0.5rem;">${g}</span>
                         </div>
                         <span class="session-outcome ${o}">${l}</span>
                     </div>
                     <div style="color: var(--text-secondary); font-size: 0.8rem; margin-bottom: 0.5rem;">
-                        Wish: "${h(n.wish_text || "No wish")}"
+                        Wish: "${d(n.wish_text || "No wish")}"
                     </div>
                     <details>
                         <summary style="cursor: pointer; font-size: 0.8rem; color: var(--text-secondary);">Show conversation (${((u = n.conversation) == null ? void 0 : u.length) || 0} messages)</summary>
@@ -238,7 +238,7 @@ class f {
     try {
       const t = await (await fetch("/api/santa/rewards")).json(), a = this.rewardId.value || this.configuredRewardId || "";
       t.rewards && t.rewards.length > 0 ? (this.rewardId.innerHTML = '<option value="">All rewards</option>' + t.rewards.map(
-        (n) => `<option value="${n.id}">${h(n.title)} (${n.cost} pts)${n.is_paused ? " [PAUSED]" : ""}</option>`
+        (n) => `<option value="${n.id}">${d(n.title)} (${n.cost} pts)${n.is_paused ? " [PAUSED]" : ""}</option>`
       ).join(""), this.rewardId.value = a, this.log(`Loaded ${t.rewards.length} rewards`)) : (this.rewardId.innerHTML = '<option value="">All rewards</option>', this.log("No rewards found"));
     } catch (e) {
       this.log("Failed to load rewards: " + (e instanceof Error ? e.message : String(e)));
@@ -485,7 +485,7 @@ You remember everything from this stream. Reference past visitors, chat's previo
   // -------------------------------------------------------------------------
   log(e) {
     const t = (/* @__PURE__ */ new Date()).toLocaleTimeString(), a = document.createElement("div");
-    for (a.className = "log-entry", a.innerHTML = `<span class="log-time">[${t}]</span> ${e}`, this.logArea.appendChild(a), this.logArea.scrollTop = this.logArea.scrollHeight; this.logArea.children.length > 100; )
+    for (a.className = "log-entry", a.innerHTML = `<span class="log-time">[${t}]</span> ${d(e)}`, this.logArea.appendChild(a), this.logArea.scrollTop = this.logArea.scrollHeight; this.logArea.children.length > 100; )
       this.logArea.removeChild(this.logArea.firstChild);
   }
 }
@@ -494,5 +494,5 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 export {
   f as SantaDashboard,
-  h as escapeHtml
+  d as escapeHtml
 };
