@@ -771,6 +771,7 @@ const historyList = document.getElementById('history-list')!
     async function previewKokoroVoice() {
         const voice = $select('kokoro-voice-select').value;
         const speed = parseInt($input('kokoro-speed').value) / 100;
+        const text = $input('kokoro-preview-text').value.trim() || 'Hello! This is a voice preview.';
 
         if (!voice) {
             showToast('Please select a voice first', 'warning');
@@ -791,7 +792,7 @@ const historyList = document.getElementById('history-list')!
             const response = await fetch('/api/kokoro/preview', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ voice, speed }),
+                body: JSON.stringify({ voice, speed, text }),
             });
 
             if (!response.ok) {

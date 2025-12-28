@@ -215,6 +215,7 @@ class KokoroPreviewRequest(BaseModel):
 
     voice: str = "af_heart"
     speed: float = 1.0
+    text: str = "Hello! This is a voice preview."
 
 
 def _pcm_to_wav(pcm_data: bytes, sample_rate: int = 24000, channels: int = 1) -> bytes:
@@ -254,8 +255,6 @@ async def preview_kokoro_voice(
     Returns WAV audio for immediate playback in browser.
     Does not log to playback history.
     """
-    preview_text = "Hello! This is a voice preview."
-
     try:
         async with httpx.AsyncClient(
             base_url=settings.kokoro_base_url,
@@ -265,7 +264,7 @@ async def preview_kokoro_voice(
                 "/v1/audio/speech",
                 json={
                     "model": "kokoro",
-                    "input": preview_text,
+                    "input": request.text,
                     "voice": request.voice,
                     "response_format": "pcm",
                     "speed": request.speed,
