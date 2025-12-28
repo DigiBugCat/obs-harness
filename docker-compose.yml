@@ -1,0 +1,26 @@
+services:
+  app:
+    build: .
+    container_name: ${TUNNEL_NAME:-obs-harness}-app
+    restart: unless-stopped
+    ports:
+      - "${SERVICE_PORT:-8080}:8080"
+    environment:
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - CARTESIA_API_KEY=${CARTESIA_API_KEY:-}
+      - TWITCH_CLIENT_ID=${TWITCH_CLIENT_ID:-}
+    volumes:
+      - ./data:/app/data
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: ${TUNNEL_NAME:-obs-harness}-cloudflared
+    restart: unless-stopped
+    network_mode: "service:app"
+    command: tunnel run
+    volumes:
+      - ./cloudflare/cloudflared/config.yml:/home/nonroot/.cloudflared/config.yml:ro
+      - ./cloudflare/cloudflared/credentials.json:/home/nonroot/.cloudflared/credentials.json:ro
+    depends_on:
+      - app

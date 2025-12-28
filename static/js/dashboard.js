@@ -44,6 +44,34 @@
     const historyList = document.getElementById('history-list');
 
     // =========================================================================
+    // Security Helpers
+    // =========================================================================
+
+    /**
+     * Escape HTML special characters to prevent XSS.
+     * Uses the browser's built-in escaping via textContent.
+     */
+    function escapeHtml(text) {
+        if (text == null) return '';
+        const div = document.createElement('div');
+        div.textContent = String(text);
+        return div.innerHTML;
+    }
+
+    /**
+     * Validate and sanitize a CSS color value.
+     * Only allows valid hex colors, returns fallback otherwise.
+     */
+    function sanitizeColor(color, fallback = '#9146ff') {
+        if (!color) return fallback;
+        // Allow 3, 4, 6, or 8 character hex colors
+        if (/^#[0-9a-fA-F]{3,4}$|^#[0-9a-fA-F]{6}$|^#[0-9a-fA-F]{8}$/.test(color)) {
+            return color;
+        }
+        return fallback;
+    }
+
+    // =========================================================================
     // WebSocket Connection
     // =========================================================================
 
@@ -242,50 +270,13 @@
         const toast = document.createElement('div');
         toast.className = `toast-notification toast-${type}`;
         toast.textContent = message;
-        toast.style.cssText = `
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            padding: 12px 20px;
-            border-radius: 6px;
-            color: white;
-            font-size: 0.875rem;
-            z-index: 10000;
-            animation: slideIn 0.3s ease;
-            max-width: 400px;
-            word-wrap: break-word;
-        `;
-
-        // Set background color based on type
-        const colors = {
-            success: '#4ecca3',
-            error: '#e94560',
-            warning: '#ffc107',
-            info: '#3498db'
-        };
-        toast.style.background = colors[type] || colors.info;
-
         document.body.appendChild(toast);
 
         setTimeout(() => {
-            toast.style.animation = 'slideOut 0.3s ease';
+            toast.classList.add('hiding');
             setTimeout(() => toast.remove(), 300);
         }, duration);
     }
-
-    // Add toast animation styles
-    const toastStyles = document.createElement('style');
-    toastStyles.textContent = `
-        @keyframes slideIn {
-            from { transform: translateX(100%); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
-        }
-        @keyframes slideOut {
-            from { transform: translateX(0); opacity: 1; }
-            to { transform: translateX(100%); opacity: 0; }
-        }
-    `;
-    document.head.appendChild(toastStyles);
 
     // =========================================================================
     // API Calls
@@ -1563,9 +1554,9 @@
             const time = new Date(item.timestamp).toLocaleTimeString();
             return `
                 <div class="history-item">
-                    <span class="history-channel">${item.channel}</span>
-                    <span class="history-content">${item.content}</span>
-                    <span class="history-time">${time}</span>
+                    <span class="history-channel">${escapeHtml(item.channel)}</span>
+                    <span class="history-content">${escapeHtml(item.content)}</span>
+                    <span class="history-time">${escapeHtml(time)}</span>
                 </div>
             `;
         }).join('');
@@ -1607,16 +1598,25 @@
         const connectedClass = character.connected ? '' : 'disconnected';
         const hasAI = character.system_prompt ? '<span class="voice-indicator">AI</span>' : '';
 
-        // Show description or system_prompt preview
-        const descriptionText = character.description ||
-            (character.system_prompt ? character.system_prompt.substring(0, 80) + '...' : 'No description');
+        // Show description or system_prompt preview (escaped)
+        const descriptionText = escapeHtml(character.description ||
+            (character.system_prompt ? character.system_prompt.substring(0, 80) + '...' : 'No description'));
+
+        // Escape user-controlled values
+        const safeName = escapeHtml(character.name);
+        const safeIcon = escapeHtml(character.icon);
+        const safeColor = sanitizeColor(character.color);
+        const safeModel = escapeHtml(character.model ? character.model.split('/').pop() : '');
+        const safeTtsModel = escapeHtml(character.tts_provider === 'cartesia'
+            ? (character.tts_settings?.model_id || 'sonic').replace('sonic-', '')
+            : (character.elevenlabs_model_id || 'multilingual_v2').replace('eleven_', '').replace('_', ' '));
 
         return `
-            <div class="channel-card ${connectedClass}" data-character="${character.name}" style="border-left-color: ${character.color}">
+            <div class="channel-card ${connectedClass}" data-character="${safeName}" style="border-left-color: ${safeColor}">
                 <div class="channel-header">
                     <div class="channel-name">
-                        <span class="channel-icon">${character.icon}</span>
-                        ${character.name}
+                        <span class="channel-icon">${safeIcon}</span>
+                        ${safeName}
                         ${hasAI}
                     </div>
                     <span class="channel-status ${statusClass}">${statusText}</span>
@@ -1625,20 +1625,19 @@
                 <div class="channel-controls">
                     <div class="control-row" style="font-size: 0.75rem; color: var(--text-secondary);">
                         <span>TTS: ${character.tts_provider === 'cartesia' ? 'Cartesia' : 'ElevenLabs'}</span>
-                        <span>${character.tts_provider === 'cartesia'
-                            ? (character.tts_settings?.model_id || 'sonic').replace('sonic-', '')
-                            : (character.elevenlabs_model_id || 'multilingual_v2').replace('eleven_', '').replace('_', ' ')}</span>
+                        <span>${safeTtsModel}</span>
                     </div>
-                    ${character.system_prompt ? `<div class="control-row" style="font-size: 0.75rem; color: var(--text-secondary);"><span>AI: ${character.model.split('/').pop()}</span></div>` : ''}
+                    ${character.system_prompt ? `<div class="control-row" style="font-size: 0.75rem; color: var(--text-secondary);"><span>AI: ${safeModel}</span></div>` : ''}
                 </div>
                 <div class="channel-actions">
-                    <button onclick="window.openSpeakModal('${character.name}')">Speak</button>
+                    <button data-action="speak" data-character="${safeName}">Speak</button>
                     ${character.system_prompt
-                        ? `<button onclick="window.openChatModal('${character.name}')">Chat</button>`
+                        ? `<button data-action="chat" data-character="${safeName}">Chat</button>`
                         : ''}
-                    <button onclick="window.copyCharacterUrl('${character.name}')">Copy URL</button>
-                    <button onclick="window.editCharacter('${character.name}')">Edit</button>
-                    <button class="secondary" onclick="window.deleteCharacter('${character.name}')">Delete</button>
+                    <button data-action="copy-url" data-character="${safeName}" title="Copy browser source URL for OBS">Copy URL</button>
+                    <button data-action="rotate-token" data-character="${safeName}" title="Invalidate old URL and generate new token">Rotate</button>
+                    <button data-action="edit" data-character="${safeName}">Edit</button>
+                    <button class="secondary" data-action="delete" data-character="${safeName}">Delete</button>
                 </div>
             </div>
         `;
@@ -1697,15 +1696,20 @@
     window.selectCartesiaVoice = selectCartesiaVoice;
     window.onCartesiaManualIdChange = onCartesiaManualIdChange;
 
-    // Copy URL function
+    // Copy URL function (browser source URL with auth token)
     window.copyCharacterUrl = async function(characterName) {
-        const url = `${window.location.origin}/channel/${characterName}`;
+        const character = characters.find(c => c.name === characterName);
+        if (!character || !character.ws_token) {
+            showToast('Character token not found', 'error');
+            return;
+        }
+        const url = `${window.location.origin}/channel/${encodeURIComponent(characterName)}?token=${encodeURIComponent(character.ws_token)}`;
         try {
             await navigator.clipboard.writeText(url);
             // Brief visual feedback - find the button and flash it
-            const card = document.querySelector(`[data-character="${characterName}"]`);
+            const card = document.querySelector(`[data-character="${CSS.escape(characterName)}"]`);
             if (card) {
-                const btn = Array.from(card.querySelectorAll('button')).find(b => b.textContent === 'Copy URL');
+                const btn = card.querySelector('button[data-action="copy-url"]');
                 if (btn) {
                     const originalText = btn.textContent;
                     btn.textContent = 'Copied!';
@@ -1715,7 +1719,30 @@
         } catch (err) {
             console.error('Failed to copy URL:', err);
             // Fallback: show the URL in an alert
-            prompt('Copy this URL:', url);
+            prompt('Copy this URL for OBS browser source:', url);
+        }
+    };
+
+    // Rotate token function (invalidates existing browser source URLs)
+    window.rotateCharacterToken = async function(characterName) {
+        if (!confirm(`Rotate token for "${characterName}"?\n\nThis will invalidate any existing OBS browser source URLs. You'll need to update your OBS sources with the new URL.`)) {
+            return;
+        }
+        try {
+            const result = await apiCall(`/api/characters/${encodeURIComponent(characterName)}/rotate-token`, { method: 'POST' });
+            if (result && result.success) {
+                // Update local character data
+                const character = characters.find(c => c.name === characterName);
+                if (character) {
+                    character.ws_token = result.ws_token;
+                }
+                showToast('Token rotated. Copy new URL for OBS.', 'success');
+            } else {
+                showToast(result?.detail || 'Failed to rotate token', 'error');
+            }
+        } catch (err) {
+            console.error('Failed to rotate token:', err);
+            showToast('Failed to rotate token', 'error');
         }
     };
 
@@ -1777,6 +1804,39 @@
         chatModal.addEventListener('click', (e) => {
             if (e.target === chatModal) {
                 closeChatModal();
+            }
+        });
+    }
+
+    // Event delegation for character action buttons (prevents XSS via onclick)
+    if (charactersContainer) {
+        charactersContainer.addEventListener('click', (e) => {
+            const button = e.target.closest('button[data-action]');
+            if (!button) return;
+
+            const action = button.dataset.action;
+            const characterName = button.dataset.character;
+            if (!characterName) return;
+
+            switch (action) {
+                case 'speak':
+                    window.openSpeakModal(characterName);
+                    break;
+                case 'chat':
+                    window.openChatModal(characterName);
+                    break;
+                case 'copy-url':
+                    window.copyCharacterUrl(characterName);
+                    break;
+                case 'rotate-token':
+                    window.rotateCharacterToken(characterName);
+                    break;
+                case 'edit':
+                    window.editCharacter(characterName);
+                    break;
+                case 'delete':
+                    window.deleteCharacter(characterName);
+                    break;
             }
         });
     }

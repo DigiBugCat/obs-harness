@@ -4,12 +4,12 @@ import asyncio
 import base64
 import json
 import logging
-import os
 from dataclasses import dataclass
 from typing import AsyncIterator
 
 import websockets
 
+from ..config import settings
 from .provider import AudioChunkWithTiming, WordTiming
 
 logger = logging.getLogger(__name__)
@@ -143,7 +143,7 @@ class ElevenLabsWSClient:
         sync_alignment: bool = True,
     ) -> None:
         self.voice_id = voice_id
-        self.api_key = api_key or os.environ.get("ELEVENLABS_API_KEY")
+        self.api_key = api_key or settings.elevenlabs_api_key
         if not self.api_key:
             raise ValueError("ElevenLabs API key not provided.")
 
@@ -152,7 +152,7 @@ class ElevenLabsWSClient:
         self.sync_alignment = sync_alignment
         self._ws = None
         self._receive_task = None
-        self._chunk_queue: asyncio.Queue[AudioChunkWithTiming | None] = asyncio.Queue()
+        self._chunk_queue: asyncio.Queue[AudioChunkWithTiming | None] | None = None
         self._initialized = False
         self._closed = False
         # Buffer for incomplete word at chunk boundary
@@ -196,6 +196,8 @@ class ElevenLabsWSClient:
             try:
                 # Reset pending word state on new connection
                 self._pending_word = None
+                # Create queue in async context (event loop safety)
+                self._chunk_queue = asyncio.Queue()
 
                 self._ws = await websockets.connect(
                     self.ws_url,

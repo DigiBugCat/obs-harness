@@ -1,9 +1,10 @@
 """Cartesia REST API client for voices and models."""
 
-import os
 from typing import Any
 
 import httpx
+
+from ..config import settings
 
 CARTESIA_API_URL = "https://api.cartesia.ai"
 CARTESIA_VERSION = "2024-06-10"
@@ -24,7 +25,7 @@ class CartesiaClient:
         Args:
             api_key: Cartesia API key (falls back to CARTESIA_API_KEY env var)
         """
-        self.api_key = api_key or os.environ.get("CARTESIA_API_KEY")
+        self.api_key = api_key or settings.cartesia_api_key
         if not self.api_key:
             raise ValueError("Cartesia API key not provided.")
 

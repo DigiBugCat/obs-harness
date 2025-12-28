@@ -2,7 +2,7 @@
  * OBS Browser Source Channel Handler
  * Handles audio playback, streaming, and text overlays via WebSocket
  */
-console.log('[channel.js] VERSION 12 LOADED - bidirectional heartbeat + max reconnect reload + health poll fallback');
+console.log('[channel.js] VERSION 13 LOADED - token-based WebSocket auth');
 
 (function() {
     'use strict';
@@ -10,6 +10,10 @@ console.log('[channel.js] VERSION 12 LOADED - bidirectional heartbeat + max reco
     // Get channel name from URL path
     const pathParts = window.location.pathname.split('/');
     const channelName = pathParts[pathParts.length - 1] || 'default';
+
+    // Get auth token from URL query params (required for WebSocket auth)
+    const urlParams = new URLSearchParams(window.location.search);
+    const wsToken = urlParams.get('token');
 
     // WebSocket connection
     let ws = null;
@@ -84,8 +88,14 @@ console.log('[channel.js] VERSION 12 LOADED - bidirectional heartbeat + max reco
     // =========================================================================
 
     function connect() {
+        if (!wsToken) {
+            console.error(`[${channelName}] No token provided - WebSocket connection requires ?token= parameter`);
+            showErrorMessage('Missing Token', 'Get URL from dashboard');
+            return;
+        }
+
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws/${channelName}`;
+        const wsUrl = `${protocol}//${window.location.host}/ws/${encodeURIComponent(channelName)}?token=${encodeURIComponent(wsToken)}`;
 
         ws = new WebSocket(wsUrl);
         ws.binaryType = 'arraybuffer';
@@ -102,11 +112,11 @@ console.log('[channel.js] VERSION 12 LOADED - bidirectional heartbeat + max reco
         };
 
         ws.onclose = (event) => {
-            // Handle channel not found error (don't reconnect)
+            // Handle auth/channel error (don't reconnect)
             if (event.code === 4004) {
-                console.error(`[${channelName}] Channel not found. Create it in the dashboard first.`);
-                showErrorMessage('Channel not configured', 'Create it in the dashboard first');
-                return; // Don't reconnect for unknown channels
+                console.error(`[${channelName}] Invalid channel or token: ${event.reason}`);
+                showErrorMessage('Invalid channel or token', 'Copy fresh URL from dashboard');
+                return; // Don't reconnect for auth errors
             }
 
             console.log(`[${channelName}] Disconnected from server`);
@@ -342,58 +352,74 @@ console.log('[channel.js] VERSION 12 LOADED - bidirectional heartbeat + max reco
     function handleStreamData(data) {
         if (!isStreaming || !audioContext) return;
 
-        // Convert ArrayBuffer to Int16Array (PCM16 format)
-        const int16Data = new Int16Array(data);
-
-        // Convert to Float32 for Web Audio API
-        const float32Data = new Float32Array(int16Data.length);
-        for (let i = 0; i < int16Data.length; i++) {
-            float32Data[i] = int16Data[i] / 32768.0;
-        }
-
-        // Create audio buffer
-        const samplesPerChannel = float32Data.length / streamChannels;
-        const audioBuffer = audioContext.createBuffer(
-            streamChannels,
-            samplesPerChannel,
-            streamSampleRate
-        );
-
-        // Fill buffer channels
-        for (let channel = 0; channel < streamChannels; channel++) {
-            const channelData = audioBuffer.getChannelData(channel);
-            for (let i = 0; i < samplesPerChannel; i++) {
-                channelData[i] = float32Data[i * streamChannels + channel];
+        try {
+            // Validate data before processing
+            if (!data || !(data instanceof ArrayBuffer) || data.byteLength === 0) {
+                console.warn(`[${channelName}] Invalid stream data received`);
+                return;
             }
+
+            // Convert ArrayBuffer to Int16Array (PCM16 format)
+            const int16Data = new Int16Array(data);
+
+            // Convert to Float32 for Web Audio API
+            const float32Data = new Float32Array(int16Data.length);
+            for (let i = 0; i < int16Data.length; i++) {
+                float32Data[i] = int16Data[i] / 32768.0;
+            }
+
+            // Create audio buffer
+            const samplesPerChannel = float32Data.length / streamChannels;
+            if (samplesPerChannel <= 0) {
+                console.warn(`[${channelName}] Empty audio chunk, skipping`);
+                return;
+            }
+
+            const audioBuffer = audioContext.createBuffer(
+                streamChannels,
+                samplesPerChannel,
+                streamSampleRate
+            );
+
+            // Fill buffer channels
+            for (let channel = 0; channel < streamChannels; channel++) {
+                const channelData = audioBuffer.getChannelData(channel);
+                for (let i = 0; i < samplesPerChannel; i++) {
+                    channelData[i] = float32Data[i * streamChannels + channel];
+                }
+            }
+
+            // Schedule playback
+            const source = audioContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioContext.destination);
+
+            // Ensure we don't schedule in the past
+            if (nextPlayTime < audioContext.currentTime) {
+                nextPlayTime = audioContext.currentTime;
+            }
+
+            source.start(nextPlayTime);
+
+            // Track source for potential stopping
+            scheduledSources.push(source);
+            source.onended = () => {
+                const idx = scheduledSources.indexOf(source);
+                if (idx !== -1) scheduledSources.splice(idx, 1);
+            };
+
+            // On first audio chunk, trigger pending text display and record start time
+            if (!firstAudioChunkReceived) {
+                firstAudioChunkReceived = true;
+                audioStartContextTime = nextPlayTime;  // When this first chunk will start playing
+                flushPendingText();
+            }
+
+            nextPlayTime += audioBuffer.duration;
+        } catch (err) {
+            console.error(`[${channelName}] Error processing audio stream data:`, err);
+            // Don't crash the stream - try to continue with next chunk
         }
-
-        // Schedule playback
-        const source = audioContext.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(audioContext.destination);
-
-        // Ensure we don't schedule in the past
-        if (nextPlayTime < audioContext.currentTime) {
-            nextPlayTime = audioContext.currentTime;
-        }
-
-        source.start(nextPlayTime);
-
-        // Track source for potential stopping
-        scheduledSources.push(source);
-        source.onended = () => {
-            const idx = scheduledSources.indexOf(source);
-            if (idx !== -1) scheduledSources.splice(idx, 1);
-        };
-
-        // On first audio chunk, trigger pending text display and record start time
-        if (!firstAudioChunkReceived) {
-            firstAudioChunkReceived = true;
-            audioStartContextTime = nextPlayTime;  // When this first chunk will start playing
-            flushPendingText();
-        }
-
-        nextPlayTime += audioBuffer.duration;
     }
 
     // Flush pending text to animator when audio starts

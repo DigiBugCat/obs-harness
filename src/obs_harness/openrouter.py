@@ -3,12 +3,13 @@
 import asyncio
 import json
 import logging
-import os
 from dataclasses import dataclass
 from typing import AsyncIterator
 
 import httpx
 from httpx_sse import aconnect_sse
+
+from .config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ class OpenRouterClient:
         max_retries: int = 3,
         retry_delay: float = 1.0,
     ) -> None:
-        self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
+        self.api_key = api_key or settings.openrouter_api_key
         if not self.api_key:
             raise ValueError("OpenRouter API key not provided.")
 

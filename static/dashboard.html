@@ -567,6 +567,42 @@
         .image-preview-thumb .remove-btn:hover {
             background: var(--accent-hover);
         }
+
+        /* Toast Notifications */
+        .toast-notification {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            border-radius: 6px;
+            color: white;
+            font-size: 0.875rem;
+            z-index: 10000;
+            max-width: 400px;
+            word-wrap: break-word;
+            animation: slideIn 0.3s ease forwards;
+        }
+
+        .toast-notification.hiding {
+            animation: slideOut 0.3s ease forwards;
+        }
+
+        /* Toast Types */
+        .toast-success { background: var(--success); }
+        .toast-error { background: var(--accent); }
+        .toast-warning { background: var(--warning); color: #1a1a2e; }
+        .toast-info { background: #3498db; }
+
+        /* Toast Animations */
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        @keyframes slideOut {
+            from { transform: translateX(0); opacity: 1; }
+            to { transform: translateX(100%); opacity: 0; }
+        }
     </style>
 </head>
 <body>
@@ -589,7 +625,7 @@
 
         <div class="quick-actions">
             <a href="/editor">Text Animation Editor</a>
-            <a href="/santa" class="santa-btn">🎅 Santa Timmy</a>
+            <a href="/santa" id="santa-nav-btn" class="santa-btn" style="display: none;">🎅 Santa Timmy</a>
         </div>
 
         <div class="section">
@@ -994,5 +1030,16 @@
 
     <script src="/static/js/text-animator.js"></script>
     <script src="/static/js/dashboard.js"></script>
+    <script>
+        // Load feature flags and conditionally show UI elements
+        fetch('/api/features')
+            .then(r => r.json())
+            .then(features => {
+                if (features.santa) {
+                    document.getElementById('santa-nav-btn').style.display = '';
+                }
+            })
+            .catch(() => {}); // Silently fail - button stays hidden
+    </script>
 </body>
 </html>

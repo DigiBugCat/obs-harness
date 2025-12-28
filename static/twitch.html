@@ -298,16 +298,6 @@
     </div>
 
     <script>
-        // Twitch OAuth config
-        const CLIENT_ID = 'h1x5odjr6qy1m8sesgev1p9wcssz63';
-        const REDIRECT_URI = window.location.origin + '/auth/callback';
-        const SCOPES = [
-            'chat:read',
-            'user:read:chat',  // Required for EventSub chat subscription
-            'channel:read:redemptions',
-            'channel:manage:redemptions'
-        ].join(' ');
-
         // DOM elements
         const statusDot = document.getElementById('status-dot');
         const statusText = document.getElementById('status-text');
@@ -325,59 +315,30 @@
         let chatMessages = [];  // Store messages for display
         const MAX_MESSAGES = 50;  // Max messages to keep in buffer
 
-        // Check if we're returning from OAuth
-        async function handleOAuthCallback() {
-            const hash = window.location.hash;
-            if (!hash) return;
+        // Check if we're returning from OAuth callback
+        function handleOAuthCallback() {
+            const params = new URLSearchParams(window.location.search);
 
-            const params = new URLSearchParams(hash.substring(1));
-            const accessToken = params.get('access_token');
+            // Check for success
+            if (params.get('success') === 'true') {
+                // Clear the query string from URL
+                history.replaceState(null, '', window.location.pathname);
+                showMessage('Successfully logged in with Twitch!');
+                return;
+            }
 
-            if (!accessToken) return;
-
-            // Clear the hash from URL
-            history.replaceState(null, '', window.location.pathname);
-
-            try {
-                // Fetch user info from Twitch
-                const userResponse = await fetch('https://api.twitch.tv/helix/users', {
-                    headers: {
-                        'Authorization': `Bearer ${accessToken}`,
-                        'Client-Id': CLIENT_ID
-                    }
-                });
-
-                if (!userResponse.ok) {
-                    throw new Error('Failed to get user info from Twitch');
-                }
-
-                const userData = await userResponse.json();
-                const user = userData.data[0];
-
-                // Get current channel (use logged-in user's channel as default)
-                const channel = channelInput.value.trim() || user.login;
-
-                // Save to backend
-                const response = await fetch('/api/twitch/token', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        access_token: accessToken,
-                        user_id: user.id,
-                        username: user.login,
-                        channel: channel
-                    })
-                });
-
-                if (response.ok) {
-                    showMessage(`Logged in as ${user.display_name}!`);
-                    await checkStatus();
-                } else {
-                    const data = await response.json();
-                    showError(data.detail || 'Failed to save token');
-                }
-            } catch (e) {
-                showError('OAuth error: ' + e.message);
+            // Check for error
+            const error = params.get('error');
+            if (error) {
+                // Clear the query string from URL
+                history.replaceState(null, '', window.location.pathname);
+                const errorMessages = {
+                    'token_exchange_failed': 'Failed to exchange authorization code for tokens',
+                    'user_fetch_failed': 'Failed to get user info from Twitch',
+                    'callback_failed': 'OAuth callback failed - check server logs',
+                    'access_denied': 'Access was denied by the user',
+                };
+                showError(errorMessages[error] || `OAuth error: ${error}`);
             }
         }
 
@@ -420,10 +381,9 @@
             }
         }
 
-        // Start OAuth flow
+        // Start OAuth flow (redirects to backend which handles authorization code flow)
         function login() {
-            const authUrl = `https://id.twitch.tv/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=token&scope=${encodeURIComponent(SCOPES)}`;
-            window.location.href = authUrl;
+            window.location.href = '/auth/twitch';
         }
 
         // Logout

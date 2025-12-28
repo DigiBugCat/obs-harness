@@ -24,7 +24,8 @@ class TextPreset(SQLModel, table=True):
     """A saved text animation preset."""
 
     id: int | None = SQLField(default=None, primary_key=True)
-    name: str = SQLField(unique=True, index=True)
+    tenant_id: str = SQLField(default="default", index=True)  # Multi-tenancy
+    name: str = SQLField(index=True)  # Unique per tenant (composite constraint)
     style: str = SQLField(default="typewriter")
     font_family: str = SQLField(default="Arial")
     font_size: int = SQLField(default=48)
@@ -41,6 +42,7 @@ class PlaybackLog(SQLModel, table=True):
     """Log of playback events for history."""
 
     id: int | None = SQLField(default=None, primary_key=True)
+    tenant_id: str = SQLField(default="default", index=True)  # Multi-tenancy
     channel: str = SQLField(index=True)
     content: str  # filename or text content
     content_type: str  # "audio", "stream", "text"
@@ -48,11 +50,14 @@ class PlaybackLog(SQLModel, table=True):
 
 
 class TwitchConfig(SQLModel, table=True):
-    """Twitch configuration (singleton - only one row)."""
+    """Twitch configuration (one per tenant)."""
 
     id: int | None = SQLField(default=None, primary_key=True)
+    tenant_id: str = SQLField(default="default", unique=True, index=True)  # Multi-tenancy
     # Auth - the logged-in user (for EventSub channel points)
-    access_token: str  # OAuth token (no refresh token with implicit grant)
+    access_token: str  # OAuth access token
+    refresh_token: str | None = SQLField(default=None)  # OAuth refresh token (auth code flow)
+    token_expires_at: datetime | None = SQLField(default=None)  # When access token expires
     user_id: str | None = SQLField(default=None)  # Logged-in user's Twitch ID
     username: str | None = SQLField(default=None)  # Logged-in user's username
     # Chat - which channel to read chat from (can be different from logged-in user)
@@ -64,6 +69,7 @@ class ConversationMessage(SQLModel, table=True):
     """A message in a character's conversation history."""
 
     id: int | None = SQLField(default=None, primary_key=True)
+    tenant_id: str = SQLField(default="default", index=True)  # Multi-tenancy
     character_name: str = SQLField(index=True)  # Foreign key to Character.name
     role: str  # "user", "assistant", or "context"
     content: str  # The message content
@@ -76,7 +82,8 @@ class Character(SQLModel, table=True):
     """A character with voice settings and optional AI personality."""
 
     id: int | None = SQLField(default=None, primary_key=True)
-    name: str = SQLField(unique=True, index=True)
+    tenant_id: str = SQLField(default="default", index=True)  # Multi-tenancy
+    name: str = SQLField(index=True)  # Unique per tenant (composite constraint)
     description: str | None = SQLField(default=None)
 
     # Display settings
@@ -125,6 +132,9 @@ class Character(SQLModel, table=True):
     # Conversation memory settings
     memory_enabled: bool = SQLField(default=False)
     persist_memory: bool = SQLField(default=False)  # Save memory through restarts
+
+    # WebSocket authentication token for OBS browser sources
+    ws_token: str | None = SQLField(default=None, index=True)
 
     created_at: datetime = SQLField(default_factory=datetime.utcnow)
     updated_at: datetime | None = SQLField(default=None)
@@ -368,6 +378,9 @@ class CharacterResponse(BaseModel):
     # Conversation memory settings
     memory_enabled: bool
     persist_memory: bool
+
+    # WebSocket authentication token for OBS browser sources
+    ws_token: str | None = None
 
     # Status
     connected: bool = False
@@ -628,6 +641,8 @@ class TwitchStatusResponse(BaseModel):
     channel: str | None = None  # Chat channel being monitored
     user_id: str | None = None  # Logged-in user ID
     username: str | None = None  # Logged-in username
+    token_expires_at: datetime | None = None  # When access token expires
+    has_refresh_token: bool = False  # Whether we can auto-refresh
 
 
 # =============================================================================
@@ -636,9 +651,10 @@ class TwitchStatusResponse(BaseModel):
 
 
 class SantaConfig(SQLModel, table=True):
-    """Santa feature configuration (singleton)."""
+    """Santa feature configuration (one per tenant)."""
 
     id: int | None = SQLField(default=None, primary_key=True)
+    tenant_id: str = SQLField(default="default", unique=True, index=True)  # Multi-tenancy
     enabled: bool = SQLField(default=False)
     character_name: str = SQLField(default="santa_timmy")
     reward_id: str | None = SQLField(default=None)  # Channel point reward UUID
@@ -653,6 +669,7 @@ class SantaSession(SQLModel, table=True):
     """Active/historical wish session with Santa Timmy."""
 
     id: int | None = SQLField(default=None, primary_key=True)
+    tenant_id: str = SQLField(default="default", index=True)  # Multi-tenancy
     redeemer_user_id: str = SQLField(index=True)  # Twitch user ID (stable identifier)
     redeemer_username: str
     redeemer_display_name: str

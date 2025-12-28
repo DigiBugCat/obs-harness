@@ -1,6 +1,6 @@
 """Twitch EventSub WebSocket client for channel points and chat.
 
-Uses pyTwitchAPI for EventSub WebSocket connection and Twitch Helix API.
+Uses TwitchIO for EventSub WebSocket connection and Twitch Helix API.
 """
 
 import asyncio
@@ -10,13 +10,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Callable, Awaitable
 
-from twitchAPI.twitch import Twitch
-from twitchAPI.eventsub.websocket import EventSubWebsocket
-from twitchAPI.object.eventsub import (
-    ChannelPointsCustomRewardRedemptionAddEvent,
-    ChannelChatMessageEvent,
-)
-from twitchAPI.type import AuthScope
+import twitchio
+from twitchio import eventsub
+
+from .config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -52,23 +49,38 @@ class ChatBuffer:
 
     def __init__(self, max_messages: int = 100):
         self._messages: deque[ChatMessage] = deque(maxlen=max_messages)
-        self._lock = asyncio.Lock()
+        self._seen_ids: set[str] = set()  # Track message IDs in buffer
+        # Lock can be created outside event loop in Python 3.10+
+        self._lock: asyncio.Lock = asyncio.Lock()
 
-    async def add(self, message: ChatMessage) -> None:
-        """Add a message to the buffer."""
-        async with self._lock:
+    def _get_lock(self) -> asyncio.Lock:
+        """Get the buffer lock."""
+        return self._lock
+
+    async def add(self, message: ChatMessage) -> bool:
+        """Add a message to the buffer. Returns False if duplicate."""
+        async with self._get_lock():
+            if message.message_id in self._seen_ids:
+                return False
+            # If buffer is at capacity, remove oldest message's ID from seen set
+            if len(self._messages) == self._messages.maxlen:
+                oldest = self._messages[0]
+                self._seen_ids.discard(oldest.message_id)
+            self._seen_ids.add(message.message_id)
             self._messages.append(message)
+            return True
 
     async def get_recent(self, seconds: int = 60) -> list[ChatMessage]:
         """Get messages from the last N seconds."""
         cutoff = datetime.utcnow() - timedelta(seconds=seconds)
-        async with self._lock:
+        async with self._get_lock():
             return [m for m in self._messages if m.timestamp >= cutoff]
 
     async def clear(self) -> None:
         """Clear all messages."""
-        async with self._lock:
+        async with self._get_lock():
             self._messages.clear()
+            self._seen_ids.clear()
 
     def format_for_prompt(self, messages: list[ChatMessage], max_messages: int = 20) -> str:
         """Format messages for inclusion in AI prompt."""
@@ -86,35 +98,45 @@ class TwitchEventSubError(Exception):
 
 
 class TwitchEventSubManager:
-    """Manager for Twitch EventSub integration using pyTwitchAPI.
+    """Manager for Twitch EventSub integration using TwitchIO.
 
     Handles:
     - EventSub WebSocket connection
     - Channel point redemption callbacks
     - Chat message streaming
-    - Reward pause/unpause via Twitch API
+    - Reward management via Twitch API
     - Redemption fulfill/cancel via Twitch API
     """
+
+    # TTL for seen IDs (in seconds)
+    MESSAGE_TTL_SECONDS = 300  # 5 minutes
+    REDEMPTION_TTL_SECONDS = 600  # 10 minutes
 
     # Stale connection threshold - if no activity for this long, consider disconnected
     STALE_THRESHOLD_SECONDS = 120  # 2 minutes
 
     def __init__(self):
-        self._twitch: Twitch | None = None
-        self._eventsub: EventSubWebsocket | None = None
-        self._reward_id: str | None = None
+        self._client: twitchio.Client | None = None
         self._broadcaster_user_id: str | None = None
         self._user_id: str | None = None  # The authenticated user's ID
+        self._reward_id: str | None = None
         self._on_redemption: Callable[[ChannelPointRedemption], Awaitable[None]] | None = None
         self._on_chat_message: Callable[[ChatMessage], Awaitable[None]] | None = None
         self._running = False
         self._chat_buffer = ChatBuffer()
         self._last_activity: datetime | None = None  # Track last received event
+        # Deduplication tracking
+        self._seen_message_ids: dict[str, datetime] = {}  # message_id -> first_seen_time
+        self._seen_redemption_ids: dict[str, datetime] = {}  # redemption_id -> first_seen_time
+        self._cleanup_task: asyncio.Task | None = None
+        self._client_task: asyncio.Task | None = None
+        # Store tokens for API calls
+        self._access_token: str | None = None
 
     @property
     def is_connected(self) -> bool:
         """Check if connected to EventSub."""
-        if not self._running or self._eventsub is None:
+        if not self._running or self._client is None:
             return False
 
         # If we have activity tracking, check for stale connection
@@ -138,6 +160,33 @@ class TwitchEventSubManager:
     def set_chat_callback(self, callback: Callable[[ChatMessage], Awaitable[None]] | None) -> None:
         """Set callback for chat messages."""
         self._on_chat_message = callback
+
+    async def _cleanup_seen_ids(self) -> None:
+        """Background task to clean up expired seen IDs."""
+        while self._running:
+            await asyncio.sleep(60)  # Run every minute
+            now = datetime.utcnow()
+
+            # Clean up message IDs
+            message_cutoff = now - timedelta(seconds=self.MESSAGE_TTL_SECONDS)
+            expired_messages = [
+                mid for mid, seen_at in self._seen_message_ids.items()
+                if seen_at < message_cutoff
+            ]
+            for mid in expired_messages:
+                del self._seen_message_ids[mid]
+
+            # Clean up redemption IDs
+            redemption_cutoff = now - timedelta(seconds=self.REDEMPTION_TTL_SECONDS)
+            expired_redemptions = [
+                rid for rid, seen_at in self._seen_redemption_ids.items()
+                if seen_at < redemption_cutoff
+            ]
+            for rid in expired_redemptions:
+                del self._seen_redemption_ids[rid]
+
+            if expired_messages or expired_redemptions:
+                logger.debug(f"Cleaned up {len(expired_messages)} message IDs, {len(expired_redemptions)} redemption IDs")
 
     async def start(
         self,
@@ -169,90 +218,145 @@ class TwitchEventSubManager:
         self._broadcaster_user_id = broadcaster_user_id
         self._user_id = user_id or broadcaster_user_id
         self._on_redemption = on_redemption
+        self._access_token = access_token
 
         try:
-            # Initialize Twitch API with public client (no app authentication)
-            self._twitch = await Twitch(client_id, authenticate_app=False)
+            # Get client secret from settings
+            client_secret = settings.twitch_client_secret or ""
 
-            # Set user authentication with all needed scopes
-            # Disable auto-refresh BEFORE setting auth (we only have access token, no refresh token from implicit grant)
-            self._twitch.auto_refresh_auth = False
-
-            # Include all scopes we need (for both events and API calls like get_rewards)
-            scopes = [
-                AuthScope.USER_READ_CHAT,
-                AuthScope.CHANNEL_READ_REDEMPTIONS,
-                AuthScope.CHANNEL_MANAGE_REDEMPTIONS,
-            ]
-
-            await self._twitch.set_user_authentication(
-                access_token,
-                scopes,
-                validate=True,
+            # Create the TwitchIO client
+            self._client = twitchio.Client(
+                client_id=client_id,
+                client_secret=client_secret,
+                bot_id=self._user_id,
             )
 
-            # Create and start EventSub WebSocket
-            self._eventsub = EventSubWebsocket(self._twitch)
-            self._eventsub.start()
+            # Set up event handlers
+            self._setup_event_handlers()
 
-            # Subscribe to chat messages
+            # Add token to client
+            await self._client.add_token(access_token)
+
+            # Start the client in a background task
+            self._client_task = asyncio.create_task(self._run_client())
+
+            # Wait for client to be ready
+            await self._client.wait_until_ready()
+
+            # Subscribe to events
             if subscribe_to_chat:
-                await self._eventsub.listen_channel_chat_message(
+                chat_sub = eventsub.ChatMessageSubscription(
                     broadcaster_user_id=broadcaster_user_id,
                     user_id=self._user_id,
-                    callback=self._handle_chat_message,
                 )
+                await self._client.subscribe_websocket(chat_sub)
                 logger.info(f"Subscribed to chat for channel {broadcaster_user_id}")
 
-            # Subscribe to channel point redemptions
             if subscribe_to_redemptions:
-                print(f"[DEBUG] Subscribing to redemptions for {broadcaster_user_id}, reward_id={reward_id}")
-                await self._eventsub.listen_channel_points_custom_reward_redemption_add(
+                redemption_sub = eventsub.ChannelPointsRedeemAddSubscription(
                     broadcaster_user_id=broadcaster_user_id,
-                    reward_id=reward_id,  # None means all rewards
-                    callback=self._handle_redemption,
                 )
-                print(f"[DEBUG] Successfully subscribed to redemptions")
+                await self._client.subscribe_websocket(redemption_sub)
                 logger.info(f"Subscribed to redemptions for channel {broadcaster_user_id}")
 
             self._running = True
             self._update_activity()  # Mark as active on start
+
+            # Start cleanup task for seen IDs
+            self._cleanup_task = asyncio.create_task(self._cleanup_seen_ids())
+
             logger.info(f"EventSub started for broadcaster {broadcaster_user_id}")
 
         except Exception as e:
             await self.stop()
             raise TwitchEventSubError(f"Failed to start EventSub: {e}")
 
+    def _setup_event_handlers(self) -> None:
+        """Set up TwitchIO event handlers."""
+        if not self._client:
+            return
+
+        @self._client.event()
+        async def event_ready():
+            logger.info("TwitchIO client ready")
+
+        @self._client.event()
+        async def event_message(event: twitchio.ChatMessage):
+            await self._handle_chat_message(event)
+
+        @self._client.event()
+        async def event_custom_redemption_add(event: twitchio.ChannelPointsRedemptionAdd):
+            await self._handle_redemption(event)
+
+    async def _run_client(self) -> None:
+        """Run the TwitchIO client."""
+        try:
+            await self._client.login()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"TwitchIO client error: {e}")
+
     async def stop(self) -> None:
         """Stop the EventSub client."""
         self._running = False
 
-        if self._eventsub:
+        # Cancel cleanup task
+        if self._cleanup_task:
+            self._cleanup_task.cancel()
             try:
-                await self._eventsub.stop()
-            except Exception as e:
-                logger.warning(f"Error stopping EventSub: {e}")
-            self._eventsub = None
+                await self._cleanup_task
+            except asyncio.CancelledError:
+                pass
+            self._cleanup_task = None
 
-        if self._twitch:
+        # Cancel client task
+        if self._client_task:
+            self._client_task.cancel()
             try:
-                await self._twitch.close()
+                await self._client_task
+            except asyncio.CancelledError:
+                pass
+            self._client_task = None
+
+        # Close client
+        if self._client:
+            try:
+                await self._client.close()
             except Exception as e:
-                logger.warning(f"Error closing Twitch client: {e}")
-            self._twitch = None
+                logger.warning(f"Error closing TwitchIO client: {e}")
+            self._client = None
+
+        # Clear seen IDs
+        self._seen_message_ids.clear()
+        self._seen_redemption_ids.clear()
 
         logger.info("EventSub stopped")
 
-    async def _handle_chat_message(self, event: ChannelChatMessageEvent) -> None:
+    async def _handle_chat_message(self, event: twitchio.ChatMessage) -> None:
         """Handle incoming chat message from EventSub."""
         self._update_activity()  # Track activity
 
+        message_id = event.id
+
+        # Deduplicate: skip if we've already processed this message
+        if message_id in self._seen_message_ids:
+            logger.debug(f"Duplicate chat message ignored: {message_id}")
+            return
+        self._seen_message_ids[message_id] = datetime.utcnow()
+
+        # Ignore messages from the logged-in user (bot's own messages)
+        if self._user_id and event.chatter.id == self._user_id:
+            return
+
+        logger.debug(f"Chat message received: {message_id} from {event.chatter.name}")
+
         message = ChatMessage(
-            message_id=event.event.message_id,
-            user_id=event.event.chatter_user_id,
-            user_login=event.event.chatter_user_login,
-            user_display_name=event.event.chatter_user_name,
-            message=event.event.message.text,
+            message_id=message_id,
+            user_id=event.chatter.id,
+            user_login=event.chatter.name,  # TwitchIO PartialUser doesn't have login, use name
+            user_display_name=event.chatter.display_name,
+            message=event.text,
         )
 
         # Add to buffer
@@ -265,23 +369,30 @@ class TwitchEventSubManager:
             except Exception as e:
                 logger.error(f"Error in chat message callback: {e}")
 
-    async def _handle_redemption(self, event: ChannelPointsCustomRewardRedemptionAddEvent) -> None:
-        """Handle incoming redemption event from pyTwitchAPI."""
+    async def _handle_redemption(self, event: twitchio.ChannelPointsRedemptionAdd) -> None:
+        """Handle incoming redemption event from TwitchIO."""
         self._update_activity()  # Track activity
-        print(f"[DEBUG] Redemption event received!")
+
+        redemption_id = event.id
+
+        # Deduplicate: skip if we've already processed this redemption
+        if redemption_id in self._seen_redemption_ids:
+            logger.warning(f"Duplicate redemption ignored: {redemption_id}")
+            return
+        self._seen_redemption_ids[redemption_id] = datetime.utcnow()
+
         redemption = ChannelPointRedemption(
-            redemption_id=event.event.id,
-            reward_id=event.event.reward.id,
-            reward_title=event.event.reward.title,
-            user_id=event.event.user_id,
-            user_login=event.event.user_login,
-            user_display_name=event.event.user_name,
-            user_input=event.event.user_input,
-            redeemed_at=event.event.redeemed_at.isoformat() if event.event.redeemed_at else "",
+            redemption_id=redemption_id,
+            reward_id=event.reward.id,
+            reward_title=event.reward.title,
+            user_id=event.user.id,
+            user_login=event.user.name,  # TwitchIO PartialUser doesn't have login, use name
+            user_display_name=event.user.display_name,
+            user_input=event.user_input,
+            redeemed_at=event.redeemed_at.isoformat() if event.redeemed_at else "",
         )
 
-        print(f"[DEBUG] Redemption: {redemption.user_display_name} redeemed '{redemption.reward_title}'")
-        logger.info(f"Redemption: {redemption.user_display_name} redeemed '{redemption.reward_title}'")
+        logger.info(f"Redemption {redemption_id}: {redemption.user_display_name} redeemed '{redemption.reward_title}'")
 
         if self._on_redemption:
             try:
@@ -302,6 +413,35 @@ class TwitchEventSubManager:
         """Get raw chat messages for processing."""
         return await self._chat_buffer.get_recent(seconds)
 
+    async def send_chat_message(self, message: str) -> bool:
+        """Send a message to the chat.
+
+        Args:
+            message: The message to send (max 500 characters)
+
+        Returns:
+            True if message was sent successfully
+        """
+        if not self._client or not self._broadcaster_user_id or not self._user_id:
+            logger.warning("Cannot send chat: not connected or missing broadcaster/user ID")
+            return False
+
+        try:
+            # Truncate message if too long (Twitch limit is 500 chars)
+            if len(message) > 500:
+                message = message[:497] + "..."
+
+            broadcaster = self._client.create_partialuser(user_id=self._broadcaster_user_id)
+            await broadcaster.send_chat_message(
+                text=message,
+                token_for=self._user_id,
+            )
+            logger.info(f"Sent chat message: {message[:50]}...")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send chat message: {e}")
+            return False
+
     # -------------------------------------------------------------------------
     # Reward Management API
     # -------------------------------------------------------------------------
@@ -309,37 +449,34 @@ class TwitchEventSubManager:
     async def disable_reward(self, reward_id: str | None = None) -> bool:
         """Disable a channel point reward (hide it completely)."""
         rid = reward_id or self._reward_id
-        if not self._twitch or not rid or not self._broadcaster_user_id:
-            print(f"[DEBUG] disable_reward early return: twitch={self._twitch}, rid={rid}, broadcaster={self._broadcaster_user_id}")
+        if not self._client or not rid or not self._broadcaster_user_id:
             return False
 
         try:
-            print(f"[DEBUG] Calling update_custom_reward: broadcaster_id={self._broadcaster_user_id}, reward_id={rid}")
-            await self._twitch.update_custom_reward(
-                broadcaster_id=self._broadcaster_user_id,
+            broadcaster = self._client.create_partialuser(user_id=self._broadcaster_user_id)
+            await broadcaster.update_custom_reward(
                 reward_id=rid,
                 is_enabled=False,
-                is_user_input_required=True,  # Preserve text input requirement
+                token_for=self._user_id,
             )
             logger.info(f"Disabled reward: {rid}")
             return True
         except Exception as e:
-            print(f"[DEBUG] disable_reward exception: {e}")
             logger.error(f"Failed to disable reward: {e}")
             return False
 
     async def enable_reward(self, reward_id: str | None = None) -> bool:
         """Enable a channel point reward (show it)."""
         rid = reward_id or self._reward_id
-        if not self._twitch or not rid or not self._broadcaster_user_id:
+        if not self._client or not rid or not self._broadcaster_user_id:
             return False
 
         try:
-            await self._twitch.update_custom_reward(
-                broadcaster_id=self._broadcaster_user_id,
+            broadcaster = self._client.create_partialuser(user_id=self._broadcaster_user_id)
+            await broadcaster.update_custom_reward(
                 reward_id=rid,
                 is_enabled=True,
-                is_user_input_required=True,  # Preserve text input requirement
+                token_for=self._user_id,
             )
             logger.info(f"Enabled reward: {rid}")
             return True
@@ -350,15 +487,16 @@ class TwitchEventSubManager:
     async def fulfill_redemption(self, redemption_id: str, reward_id: str | None = None) -> bool:
         """Mark a redemption as fulfilled."""
         rid = reward_id or self._reward_id
-        if not self._twitch or not rid or not self._broadcaster_user_id:
+        if not self._client or not rid or not self._broadcaster_user_id:
             return False
 
         try:
-            await self._twitch.update_redemption_status(
-                broadcaster_id=self._broadcaster_user_id,
+            broadcaster = self._client.create_partialuser(user_id=self._broadcaster_user_id)
+            await broadcaster.update_reward_redemption(
                 reward_id=rid,
-                redemption_ids=[redemption_id],
+                redemption_id=redemption_id,
                 status="FULFILLED",
+                token_for=self._user_id,
             )
             logger.info(f"Fulfilled redemption: {redemption_id}")
             return True
@@ -369,15 +507,16 @@ class TwitchEventSubManager:
     async def cancel_redemption(self, redemption_id: str, reward_id: str | None = None) -> bool:
         """Cancel a redemption (refund points)."""
         rid = reward_id or self._reward_id
-        if not self._twitch or not rid or not self._broadcaster_user_id:
+        if not self._client or not rid or not self._broadcaster_user_id:
             return False
 
         try:
-            await self._twitch.update_redemption_status(
-                broadcaster_id=self._broadcaster_user_id,
+            broadcaster = self._client.create_partialuser(user_id=self._broadcaster_user_id)
+            await broadcaster.update_reward_redemption(
                 reward_id=rid,
-                redemption_ids=[redemption_id],
+                redemption_id=redemption_id,
                 status="CANCELED",
+                token_for=self._user_id,
             )
             logger.info(f"Cancelled redemption: {redemption_id}")
             return True
@@ -387,24 +526,22 @@ class TwitchEventSubManager:
 
     async def get_rewards(self) -> list[dict]:
         """Get all custom rewards for the broadcaster."""
-        if not self._twitch or not self._broadcaster_user_id:
+        if not self._client or not self._broadcaster_user_id:
             return []
 
         try:
-            result = await self._twitch.get_custom_reward(
-                broadcaster_id=self._broadcaster_user_id,
-                only_manageable_rewards=False,
-            )
-            rewards = []
-            for reward in result:
-                rewards.append({
+            broadcaster = self._client.create_partialuser(user_id=self._broadcaster_user_id)
+            rewards = await broadcaster.fetch_custom_rewards(token_for=self._user_id)
+            result = []
+            for reward in rewards:
+                result.append({
                     "id": reward.id,
                     "title": reward.title,
                     "cost": reward.cost,
                     "is_paused": reward.is_paused,
                     "is_enabled": reward.is_enabled,
                 })
-            return rewards
+            return result
         except Exception as e:
             logger.error(f"Failed to get rewards: {e}")
             return []
@@ -429,27 +566,83 @@ class TwitchEventSubManager:
         Returns:
             Dict with reward info if successful, None otherwise.
         """
-        if not self._twitch or not self._broadcaster_user_id:
+        if not self._client or not self._broadcaster_user_id:
             return None
 
         try:
-            result = await self._twitch.create_custom_reward(
-                broadcaster_id=self._broadcaster_user_id,
+            broadcaster = self._client.create_partialuser(user_id=self._broadcaster_user_id)
+            reward = await broadcaster.create_custom_reward(
                 title=title,
                 cost=cost,
                 prompt=prompt if prompt else None,
                 is_user_input_required=is_user_input_required,
                 is_enabled=is_enabled,
                 should_redemptions_skip_request_queue=False,  # We want to manage redemptions
+                token_for=self._user_id,
             )
-            logger.info(f"Created reward: {title} (id={result.id})")
+            logger.info(f"Created reward: {title} (id={reward.id})")
             return {
-                "id": result.id,
-                "title": result.title,
-                "cost": result.cost,
-                "is_paused": result.is_paused,
-                "is_enabled": result.is_enabled,
+                "id": reward.id,
+                "title": reward.title,
+                "cost": reward.cost,
+                "is_paused": reward.is_paused,
+                "is_enabled": reward.is_enabled,
             }
         except Exception as e:
             logger.error(f"Failed to create reward: {e}")
             return None
+
+    async def cleanup_subscriptions(self, access_token: str, client_id: str) -> int:
+        """Delete all EventSub subscriptions for this app.
+
+        Useful for cleaning up 'maximum subscriptions exceeded' errors.
+
+        Args:
+            access_token: Twitch OAuth token
+            client_id: Twitch client ID
+
+        Returns:
+            Number of subscriptions deleted
+        """
+        import httpx
+
+        deleted = 0
+        try:
+            async with httpx.AsyncClient() as http:
+                # Get all subscriptions
+                resp = await http.get(
+                    "https://api.twitch.tv/helix/eventsub/subscriptions",
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Client-Id": client_id,
+                    },
+                )
+                if resp.status_code != 200:
+                    logger.error(f"Failed to list subscriptions: {resp.status_code}")
+                    return 0
+
+                data = resp.json()
+                subscriptions = data.get("data", [])
+
+                # Delete each subscription
+                for sub in subscriptions:
+                    sub_id = sub.get("id")
+                    if sub_id:
+                        del_resp = await http.delete(
+                            f"https://api.twitch.tv/helix/eventsub/subscriptions?id={sub_id}",
+                            headers={
+                                "Authorization": f"Bearer {access_token}",
+                                "Client-Id": client_id,
+                            },
+                        )
+                        if del_resp.status_code == 204:
+                            deleted += 1
+                            logger.debug(f"Deleted subscription {sub_id}")
+                        else:
+                            logger.warning(f"Failed to delete subscription {sub_id}: {del_resp.status_code}")
+
+                logger.info(f"Cleaned up {deleted} EventSub subscriptions")
+                return deleted
+        except Exception as e:
+            logger.error(f"Failed to cleanup subscriptions: {e}")
+            return deleted

@@ -2,11 +2,12 @@
 
 import base64
 import json
-import os
 from dataclasses import dataclass
 from typing import AsyncIterator
 
 import httpx
+
+from .config import settings
 
 ELEVENLABS_API_URL = "https://api.elevenlabs.io/v1"
 
@@ -97,7 +98,7 @@ class ElevenLabsClient:
         Raises:
             ValueError: If no API key is provided or found in environment.
         """
-        self.api_key = api_key or os.environ.get("ELEVENLABS_API_KEY")
+        self.api_key = api_key or settings.elevenlabs_api_key
         if not self.api_key:
             raise ValueError(
                 "ElevenLabs API key not provided. Set ELEVENLABS_API_KEY environment variable."

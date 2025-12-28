@@ -4,12 +4,12 @@ import asyncio
 import base64
 import json
 import logging
-import os
 import uuid
 from typing import AsyncIterator
 
 import websockets
 
+from ..config import settings
 from .provider import AudioChunkWithTiming, WordTiming
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ class CartesiaWSClient:
             sample_rate: Audio sample rate in Hz
         """
         self.voice_id = voice_id
-        self.api_key = api_key or os.environ.get("CARTESIA_API_KEY")
+        self.api_key = api_key or settings.cartesia_api_key
         if not self.api_key:
             raise ValueError("Cartesia API key not provided.")
 
@@ -62,7 +62,7 @@ class CartesiaWSClient:
 
         self._ws = None
         self._receive_task = None
-        self._chunk_queue: asyncio.Queue[AudioChunkWithTiming | None] = asyncio.Queue()
+        self._chunk_queue: asyncio.Queue[AudioChunkWithTiming | None] | None = None
         self._context_id: str | None = None
         self._closed = False
         self._input_ended = False
@@ -94,6 +94,8 @@ class CartesiaWSClient:
         self._emotion = emotion
         self._context_id = str(uuid.uuid4())
         self._input_ended = False
+        # Create queue in async context (event loop safety)
+        self._chunk_queue = asyncio.Queue()
 
         last_error = None
         for attempt in range(max_retries):

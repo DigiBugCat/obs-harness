@@ -18,3 +18,12 @@ wheels/
 # Environment variables
 .env
 .ssl/
+
+# Cloudflare tunnel
+cloudflare/cloudflared/
+cloudflare/terraform/.terraform/
+cloudflare/terraform/terraform.tfstate*
+cloudflare/terraform/.terraform.lock.hcl
+
+# Data directory
+data/

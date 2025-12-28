@@ -35,7 +35,7 @@ SANTA_SYSTEM_PROMPT = """You are Timmy, a jolly mall penguin Santa with magical 
 OUTPUT FORMAT (JSON):
 {
   "speech": "Your spoken dialogue",
-  "action": "ask_followup" | "await_chat" | "grant" | "deny"
+  "action": "await_chat" | "grant" | "deny"
 }
 
 RULES:
@@ -44,9 +44,8 @@ RULES:
 - Talk like a friendly mall Santa, not a fantasy character. Simple, warm, casual.
 
 FLOW:
-1. Child states wish → You may "ask_followup" (1-2 times max) OR go straight to "await_chat"
-2. When ready for judgment, use "await_chat" and ask chat something like "But what do my elves think about this wish?"
-3. Chat responds → You "grant" or "deny" based on their verdict
+1. Child states wish → Respond warmly, then use "await_chat" to ask chat something like "But what do my elves think about this wish?"
+2. Chat responds → You "grant" or "deny" based on their verdict
 
 You remember everything from this stream. Reference past visitors, chat's previous judgments, wishes granted or denied. Chat is your elf council."""
 
@@ -61,7 +60,7 @@ SANTA_RESPONSE_FORMAT = {
                 "speech": {"type": "string"},
                 "action": {
                     "type": "string",
-                    "enum": ["ask_followup", "await_chat", "grant", "deny"]
+                    "enum": ["await_chat", "grant", "deny"]
                 }
             },
             "required": ["speech", "action"],
@@ -145,14 +144,29 @@ class SantaSessionManager:
         self.chat_vote_seconds = chat_vote_seconds
 
         self._session: SessionData | None = None
-        self._lock = asyncio.Lock()
-        self._speech_lock = asyncio.Lock()  # Prevents overlapping TTS
-        self._message_queue: asyncio.Queue[tuple[str, str, str]] = asyncio.Queue()  # (user_id, username, message)
+        # Locks can be created outside event loop in Python 3.10+
+        self._lock: asyncio.Lock = asyncio.Lock()
+        self._speech_lock: asyncio.Lock = asyncio.Lock()  # Prevents overlapping TTS
+        self._message_queue: asyncio.Queue[tuple[str, str, str]] | None = None  # (user_id, username, message)
         self._cancelled = False
         self._held = False  # When True, timeouts are paused
 
         # Callbacks for state updates (for WebSocket broadcasting)
         self._on_state_change: Callable[[SessionData], Awaitable[None]] | None = None
+
+    def _get_lock(self) -> asyncio.Lock:
+        """Get the session lock."""
+        return self._lock
+
+    def _get_speech_lock(self) -> asyncio.Lock:
+        """Get the speech lock."""
+        return self._speech_lock
+
+    def _get_message_queue(self) -> asyncio.Queue[tuple[str, str, str]]:
+        """Get or create the message queue (lazy init for event loop context)."""
+        if self._message_queue is None:
+            self._message_queue = asyncio.Queue()
+        return self._message_queue
 
     @property
     def active_session(self) -> SessionData | None:
@@ -213,7 +227,7 @@ class SantaSessionManager:
         Returns:
             True if session started, False if another session is active.
         """
-        async with self._lock:
+        async with self._get_lock():
             if self.is_active:
                 logger.warning("Cannot start session - another session is active")
                 return False
@@ -227,12 +241,8 @@ class SantaSessionManager:
             )
             self._cancelled = False
 
-            # Clear message queue
-            while not self._message_queue.empty():
-                try:
-                    self._message_queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
+            # Create a fresh message queue in the current event loop
+            self._message_queue = asyncio.Queue()
 
         logger.info(f"Santa session started for {redeemer_display_name}: {wish_text[:50]}...")
 
@@ -254,7 +264,7 @@ class SantaSessionManager:
 
     async def cancel_session(self, outcome: str = "cancelled") -> None:
         """Cancel the current session."""
-        async with self._lock:
+        async with self._get_lock():
             if self._session:
                 self._session.state = SantaState.COMPLETE
                 self._session.outcome = outcome
@@ -273,7 +283,7 @@ class SantaSessionManager:
         # Only accept messages from the redeemer during ASK_FOLLOWUP
         if self._session.state == SantaState.ASK_FOLLOWUP:
             if user_id == self._session.redeemer_user_id:
-                await self._message_queue.put((user_id, username, message))
+                await self._get_message_queue().put((user_id, username, message))
 
     async def force_verdict(self, verdict: str) -> bool:
         """Force a grant/deny verdict from dashboard - immediately stops session.
@@ -340,9 +350,8 @@ class SantaSessionManager:
             llm_client = OpenRouterClient()
 
             # Build a simple conversation for the interruption
-            system_prompt = await self._get_system_prompt()
             messages = [
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": SANTA_SYSTEM_PROMPT},
                 {"role": "user", "content": message},
             ]
 
@@ -526,12 +535,17 @@ class SantaSessionManager:
         """Send text to TTS via character speak endpoint and wait for audio to finish.
 
         Uses a lock to prevent overlapping speech - subsequent calls wait for previous to finish.
+        Also sends the message to Twitch chat.
         """
-        async with self._speech_lock:
+        async with self._get_speech_lock():
             try:
                 import httpx
                 start_time = asyncio.get_event_loop().time()
                 logger.info(f"Santa speaking: {text[:50]}...")
+
+                # Send to Twitch chat (fire and forget, don't block TTS)
+                if self.eventsub:
+                    asyncio.create_task(self.eventsub.send_chat_message(f"🎅 {text}"))
 
                 async with httpx.AsyncClient() as client:
                     response = await client.post(
@@ -565,67 +579,84 @@ class SantaSessionManager:
     # -------------------------------------------------------------------------
 
     async def _wait_for_followup(self) -> None:
-        """Wait for followup response from redeemer with debouncing."""
+        """Wait for followup response from redeemer with debouncing.
+
+        When held:
+        - Messages are collected/logged but NOT processed
+        - Debounce timer does NOT start until hold is released
+        - No timeout while held
+
+        When released:
+        - If messages were queued during hold, debounce starts from release time
+        - Normal timeout/debounce behavior resumes
+        """
         if self._cancelled or not self._session:
             return
 
         logger.info(f"Waiting for followup from {self._session.redeemer_display_name}...")
 
         collected_messages: list[str] = []
-        first_message_time: float | None = None
+        debounce_start_time: float | None = None  # When debounce timer started (after unhold)
+        queue = self._get_message_queue()
 
         try:
             start_time = asyncio.get_event_loop().time()
             while not self._cancelled:
-                # Calculate remaining time (but skip timeout if held)
+                # === HELD STATE: collect messages but don't process ===
                 if self._held:
-                    # When held, use short poll interval but don't timeout
-                    timeout = 1.0
-                elif first_message_time is None:
+                    try:
+                        user_id, username, message = await asyncio.wait_for(
+                            queue.get(), timeout=1.0
+                        )
+                        collected_messages.append(message)
+                        logger.info(f"[HELD] Queued message from {username}: {message[:50]}...")
+                    except asyncio.TimeoutError:
+                        pass  # Keep waiting while held
+                    continue  # Don't process or start debounce while held
+
+                # === UNHELD STATE ===
+
+                # If we have queued messages from hold period and debounce hasn't started
+                if collected_messages and debounce_start_time is None:
+                    debounce_start_time = asyncio.get_event_loop().time()
+                    logger.info(f"Hold released with {len(collected_messages)} queued messages, starting {self.debounce_seconds}s debounce...")
+
+                # Calculate timeout
+                if debounce_start_time is not None:
+                    # Debounce mode - waiting for more messages or timeout
+                    elapsed = asyncio.get_event_loop().time() - debounce_start_time
+                    remaining_debounce = self.debounce_seconds - elapsed
+                    if remaining_debounce <= 0:
+                        break  # Debounce complete, process messages
+                    timeout = remaining_debounce
+                else:
+                    # No messages yet - use response timeout
                     elapsed = asyncio.get_event_loop().time() - start_time
                     timeout = max(0.1, self.response_timeout - elapsed)
                     if timeout <= 0.1:
-                        # Real timeout (not held)
+                        # Timeout with no messages
                         logger.info("Followup timeout - no response received")
                         self._session.state = SantaState.COMPLETE
                         self._session.outcome = "timeout"
                         await self._speak("Ho ho ho! Looks like the little one got shy. Maybe next time!")
                         await self._notify_state_change()
                         return
-                else:
-                    # After first message, use debounce timeout
-                    elapsed = asyncio.get_event_loop().time() - first_message_time
-                    remaining_debounce = self.debounce_seconds - elapsed
-                    if remaining_debounce <= 0:
-                        break
-                    timeout = remaining_debounce
 
+                # Wait for message
                 try:
                     user_id, username, message = await asyncio.wait_for(
-                        self._message_queue.get(),
-                        timeout=timeout
+                        queue.get(), timeout=timeout
                     )
-
                     collected_messages.append(message)
-                    if first_message_time is None:
-                        first_message_time = asyncio.get_event_loop().time()
+                    if debounce_start_time is None:
+                        debounce_start_time = asyncio.get_event_loop().time()
                         logger.info(f"Received first message, waiting {self.debounce_seconds}s for more...")
 
                 except asyncio.TimeoutError:
-                    if first_message_time is None:
-                        # No message yet - continue if held, otherwise already handled above
-                        if self._held:
-                            continue
-                        # Should not reach here, but safety check
-                        logger.info("Followup timeout - no response received")
-                        self._session.state = SantaState.COMPLETE
-                        self._session.outcome = "timeout"
-                        await self._speak("Ho ho ho! Looks like the little one got shy. Maybe next time!")
-                        await self._notify_state_change()
-                        return
-                    else:
+                    if debounce_start_time is not None:
                         # Debounce timeout - done collecting
                         break
+                    # Response timeout already handled above
 
         except asyncio.CancelledError:
             return
