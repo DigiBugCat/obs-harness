@@ -6,9 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
+## [0.2.0] - 2025-12-28
 
 ### Added
+- **Kokoro TTS Support** - Self-hosted TTS option using Kokoro FastAPI
+  - BYOK (Bring Your Own Key) API key management for TTS providers
+  - Voice preview feature with configurable preview text
+  - Docker Compose dev configuration for local Kokoro testing
+- **Channel Switcher** - Multi-tenant improvements
+  - UI for switching between authorized channels
+  - Cross-channel moderator access
 - **Cartesia TTS Support** - Added Cartesia as an alternative TTS provider alongside ElevenLabs
   - New TTS provider abstraction layer (`src/obs_harness/tts/`) for swappable providers
   - Per-character TTS provider selection (ElevenLabs or Cartesia)
