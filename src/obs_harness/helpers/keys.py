@@ -23,7 +23,7 @@ def mask_key(key: str | None) -> str | None:
     """
     if not key or len(key) < 8:
         return None
-    return "•" * (len(key) - 4) + key[-4:]
+    return "••••••••" + key[-4:]
 
 
 async def get_user_settings(tenant_id: str) -> UserSettings | None:
