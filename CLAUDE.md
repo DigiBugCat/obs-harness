@@ -106,6 +106,7 @@ SQLite via SQLModel (async with aiosqlite). Tables:
 - `TwitchConfig` - OAuth tokens and channel settings
 - `ConversationMessage` - Persisted conversation history (when `persist_memory=True`)
 - `Moderator` - Cross-channel moderator permissions
+- `ApiKey` - API keys for programmatic access (hashed)
 
 ### Frontend
 
@@ -123,6 +124,35 @@ Cookie-based authentication with `tenant_id` (Twitch user ID):
 - `?channel=` query param allows viewing another channel (with moderator access)
 - `Moderator` table stores cross-channel permissions
 - Moderators can do everything except create/delete characters and modify configuration
+
+### API Key Authentication
+
+For programmatic access (external scripts, bots, services):
+- Create API keys in `/configuration` page under "Access Tokens"
+- Keys are stored as SHA-256 hashes (secure, never stored in plaintext)
+- Use `Authorization: Bearer obs_xxx` header to authenticate
+- API keys grant full owner access to the tenant's resources
+
+**API Key Endpoints:**
+- `GET /api/api-keys` - List all keys for authenticated tenant
+- `POST /api/api-keys` - Create new key (returns full key ONCE)
+- `DELETE /api/api-keys/{id}` - Revoke a key
+
+**Using API keys:**
+```bash
+# Example: Make a character speak via API key
+curl -X POST "http://localhost:8080/api/characters/MyCharacter/speak" \
+  -H "Authorization: Bearer obs_Xk9mP2qR4sT6uV8wY..." \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Hello from an external script!"}'
+```
+
+**Endpoints supporting API key auth:**
+- `GET /api/characters` - List characters
+- `GET /api/characters/{name}` - Get character
+- `POST /api/characters/{name}/speak` - TTS speak
+- `POST /api/characters/{name}/chat` - AI chat
+- `POST /api/characters/{name}/stop` - Stop playback
 
 ### Web Pages
 

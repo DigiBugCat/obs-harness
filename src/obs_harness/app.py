@@ -38,7 +38,7 @@ from .models import (
     VolumeCommand,
     WordTimingCommand,
 )
-from .routes import auth, characters, moderators, pages, presets, settings as settings_routes, system, tts_providers, twitch, websockets
+from .routes import api_keys, auth, characters, moderators, pages, presets, settings as settings_routes, system, tts_providers, twitch, websockets
 from .state import AppState
 
 logger = logging.getLogger(__name__)
@@ -644,5 +644,6 @@ def create_app(
     app.include_router(characters.router)
     app.include_router(moderators.router)
     app.include_router(settings_routes.router)
+    app.include_router(api_keys.router)
 
     return app

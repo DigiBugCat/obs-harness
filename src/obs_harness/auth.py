@@ -1,14 +1,20 @@
 """Authentication and authorization for multi-tenant access.
 
 Uses Twitch OAuth for identity. Whitelist controls who can access.
+API keys provide programmatic access for external scripts/services.
 """
 
+import hashlib
+import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional
 
 from fastapi import Depends, Query, Request, HTTPException
 
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -222,3 +228,99 @@ async def require_owner_only(
             detail="Only the channel owner can perform this action",
         )
     return auth
+
+
+# =============================================================================
+# API Key Authentication
+# =============================================================================
+
+
+def hash_api_key(key: str) -> str:
+    """Hash an API key using SHA-256.
+
+    Args:
+        key: The plaintext API key
+
+    Returns:
+        Hex-encoded SHA-256 hash
+    """
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
+async def validate_api_key(key: str) -> Optional[str]:
+    """Validate an API key and return the tenant_id if valid.
+
+    Also updates the key's last_used_at timestamp.
+
+    Args:
+        key: The plaintext API key from the Authorization header
+
+    Returns:
+        tenant_id if key is valid, None otherwise
+    """
+    from sqlmodel import select
+    from .database import get_session
+    from .models import ApiKey
+
+    # Hash the provided key
+    key_hash = hash_api_key(key)
+
+    async with get_session() as session:
+        result = await session.execute(
+            select(ApiKey).where(ApiKey.key_hash == key_hash).limit(1)
+        )
+        api_key = result.scalar_one_or_none()
+
+        if not api_key:
+            return None
+
+        # Update last_used_at
+        api_key.last_used_at = datetime.utcnow()
+        await session.commit()
+
+        logger.debug(f"API key authenticated: {api_key.key_prefix}... for tenant {api_key.tenant_id}")
+        return api_key.tenant_id
+
+
+async def require_auth_or_api_key(request: Request) -> str:
+    """FastAPI dependency that accepts either cookie OR API key auth.
+
+    This allows both browser sessions (cookie) and external scripts
+    (Authorization: Bearer <key>) to access protected endpoints.
+
+    Usage:
+        @app.post("/api/characters/{name}/speak")
+        async def speak(tenant_id: str = Depends(require_auth_or_api_key)):
+            ...
+
+    Raises:
+        HTTPException: 401 if neither auth method succeeds
+    """
+    from sqlmodel import select
+    from .database import get_session
+    from .models import TwitchConfig
+
+    # Try cookie auth first (for browser sessions)
+    tenant_id = await get_session_tenant(request)
+    if tenant_id:
+        # Verify tenant has valid session in database
+        async with get_session() as session:
+            result = await session.execute(
+                select(TwitchConfig).where(TwitchConfig.tenant_id == tenant_id).limit(1)
+            )
+            if result.scalar_one_or_none():
+                return tenant_id
+
+    # Try API key auth (for external scripts)
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        key = auth_header[7:]  # Strip "Bearer " prefix
+        tenant_id = await validate_api_key(key)
+        if tenant_id:
+            return tenant_id
+
+    # Neither auth method succeeded
+    raise HTTPException(
+        status_code=401,
+        detail="Not authenticated. Provide a valid session cookie or Authorization: Bearer <api_key> header."
+    )

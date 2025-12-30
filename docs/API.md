@@ -10,6 +10,10 @@ This document describes the REST API endpoints for controlling audio and text ov
 
 ## Table of Contents
 
+- [Authentication](#authentication)
+  - [Creating an API Key](#creating-an-api-key)
+  - [Using API Keys](#using-api-keys)
+  - [API Key Management](#api-key-management)
 - [Characters](#characters)
   - [List Characters](#list-characters)
   - [Create Character](#create-character)
@@ -36,6 +40,159 @@ This document describes the REST API endpoints for controlling audio and text ov
 - [Text Presets](#text-presets)
 - [History](#history)
 - [WebSocket Protocol](#websocket-protocol)
+
+---
+
+## Authentication
+
+The API supports two authentication methods:
+1. **Browser Session** - Cookie-based auth from Twitch OAuth (for the web dashboard)
+2. **API Keys** - Bearer token auth (for external scripts, bots, services)
+
+### Creating an API Key
+
+1. Log in to the dashboard at `/`
+2. Go to `/configuration`
+3. Scroll to **"5. Access Tokens"**
+4. Enter a label (e.g., "Stream Deck", "Discord Bot")
+5. Click **Create**
+6. **Copy the key immediately** - it's only shown once!
+
+The key format is: `obs_<random-characters>`
+
+### Using API Keys
+
+Include the key in the `Authorization` header with all requests:
+
+```
+Authorization: Bearer obs_your_key_here
+```
+
+**Example with curl:**
+```bash
+curl -X POST "http://localhost:8080/api/characters/MyCharacter/speak" \
+  -H "Authorization: Bearer obs_Xk9mP2qR4sT6uV8wY0aB..." \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Hello from my script!"}'
+```
+
+**Example with Python:**
+```python
+import requests
+
+API_KEY = "obs_your_key_here"
+BASE_URL = "http://localhost:8080"
+
+headers = {
+    "Authorization": f"Bearer {API_KEY}",
+    "Content-Type": "application/json"
+}
+
+# Make character speak
+response = requests.post(
+    f"{BASE_URL}/api/characters/Assistant/speak",
+    headers=headers,
+    json={"text": "Hello from Python!"}
+)
+print(response.json())
+```
+
+**Example with JavaScript:**
+```javascript
+const API_KEY = "obs_your_key_here";
+const BASE_URL = "http://localhost:8080";
+
+async function speak(characterName, text) {
+  const response = await fetch(`${BASE_URL}/api/characters/${characterName}/speak`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ text })
+  });
+  return response.json();
+}
+
+speak("Assistant", "Hello from JavaScript!");
+```
+
+**Example with PowerShell (Stream Deck):**
+```powershell
+$headers = @{
+    "Authorization" = "Bearer obs_your_key_here"
+    "Content-Type" = "application/json"
+}
+
+$body = @{ text = "Button pressed!" } | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://localhost:8080/api/characters/Assistant/speak" `
+    -Method POST -Headers $headers -Body $body
+```
+
+### API Key Management
+
+#### List API Keys
+
+```
+GET /api/api-keys
+```
+
+Returns all your API keys (without the actual key values).
+
+**Response:**
+```json
+{
+  "api_keys": [
+    {
+      "id": 1,
+      "key_prefix": "obs_Xk9mP2qR",
+      "label": "Stream Deck",
+      "created_at": "2024-01-15T10:30:00Z",
+      "last_used_at": "2024-01-15T14:22:00Z"
+    }
+  ]
+}
+```
+
+#### Create API Key
+
+```
+POST /api/api-keys
+```
+
+**Request Body:**
+```json
+{
+  "label": "My Discord Bot"
+}
+```
+
+**Response:**
+```json
+{
+  "id": 2,
+  "key": "obs_Xk9mP2qR4sT6uV8wY0aB1cD3eF5gH7iJ",
+  "key_prefix": "obs_Xk9mP2qR",
+  "label": "My Discord Bot",
+  "created_at": "2024-01-15T10:30:00Z"
+}
+```
+
+> **Warning:** The full `key` is only returned once! Store it securely.
+
+#### Revoke API Key
+
+```
+DELETE /api/api-keys/{id}
+```
+
+**Response:**
+```json
+{
+  "success": true
+}
+```
 
 ---
 
@@ -554,10 +711,18 @@ Browser sources connect via WebSocket to receive audio and text commands.
 
 All endpoints return standard HTTP error codes:
 
+- `401` - Unauthorized (missing or invalid API key/session)
 - `400` - Bad request (invalid parameters)
 - `404` - Resource not found
 - `422` - Validation error (see `detail` for specifics)
 - `500` - Server error
+
+**Authentication Error:**
+```json
+{
+  "detail": "Not authenticated. Provide a valid session cookie or Authorization: Bearer <api_key> header."
+}
+```
 
 **Validation Error Format:**
 ```json

@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import ValidationError
 from sqlmodel import select
 
-from ..auth import require_auth
+from ..auth import require_auth, require_auth_or_api_key
 from ..chat_pipeline import ChatPipeline, ChatPipelineConfig
 from ..database import get_session
 from ..helpers.conversation import (
@@ -212,7 +212,7 @@ async def create_character(
 @router.get("")
 async def list_characters(
     state: AppState = Depends(get_state),
-    tenant_id: str = Depends(require_auth),
+    tenant_id: str = Depends(require_auth_or_api_key),
     channel: str | None = Query(default=None, description="Channel to view (requires moderator access)"),
 ) -> list[CharacterResponse]:
     """List all characters for a channel with connection status.
@@ -240,7 +240,7 @@ async def list_characters(
 async def get_character(
     name: str,
     state: AppState = Depends(get_state),
-    tenant_id: str = Depends(require_auth),
+    tenant_id: str = Depends(require_auth_or_api_key),
 ) -> CharacterResponse:
     """Get a character by name."""
     async with get_session() as session:
@@ -348,7 +348,7 @@ async def character_speak(
     name: str,
     request: SpeakRequest,
     state: AppState = Depends(get_state),
-    tenant_id: str = Depends(require_auth),
+    tenant_id: str = Depends(require_auth_or_api_key),
 ) -> dict:
     """Speak text directly using character's voice (no AI).
 
@@ -466,7 +466,7 @@ async def character_chat(
     name: str,
     request: ChatRequest,
     state: AppState = Depends(get_state),
-    tenant_id: str = Depends(require_auth),
+    tenant_id: str = Depends(require_auth_or_api_key),
 ) -> ChatResponse:
     """Chat with a character - streams LLM response through TTS to browser.
 
@@ -705,7 +705,7 @@ async def character_chat(
 async def stop_character_generation(
     name: str,
     state: AppState = Depends(get_state),
-    tenant_id: str = Depends(require_auth),
+    tenant_id: str = Depends(require_auth_or_api_key),
 ) -> dict:
     """Stop any active generation (speak/chat) for a character.
 

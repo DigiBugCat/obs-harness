@@ -701,3 +701,50 @@ class AccessibleChannel(BaseModel):
     is_own: bool
 
 
+# =============================================================================
+# API Key Models
+# =============================================================================
+
+
+class ApiKey(SQLModel, table=True):
+    """API key for programmatic access to tenant resources.
+
+    Keys are stored as SHA-256 hashes for security.
+    The full key is only shown once at creation time.
+    """
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    tenant_id: str = SQLField(index=True)  # Owner of this key
+    key_hash: str = SQLField(index=True)  # SHA-256 hash of the key
+    key_prefix: str  # First 8 chars for identification (e.g., "obs_abc1...")
+    label: str  # User-provided label (e.g., "Stream Deck", "Discord Bot")
+    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+    last_used_at: datetime | None = SQLField(default=None)
+
+
+class ApiKeyCreate(BaseModel):
+    """Request to create a new API key."""
+
+    label: str
+
+
+class ApiKeyResponse(BaseModel):
+    """API key information in responses (without the actual key)."""
+
+    id: int
+    key_prefix: str
+    label: str
+    created_at: datetime
+    last_used_at: datetime | None
+
+
+class ApiKeyCreated(BaseModel):
+    """Response when creating a new API key (includes the full key ONCE)."""
+
+    id: int
+    key: str  # Full key - only shown once!
+    key_prefix: str
+    label: str
+    created_at: datetime
+
+
